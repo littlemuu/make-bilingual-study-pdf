@@ -1,0 +1,66 @@
+\documentclass[11pt]{article}
+\usepackage[letterpaper,margin=0.82in]{geometry}
+\usepackage{fontspec}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{fvextra}
+\usepackage{enumitem}
+\usepackage{microtype}
+
+\IfFontExistsTF{TeX Gyre Termes}
+  {\setmainfont{TeX Gyre Termes}}
+  {\setmainfont{Latin Modern Roman}}
+\IfFontExistsTF{DejaVu Sans Mono}
+  {\setmonofont{DejaVu Sans Mono}[Scale=MatchLowercase]}
+  {\setmonofont{Latin Modern Mono}[Scale=MatchLowercase]}
+
+\IfFileExists{xeCJK.sty}{
+  \usepackage{xeCJK}
+  \IfFontExistsTF{Noto Serif CJK SC}{\setCJKmainfont{Noto Serif CJK SC}}{
+  \IfFontExistsTF{Source Han Serif SC}{\setCJKmainfont{Source Han Serif SC}}{
+  \IfFontExistsTF{FandolSong}{\setCJKmainfont{FandolSong}}{
+  \IfFontExistsTF{SimSun}{\setCJKmainfont{SimSun}}{
+  \IfFontExistsTF{Microsoft YaHei}{\setCJKmainfont{Microsoft YaHei}}{
+  \IfFontExistsTF{Noto Sans CJK SC}{\setCJKmainfont{Noto Sans CJK SC}}{}
+  }}}}}
+}{}
+
+\definecolor{TranslationColor}{HTML}{3F4A5A}
+\definecolor{CalloutColor}{HTML}{C95A16}
+\definecolor{RuleColor}{HTML}{D9DEE7}
+\hypersetup{colorlinks=true,linkcolor=blue!55!black,urlcolor=blue!55!black}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.62em}
+\setlist{nosep,leftmargin=1.5em}
+\emergencystretch=3em
+\raggedbottom
+
+\newenvironment{BilingualTranslation}{%
+  \begin{quote}\color{TranslationColor}\small\setlength{\parskip}{0.35em}%
+}{%
+  \end{quote}\vspace{0.18em}%
+}
+\newenvironment{BilingualCallout}{%
+  \begin{quote}\color{CalloutColor}\bfseries%
+}{%
+  \end{quote}%
+}
+\newcommand{\SourcePage}[1]{\hypertarget{source-page-#1}{}}
+\newcommand{\SegmentAnchor}[1]{\hypertarget{segment-#1}{}}
+\newcommand{\BilingualRule}{\par\noindent\color{RuleColor}\rule{\linewidth}{0.35pt}\color{black}\par}
+
+\title{%%__TITLE__%%}
+\author{Bilingual study edition}
+\date{}
+
+\begin{document}
+\maketitle
+\begingroup\small\color{TranslationColor}
+Source SHA-256: \texttt{%%__SOURCE_HASH__%%}
+\endgroup
+\BilingualRule
+
+%%__BODY__%%
+
+\end{document}

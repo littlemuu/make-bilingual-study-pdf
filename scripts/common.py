@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import hashlib
+import json
+import re
+import unicodedata
+from collections import Counter
+from pathlib import Path
+from typing import Any, Iterable
+
+
+PROBLEM_RE = re.compile(r"(?:Problem|问题)\s*[（(]([a-z0-9_]+)", re.I)
+PLACEHOLDER_RE = re.compile(r"⟦K\d{3}⟧")
+CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+
+
+def sha256_bytes(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def sha256_text(text: str) -> str:
+    return sha256_bytes(text.encode("utf-8"))
+
+
+def normalize_text(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)
+    text = text.replace("’", "'").replace("‘", "'")
+    text = text.replace("“", '"').replace("”", '"')
+    text = text.replace("—", "-").replace("–", "-")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def repair_pdf_linebreaks(text: str) -> str:
+    """Repair display-only PDF line wrapping while preserving paragraph breaks."""
+    text = text.replace("\u00ad", "")
+    text = re.sub(r"(?<=[A-Za-z])-[ \t]*\n(?=[a-z])", "-", text)
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(
+            r"(https?://[^\s\n]*[./_-])[ \t]*\n[ \t]*([a-z0-9][^\s\n]*)",
+            r"\1\2",
+            text,
+        )
+        text = re.sub(
+            r"(https?://[^\s\n]*[./_-])[ \t]+([a-z0-9][^\s\n]*)",
+            r"\1\2",
+            text,
+        )
+    paragraphs = re.split(r"\n[ \t]*\n+", text)
+    repaired = [re.sub(r"[ \t]*\n[ \t]*", " ", item).strip() for item in paragraphs]
+    return "\n\n".join(item for item in repaired if item).strip()
+
+
+def ascii_tokens(text: str) -> list[str]:
+    return re.findall(
+        r"[a-z_][a-z0-9_]*(?:'[a-z]+)?|\d+(?:\.\d+)*",
+        normalize_text(text).lower(),
+    )
+
+
+def ngrams(items: list[str], size: int = 5) -> list[tuple[str, ...]]:
+    return [
+        tuple(items[index : index + size])
+        for index in range(max(0, len(items) - size + 1))
+    ]
+
+
+def problem_ids(text: str) -> list[str]:
+    return PROBLEM_RE.findall(text)
+
+
+def contains_cjk(text: str) -> bool:
+    return bool(CJK_RE.search(text))
+
+
+def placeholder_counts(text: str) -> Counter[str]:
+    return Counter(PLACEHOLDER_RE.findall(text))
+
+
+def relative_path(path: Path, start: Path) -> str:
+    """Return a stable POSIX-style relative path for generated documents."""
+    return Path(path).resolve().relative_to(Path(start).resolve()).as_posix()
+
+
+def write_json(path: Path, value: Any) -> None:
+    path.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
+def write_jsonl(path: Path, values: Iterable[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        for value in values:
+            stream.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+            stream.write("\n")
+
+
+def read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    values = []
+    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            values.append(json.loads(raw))
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSONL at {path}:{line_number}: {exc}") from exc
+    return values
