@@ -54,15 +54,46 @@ upstream and rebuild.
 
 ## 4. Compile gate
 
+### V2 DOCX structure gate
+
+Before rendering a DOCX-profile PDF, pass only when:
+
+- the expected unique Problem ID count matches the source inventory;
+- every Problem is represented by one AST callout with a complete English half, one
+  separator, and a nonempty Chinese half;
+- all temporary `V2-PROBLEM-CALLOUT-*` markers are absent from `document.xml`;
+- Chinese text remains extractable from the DOCX;
+- every expected external URI occurs as an external DOCX relationship;
+- every required technical visual is embedded in `word/media/`;
+- formulas, code, identifiers, lists, and Deliverable labels remain inside their owning
+  Problem callout rather than being split into adjacent micro-callouts.
+- every Problem paragraph uses the same direct left/right indent; numbered paragraphs
+  explicitly cancel inherited hanging origins while retaining real numbering; exactly
+  one bounded language separator remains and legacy VML horizontal rules are absent.
+
+The automated DOCX gate is necessary but not sufficient. Render the final DOCX and
+inspect the PDF; do not approve layout by examining WordprocessingML alone.
+
+### PDF compile/render gate
+
 Pass automated QA only when:
 
-- XeLaTeX exits successfully and produces the expected PDF;
-- Chinese text has `xeCJK` and a supported CJK font;
-- the log has no missing-character or undefined-reference messages;
+- the selected rendering backend exits successfully and produces the expected PDF;
+- the XeLaTeX profile uses `xeCJK` with a supported CJK font and its log has no
+  missing-character or undefined-reference messages;
 - every expected Problem ID is extractable from the compiled PDF;
 - Chinese remains extractable from a Chinese bilingual document;
 - rendered page count equals PDF page count;
 - no page is apparently blank.
+
+For the V2 DOCX profile, also require that LibreOffice renders the final editable DOCX,
+the PDF uses A4 pages, all PDF fonts are embedded, and the number of rendered page
+images equals the PDF page count. `fc-match` must resolve the requested CJK family
+without fallback, and the resolved CJK font file's family must appear in `pdffonts`.
+Every rendered PNG must also survive a full pixel decode after any single-page repair;
+file existence and a successful batch-render exit are insufficient. Do not accept
+extractable Chinese alone as proof of visible glyphs. Record both the DOCX and PDF
+hashes. For the XeLaTeX profile, retain the existing XeLaTeX/log checks.
 
 Overfull boxes are warnings that require targeted visual inspection. Non-embedded-font
 suspicions are warnings unless portability requirements make them a project-specific
@@ -80,6 +111,12 @@ pages named by warnings. Fail for:
 - a crop containing unrelated prose or omitting part of a technical visual;
 - broken code indentation, malformed links, unexpected blank pages, or severe spacing;
 - missing glyph boxes or visibly substituted characters.
+
+For V2 Problem callouts, also fail if the card alternates English and Chinese in small
+fragments, if the divider is missing or duplicated, or if a nested list/formula escapes
+the card. Cross-page cards are acceptable only when the left and right borders keep one
+fixed horizontal position on every fragment and the indentation, reading order, and
+content continuity remain clear.
 
 Bind the review to the compiled PDF SHA-256. Recompilation invalidates an older visual
 review even when the filename is unchanged.

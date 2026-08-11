@@ -30,11 +30,76 @@ LATEX_REPLACEMENTS = {
     "}": r"\}",
     "~": r"\textasciitilde{}",
     "^": r"\textasciicircum{}",
+    "‣": r"\BilingualMath{\blacktriangleright}",
+    "▷": r"\BilingualMath{\triangleright}",
+}
+
+LATEX_SEQUENCE_REPLACEMENTS = {
+    "\U0001D4A9\ufe00": r"\BilingualMath{\mathcal{N}}",
+}
+
+LATEX_UNICODE_MATH_REPLACEMENTS = {
+    "≤": r"\BilingualMath{\leq}",
+    "≥": r"\BilingualMath{\geq}",
+    "∈": r"\BilingualMath{\in}",
+    "ℝ": r"\BilingualMath{\mathbb{R}}",
+    "⊤": r"\BilingualMath{\top}",
+    "𝟙": r"\BilingualMath{\mathbb{1}}",
+    "′": r"\BilingualMath{^{\prime}}",
+    "⋅": r"\BilingualMath{\cdot}",
+    "∇": r"\BilingualMath{\nabla}",
+    "⊙": r"\BilingualMath{\odot}",
+    "∑": r"\BilingualMath{\sum}",
+    "𝛼": r"\BilingualMath{𝛼}",
+    "𝛽": r"\BilingualMath{𝛽}",
+    "𝜀": r"\BilingualMath{𝜀}",
+    "𝜇": r"\BilingualMath{𝜇}",
+    "𝜎": r"\BilingualMath{𝜎}",
+    "𝜃": r"\BilingualMath{𝜃}",
+    "𝜆": r"\BilingualMath{𝜆}",
+    "𝜏": r"\BilingualMath{𝜏}",
+    "ℎ": r"\BilingualMath{ℎ}",
+    "ℓ": r"\BilingualMath{\ell}",
 }
 
 
+def mathematical_italic_latin_replacements() -> dict[str, str]:
+    characters = (
+        [chr(codepoint) for codepoint in range(0x1D434, 0x1D44E)]
+        + [chr(codepoint) for codepoint in range(0x1D44E, 0x1D455)]
+        + ["ℎ"]
+        + [chr(codepoint) for codepoint in range(0x1D456, 0x1D468)]
+    )
+    letters = list("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+    if len(characters) != len(letters):
+        raise RuntimeError("mathematical italic Latin mapping is incomplete")
+    return {
+        character: rf"\BilingualMath{{{character}}}"
+        for character, _letter in zip(characters, letters)
+    }
+
+
+LATEX_UNICODE_MATH_REPLACEMENTS.update(mathematical_italic_latin_replacements())
+
+
 def latex_escape(text: str) -> str:
-    return "".join(LATEX_REPLACEMENTS.get(character, character) for character in text)
+    escaped: list[str] = []
+    index = 0
+    while index < len(text):
+        for source, replacement in LATEX_SEQUENCE_REPLACEMENTS.items():
+            if text.startswith(source, index):
+                escaped.append(replacement)
+                index += len(source)
+                break
+        else:
+            character = text[index]
+            escaped.append(
+                LATEX_UNICODE_MATH_REPLACEMENTS.get(
+                    character, LATEX_REPLACEMENTS.get(character, character)
+                )
+            )
+            index += 1
+    return "".join(escaped)
 
 
 def latex_url(text: str) -> str:

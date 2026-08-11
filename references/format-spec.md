@@ -11,6 +11,25 @@
 - Out of scope: OCR, encrypted files, handwriting, complex mixed scans, other language
   pairs, and semantic reconstruction of diagrams or equations.
 
+## V2 editable study-document profile
+
+- Adds an editable `.docx` and a PDF rendered from that exact DOCX.
+- Uses A4 pages with readable study-document typography rather than source-page layout.
+- Every `Problem (...)` callout is one semantic unit: all English content first, one
+  visible divider, then all Chinese content. Nested lists, code, math, and Deliverable
+  labels remain inside the same callout.
+- Keep each Problem as flowing paragraphs with identical direct left/right indents so
+  long tasks split without table-induced blank space. Numbered paragraphs must
+  explicitly cancel the inherited hanging origin while preserving real numbering.
+  Use one bounded separator and do not retain Pandoc's VML horizontal rule.
+- Ordinary prose remains one complete English logical paragraph followed by its Chinese
+  paragraph. English headings are followed by a smaller Chinese heading translation.
+- Problem callouts use a warm accent; Tips and Examples use cooler neutral accents;
+  Chinese body paragraphs use a pale blue-gray reading band.
+- Internal AST/range markers are build-only metadata and must not remain in the DOCX.
+- The selected CJK font family must resolve exactly through Fontconfig. A Latin-font
+  fallback is a hard failure even if DOCX/PDF text extraction still returns Chinese.
+
 ## Preservation rules
 
 - Keep formulas, mathematical symbols, code, identifiers, CLI flags, paths, URLs,
@@ -47,10 +66,12 @@ WORK_DIR/
   output/
     NAME.md                     bilingual Markdown
     NAME.tex                    editable XeLaTeX
+    NAME.docx                   editable V2 bilingual study document
     build-manifest.json         deterministic input/output hashes
     output-audit.json           merge/accounting gate
+    docx-audit.json             V2 structure/link/content gate
     assets/                     copied portable visual assets
-    build/NAME.pdf              compiled bilingual PDF
+    build/NAME.pdf              compiled or DOCX-rendered bilingual PDF
     pdf-renders/                every output page
     contact/                    output-page contact sheets
     compile-audit.json          automated compilation/render gate
@@ -104,3 +125,12 @@ reading, but every original block retains a unique marker and disposition.
 The `.tex` is generated from the same audited merged translation data—not translated
 from Markdown—so both outputs have identical bilingual content while using native
 formatting appropriate to each format.
+
+The `.docx` is produced from the already-audited Markdown through Pandoc JSON. A
+deterministic AST transform splits bilingual headings and paragraph lines, regroups
+each complete Problem into English and Chinese halves, and inserts temporary range
+markers. The style pass applies A4 layout, fonts, paragraph bands, Problem/Tip/Example
+callouts, headers, and page fields, then removes every marker before saving.
+
+The matching V2 PDF is rendered from the final DOCX, not independently reassembled.
+Record both hashes so the editable document and final PDF remain traceable.

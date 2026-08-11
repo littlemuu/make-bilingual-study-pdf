@@ -1,13 +1,14 @@
 ---
 name: make-bilingual-study-pdf
-description: Convert a native-text English academic PDF—especially assignment handouts, lecture notes, and papers—into complete English-first Simplified-Chinese bilingual Markdown, editable XeLaTeX, compiled PDF, and an auditable QA report. Use when correctness, formula/code/link preservation, resumable translation, and proof against silent omissions matter more than reproducing the source page layout pixel-for-pixel. Also use to diagnose why an attempted bilingual conversion is incomplete. V1 does not accept scanned or substantially mixed-image PDFs.
+description: Convert a native-text English academic PDF—especially assignment handouts, lecture notes, and papers—into complete English-first Simplified-Chinese bilingual Markdown, an editable DOCX study edition, optional XeLaTeX source, compiled PDF, and an auditable QA report. Use when correctness, formula/code/link preservation, resumable translation, and proof against silent omissions matter more than reproducing the source page layout pixel-for-pixel. Also use to diagnose why an attempted bilingual conversion is incomplete. Scanned or substantially mixed-image PDFs require a different backend.
 ---
 
 # Make Bilingual Study PDF
 
 Create a content-faithful bilingual study edition through deterministic extraction,
 translation, merge, compilation, and independent audits. Never ask a model to emit a
-whole LaTeX document. The model may fill only numbered translation response records.
+whole DOCX or LaTeX document. The model may fill only numbered translation response
+records; scripts own document structure and presentation.
 
 Read [format-spec.md](references/format-spec.md) before translating and
 [qa-rules.md](references/qa-rules.md) before reporting completion. Resolve every
@@ -32,9 +33,11 @@ optional backend. Do not install a heavyweight parser, download model weights, o
 an AGPL component without the user's explicit approval. An alternate backend must
 still feed the same stable-ID records and pass the same downstream audits.
 
-Before starting a long translation, confirm that Poppler, PyMuPDF, Pillow, XeLaTeX,
-`latexmk`, `xeCJK`, and a supported CJK font are available. Markdown and `.tex` can
-still be built without the TeX prerequisites, but the PDF gate must remain failed.
+Before starting a long translation, confirm that Poppler, PyMuPDF, Pillow, Pandoc, and
+a supported CJK font are available. The XeLaTeX profile additionally requires XeLaTeX,
+`latexmk`, `xeCJK`, `unicode-math`, and Latin Modern Math. The V2 DOCX profile requires
+`python-docx` and LibreOffice for the matching PDF render. Source artifacts can still
+be built when a rendering backend is absent, but the PDF gate must remain failed.
 
 ## Workflow
 
@@ -114,6 +117,44 @@ source equation/figure crops, and includes every external URI. Never hand-edit t
 generated Markdown or `.tex`; edit response records or glossary entries, reaudit, and
 rebuild.
 
+### 4a. Build the V2 editable DOCX study edition
+
+Use the audited Markdown as the only content input. The V2 AST pass recognizes each
+`Problem (...)` block quote, gathers the complete English task first, inserts one
+language separator, then gathers the complete Chinese task. Nested lists, code, and
+formula blocks remain inside the same callout. Headings and ordinary prose remain
+English-first paragraph pairs.
+
+Run:
+
+```bash
+fc-match "Noto Sans S Chinese"
+python3 "$SKILL_DIR/scripts/build_docx.py" \
+  "$WORK_DIR/output/NAME.md" "$WORK_DIR/output/NAME.docx" \
+  --resource-path "$WORK_DIR/output" --expected-problems EXPECTED_COUNT \
+  --title "DOCUMENT TITLE — English-Chinese Bilingual Study Edition"
+python3 "$SKILL_DIR/scripts/audit_docx.py" "$WORK_DIR/output/NAME.docx" \
+  --expected-problems EXPECTED_COUNT --expected-examples EXPECTED_EXAMPLES \
+  --expected-tips EXPECTED_TIPS --expected-links EXPECTED_LINKS \
+  --minimum-images EXPECTED_MINIMUM_IMAGES \
+  --output "$WORK_DIR/output/docx-audit.json"
+```
+
+`fc-match` must resolve the requested family exactly, not silently fall back to a Latin
+font. If the project carries its own fonts, point `FONTCONFIG_FILE` to its reviewed
+`fonts.conf` for the build and render commands. Record the resolved family and font file.
+
+The builder removes all internal Problem-range markers before saving. Treat a Problem
+count mismatch, leaked marker, missing Chinese text, or lost external link as a build
+failure. Do not style Problem paragraphs independently before the AST regrouping pass;
+that recreates alternating micro-blocks instead of one coherent English-then-Chinese
+task card. Keep Problem callouts as flowing paragraphs so long tasks split naturally
+without table-induced blank space. Give every paragraph the same direct left and right
+indent. For every numbered paragraph, explicitly set a zero first-line indent so the
+numbering definition cannot contribute an inherited hanging origin and shift that
+paragraph's border. Keep the real numbering, remove Pandoc's VML horizontal rule, and
+draw exactly one bounded separator between the English and Chinese halves.
+
 ### 5. Compile, render, and inspect
 
 Run:
@@ -144,9 +185,33 @@ Use the real relevant spot-check pages, not the example numbers. If visual revie
 a defect, record `--status failed`, repair upstream, rebuild, recompile, and inspect the
 new PDF hash again.
 
+For the V2 DOCX profile, render the approved editable document instead so the delivered
+PDF matches it exactly:
+
+```bash
+python3 "$SKILL_DIR/scripts/compile_docx_pdf.py" \
+  "$WORK_DIR/output/NAME.docx" "$WORK_DIR/output/NAME.pdf" \
+  --render-dir "$WORK_DIR/output/pdf-renders" \
+  --audit-output "$WORK_DIR/output/compile-audit.json" \
+  --expected-problems EXPECTED_COUNT --cjk-font "Noto Sans S Chinese"
+```
+
+This conversion gate requires A4 pages, embedded PDF fonts, extractable Chinese, every
+expected Problem ID, one render per page, no apparently blank page, exact resolution of
+the requested CJK family, and that resolved CJK font embedded in the PDF. Extractable
+Chinese alone is insufficient: an absent CJK font can leave invisible glyphs while the
+PDF text layer still looks complete. Fully decode every rendered PNG; if a batch render
+is truncated, rerender only that page in a temporary directory, copy it with a blocking
+operation, and decode it again before creating contact sheets. Inspect every render
+after the final conversion.
+Any DOCX rebuild or PDF reconversion invalidates an older visual review, even if
+filenames stay the same.
+
 ## Completion rule
 
-Call the job complete only when `output/qa-report.json` is `passed`. Deliver the
-bilingual `.md`, editable `.tex`, compiled `.pdf`, and QA report. State any warnings
-from the report. If a gate is blocked by missing software, fonts, an unsupported PDF,
-or unresolved layout, report the exact blocker and do not claim a verified PDF.
+Call the job complete only when `output/qa-report.json` is `passed`. For the V2 profile,
+deliver the bilingual `.md`, editable `.docx`, matching `.pdf`, and QA report; include
+the editable `.tex` when requested or when the project uses the XeLaTeX profile. State
+any warnings from the report. If a gate is blocked by missing software, fonts, an
+unsupported PDF, or unresolved layout, report the exact blocker and do not claim a
+verified PDF.

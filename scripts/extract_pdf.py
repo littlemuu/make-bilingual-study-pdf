@@ -3,15 +3,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import fitz
+from PIL import Image
 
 from common import (
     ascii_tokens,
@@ -53,6 +56,77 @@ def command_version(command: str, flag: str = "-v") -> str:
         text=True,
     )
     return (completed.stdout or "").strip().splitlines()[0]
+
+
+def invalid_pngs(paths: list[Path]) -> list[Path]:
+    invalid: list[Path] = []
+    for path in paths:
+        try:
+            with Image.open(path) as image:
+                image.load()
+        except (OSError, SyntaxError, ValueError):
+            invalid.append(path)
+    return invalid
+
+
+def repair_truncated_renders(
+    pdftoppm: str,
+    pdf_path: Path,
+    rendered_pages: list[Path],
+    render_dpi: int,
+) -> None:
+    invalid = invalid_pngs(rendered_pages)
+    unrepaired: list[Path] = []
+    for path in invalid:
+        match = re.fullmatch(r"page-(\d+)\.png", path.name)
+        if match is None:
+            raise SystemExit(f"cannot recover page number from render: {path.name}")
+        page_number = int(match.group(1))
+        repaired = False
+        for _attempt in range(3):
+            with tempfile.TemporaryDirectory(
+                prefix="bilingual-render-retry-"
+            ) as temp_dir:
+                retry_prefix = Path(temp_dir) / path.stem
+                subprocess.run(
+                    [
+                        pdftoppm,
+                        "-png",
+                        "-r",
+                        str(render_dpi),
+                        "-f",
+                        str(page_number),
+                        "-l",
+                        str(page_number),
+                        "-singlefile",
+                        str(pdf_path),
+                        str(retry_prefix),
+                    ],
+                    check=True,
+                    stdout=subprocess.DEVNULL,
+                )
+                retry_path = retry_prefix.with_suffix(".png")
+                if invalid_pngs([retry_path]):
+                    continue
+                copy_command = shutil.which("cp")
+                if copy_command:
+                    subprocess.run(
+                        [copy_command, "--", str(retry_path), str(path)], check=True
+                    )
+                else:
+                    with retry_path.open("rb") as source, path.open("wb") as target:
+                        shutil.copyfileobj(source, target, length=1024 * 1024)
+                        target.flush()
+                        os.fsync(target.fileno())
+                if not invalid_pngs([path]):
+                    repaired = True
+                    break
+        if not repaired:
+            unrepaired.append(path)
+    still_invalid = sorted(set(unrepaired + invalid_pngs(rendered_pages)))
+    if still_invalid:
+        names = ", ".join(path.name for path in still_invalid)
+        raise SystemExit(f"rendering produced invalid PNG files after retry: {names}")
 
 
 def intersects(a: fitz.Rect, b: fitz.Rect) -> bool:
@@ -782,6 +856,7 @@ def main() -> None:
         raise SystemExit(
             f"rendering incomplete: expected {doc.page_count}, found {len(rendered_pages)}"
         )
+    repair_truncated_renders(pdftoppm, pdf_path, rendered_pages, args.render_dpi)
     source_contact_sheets = make_contact_sheets(
         rendered_pages, work_dir / "source-contact"
     )

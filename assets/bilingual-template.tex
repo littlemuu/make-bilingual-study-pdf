@@ -7,6 +7,16 @@
 \usepackage{fvextra}
 \usepackage{enumitem}
 \usepackage{microtype}
+\usepackage{amssymb}
+
+\IfFileExists{unicode-math.sty}{
+  \usepackage{unicode-math}
+  \IfFontExistsTF{Latin Modern Math}
+    {\setmathfont{Latin Modern Math}}
+    {\PackageError{bilingual-template}{Latin Modern Math is unavailable}{}}
+}{
+  \PackageError{bilingual-template}{unicode-math.sty is unavailable}{}
+}
 
 \IfFontExistsTF{TeX Gyre Termes}
   {\setmainfont{TeX Gyre Termes}}
@@ -49,6 +59,7 @@
 \newcommand{\SourcePage}[1]{\hypertarget{source-page-#1}{}}
 \newcommand{\SegmentAnchor}[1]{\hypertarget{segment-#1}{}}
 \newcommand{\BilingualRule}{\par\noindent\color{RuleColor}\rule{\linewidth}{0.35pt}\color{black}\par}
+\DeclareRobustCommand{\BilingualMath}[1]{\ensuremath{#1}}
 
 \title{%%__TITLE__%%}
 \author{Bilingual study edition}
