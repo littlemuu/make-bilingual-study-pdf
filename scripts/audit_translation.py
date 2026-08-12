@@ -10,7 +10,6 @@ from typing import Any
 
 from common import (
     ascii_tokens,
-    contains_cjk,
     ngrams,
     placeholder_counts,
     read_json,
@@ -22,6 +21,7 @@ from common import (
 )
 from translation_utils import expected_placeholder_counts, restore_placeholders
 from translation_utils import glossary_term_present, validate_glossary
+from profile import canonical_profile_sha256, load_work_profile, target_text_pattern
 
 
 def english_word_count(text: str) -> int:
@@ -53,12 +53,32 @@ def main() -> None:
         "source-audit.json": plan["source_audit_sha256"],
         "translation/glossary.json": plan["glossary_sha256"],
     }
+    if plan.get("profile_file_sha256"):
+        source_hash_checks["profile.json"] = plan["profile_file_sha256"]
+    if plan.get("document_ir_sha256"):
+        source_hash_checks["document-ir.json"] = plan["document_ir_sha256"]
     failures: list[str] = []
     warnings: list[str] = []
+    if plan.get("schema_version") != 2:
+        failures.append("unsupported translation plan schema; rerun prepare_translation.py")
     for filename, expected_hash in source_hash_checks.items():
         path = work_dir / filename
         if not path.is_file() or sha256_file(path) != expected_hash:
             failures.append(f"source artifact changed after planning: {filename}")
+
+    try:
+        profile = load_work_profile(work_dir)
+        target_pattern = target_text_pattern(profile)
+        if plan.get("profile_id") not in (None, profile["id"]):
+            failures.append("translation plan profile does not match the work directory")
+        if plan.get("profile_sha256") != canonical_profile_sha256(profile):
+            failures.append("translation plan canonical profile hash does not match")
+        if plan.get("target_language") != profile["translation"]["target_language"]:
+            failures.append("translation plan target language does not match the profile")
+    except ValueError as exc:
+        profile = None
+        target_pattern = re.compile(r"[\u3400-\u9fff]")
+        failures.append(f"invalid profile binding: {exc}")
 
     try:
         glossary_terms = validate_glossary(
@@ -148,7 +168,7 @@ def main() -> None:
         )
         if (
             english_word_count(source_for_language_check) >= 4
-            and not contains_cjk(restored)
+            and not target_pattern.search(restored)
         ):
             untranslated_ids.append(request_id)
         source_grams = ngrams(ascii_tokens(source_for_language_check), 5)

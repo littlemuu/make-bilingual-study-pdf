@@ -15,6 +15,30 @@ Read [format-spec.md](references/format-spec.md) before translating and
 script path relative to this `SKILL.md` directory, even if the installed directory has
 an opaque generated name.
 
+## Profile and IR
+
+V2.2 uses a versioned Profile plus a unified document IR. The supported default is
+`profiles/assignment-en-zh.json`; it preserves the current English-assignment to
+Simplified-Chinese behavior. Read [profile-ir.md](references/profile-ir.md) before
+adding a document type, language, parser, renderer, or QA policy.
+
+Bind the Profile into `WORK_DIR/profile.json` and generate `document-ir.json`. Treat
+both files as frozen source artifacts. The native PDF adapter records semantic labels
+as `anchor-only` unless structural evidence proves complete container membership.
+Never turn neighboring paragraphs into a semantic group by proximity alone.
+
+Use the Profile-aware entry point for new jobs and recovery:
+
+```bash
+python3 "$SKILL_DIR/scripts/pipeline.py" validate-profile assignment-en-zh
+python3 "$SKILL_DIR/scripts/pipeline.py" source SOURCE.pdf \
+  --work-dir "$WORK_DIR" --profile assignment-en-zh
+python3 "$SKILL_DIR/scripts/pipeline.py" status "$WORK_DIR"
+```
+
+The entry point runs deterministic stages and stops at glossary review, translation,
+and visual-review checkpoints. Its status output names the next safe resumable action.
+
 ## Scope gate
 
 Accept only an English, native-text PDF whose goal is English-first Simplified Chinese.
@@ -63,6 +87,9 @@ low coverage, dense equations, columns, diagrams, tables, or suspicious ordering
 Confirm that visual crops contain the complete figure/equation and not neighboring
 prose. If crop heuristics are wrong, fix extraction or preserve a larger source crop;
 never reconstruct a technical diagram from memory.
+
+For an older extracted work directory, run `pipeline.py ir WORK_DIR`, then rerun the
+source audit. Profile/IR migration invalidates every older downstream hash.
 
 ### 2. Freeze and review the glossary
 
@@ -131,9 +158,11 @@ Run:
 fc-match "Noto Sans S Chinese"
 python3 "$SKILL_DIR/scripts/build_docx.py" \
   "$WORK_DIR/output/NAME.md" "$WORK_DIR/output/NAME.docx" \
+  --profile "$WORK_DIR/profile.json" \
   --resource-path "$WORK_DIR/output" --expected-problems EXPECTED_COUNT \
   --title "DOCUMENT TITLE — English-Chinese Bilingual Study Edition"
 python3 "$SKILL_DIR/scripts/audit_docx.py" "$WORK_DIR/output/NAME.docx" \
+  --profile "$WORK_DIR/profile.json" \
   --expected-problems EXPECTED_COUNT --expected-examples EXPECTED_EXAMPLES \
   --expected-tips EXPECTED_TIPS --expected-links EXPECTED_LINKS \
   --minimum-images EXPECTED_MINIMUM_IMAGES \

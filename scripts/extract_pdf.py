@@ -26,6 +26,8 @@ from common import (
     write_json,
     write_jsonl,
 )
+from document_ir import write_document_ir
+from profile import bind_profile, canonical_profile_sha256, load_profile
 from visual_utils import make_contact_sheets
 
 
@@ -678,6 +680,8 @@ def margin_repetitions(raw_pages: list[list[dict[str, Any]]]) -> set[str]:
 def prepare_output(work_dir: Path, force: bool) -> None:
     work_dir.mkdir(parents=True, exist_ok=True)
     collisions = [
+        work_dir / "profile.json",
+        work_dir / "document-ir.json",
         work_dir / "manifest.json",
         work_dir / "blocks.jsonl",
         work_dir / "oracle.txt",
@@ -689,6 +693,9 @@ def prepare_output(work_dir: Path, force: bool) -> None:
         names = ", ".join(path.name for path in existing)
         raise SystemExit(f"refusing to overwrite existing artifacts: {names}; use --force")
     if force:
+        for generated in (work_dir / "profile.json", work_dir / "document-ir.json"):
+            if generated.is_file():
+                generated.unlink()
         for directory, pattern in (
             (work_dir / "renders", "page-*.png"),
             (work_dir / "visuals", "visual-*.png"),
@@ -704,6 +711,11 @@ def main() -> None:
     )
     parser.add_argument("pdf", type=Path)
     parser.add_argument("--work-dir", type=Path, required=True)
+    parser.add_argument(
+        "--profile",
+        default="assignment-en-zh",
+        help="built-in profile id or path to a profile JSON file",
+    )
     parser.add_argument("--render-dpi", type=int, default=120)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -716,10 +728,20 @@ def main() -> None:
         raise SystemExit(f"input is not a PDF: {pdf_path}")
     if args.render_dpi < 72 or args.render_dpi > 300:
         raise SystemExit("--render-dpi must be between 72 and 300")
+    try:
+        profile = load_profile(args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    if profile["input"]["adapter"] != "native-text-pdf":
+        raise SystemExit("extract_pdf.py requires the native-text-pdf input adapter")
 
     pdftotext = require_command("pdftotext")
     pdftoppm = require_command("pdftoppm")
     prepare_output(work_dir, args.force)
+    try:
+        profile = bind_profile(work_dir, args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
     try:
         doc = fitz.open(pdf_path)
@@ -744,13 +766,16 @@ def main() -> None:
             f"PDF={doc.page_count}, pdftotext={len(oracle_layout_pages)}"
         )
 
+    minimum_page_characters = profile["input"]["minimum_text_characters_per_page"]
+    minimum_native_ratio = profile["input"]["minimum_native_text_page_ratio"]
     page_text_lengths = [len(normalize_text(page)) for page in oracle_pages]
-    native_pages = sum(length >= 100 for length in page_text_lengths)
+    native_pages = sum(length >= minimum_page_characters for length in page_text_lengths)
     native_ratio = native_pages / doc.page_count
-    if native_ratio < 0.70:
+    if native_ratio < minimum_native_ratio:
         raise SystemExit(
-            "v1 accepts native-text PDFs only: fewer than 70% of pages have usable text; "
-            "report this document as scanned/mixed instead of continuing"
+            "the active profile accepts native-text PDFs only: usable-text page ratio "
+            f"{native_ratio:.3f} is below {minimum_native_ratio:.3f}; report this "
+            "document as scanned/mixed instead of continuing"
         )
 
     all_links: list[dict[str, Any]] = []
@@ -869,12 +894,18 @@ def main() -> None:
     external_uris = sorted({item["uri"] for item in all_links if item.get("uri")})
     manifest = {
         "schema_version": 3,
+        "profile": {
+            "id": profile["id"],
+            "sha256": canonical_profile_sha256(profile),
+        },
         "source_pdf": str(pdf_path),
         "source_sha256": sha256_file(pdf_path),
         "page_count": doc.page_count,
         "native_text_page_ratio": round(native_ratio, 4),
         "render_dpi": args.render_dpi,
         "artifacts": {
+            "profile": "profile.json",
+            "document_ir": "document-ir.json",
             "blocks": "blocks.jsonl",
             "oracle": "oracle.txt",
             "oracle_layout": "oracle-layout.txt",
@@ -903,6 +934,8 @@ def main() -> None:
         ],
     }
     write_json(work_dir / "manifest.json", manifest)
+    document_ir_path = write_document_ir(work_dir, profile)
+    document_ir = json.loads(document_ir_path.read_text(encoding="utf-8"))
     print(
         json.dumps(
             {
@@ -912,6 +945,8 @@ def main() -> None:
                 "problem_ids": len(manifest["problem_ids"]),
                 "external_uris": len(external_uris),
                 "native_text_page_ratio": manifest["native_text_page_ratio"],
+                "profile": profile["id"],
+                "semantic_roles": document_ir["inventories"]["semantic_role_counts"],
             },
             indent=2,
         )

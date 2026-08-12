@@ -15,6 +15,7 @@ from common import (
     write_jsonl,
 )
 from translation_utils import glossary_term_present, protect_source, validate_glossary
+from profile import canonical_profile_sha256, load_work_profile
 
 
 def short_context(blocks: list[dict[str, Any]], index: int, direction: int) -> str:
@@ -79,6 +80,17 @@ def main() -> None:
 
     glossary_path = work_dir / "translation" / "glossary.json"
     glossary = read_json(glossary_path)
+    try:
+        profile = load_work_profile(work_dir)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    profile_sha256 = canonical_profile_sha256(profile)
+    if glossary.get("profile_id") not in (None, profile["id"]):
+        raise SystemExit("glossary was created for a different profile")
+    if glossary.get("profile_sha256") not in (None, profile_sha256):
+        raise SystemExit("glossary profile changed; reinitialize and review it")
+    if glossary.get("target_language") != profile["translation"]["target_language"]:
+        raise SystemExit("glossary target language does not match the active profile")
     if glossary.get("source_blocks_sha256") != sha256_file(work_dir / "blocks.jsonl"):
         raise SystemExit(
             "glossary was created for different source blocks; reinitialize and review it"
@@ -156,14 +168,22 @@ def main() -> None:
         )
 
     plan = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "profile_id": profile["id"],
+        "profile_sha256": profile_sha256,
+        "profile_file_sha256": (
+            sha256_file(work_dir / "profile.json")
+            if (work_dir / "profile.json").is_file()
+            else None
+        ),
+        "document_ir_sha256": sha256_file(work_dir / "document-ir.json") if (work_dir / "document-ir.json").is_file() else None,
         "source_pdf_sha256": manifest["source_sha256"],
         "source_manifest_sha256": sha256_file(work_dir / "manifest.json"),
         "source_blocks_sha256": sha256_file(work_dir / "blocks.jsonl"),
         "source_audit_sha256": sha256_file(work_dir / "source-audit.json"),
         "glossary_sha256": sha256_file(glossary_path),
-        "target_language": "zh-CN",
-        "translation_policy": "English source first; faithful Simplified Chinese; preserve every placeholder exactly once.",
+        "target_language": profile["translation"]["target_language"],
+        "translation_policy": profile["translation"]["policy"],
         "expected_segment_count": len(requests),
         "expected_ids": [item["id"] for item in requests],
         "batch_count": len(chunks),

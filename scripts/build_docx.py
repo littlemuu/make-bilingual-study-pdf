@@ -14,6 +14,7 @@ from docx import Document
 
 from docx_ast import transform
 import docx_style
+from profile import load_profile
 
 
 def run(command: list[str]) -> None:
@@ -32,18 +33,34 @@ def main() -> None:
     parser.add_argument("output_docx", type=Path)
     parser.add_argument("--resource-path", type=Path)
     parser.add_argument("--reference-doc", type=Path)
+    parser.add_argument(
+        "--profile",
+        default="assignment-en-zh",
+        help="built-in profile id or path to profile JSON",
+    )
     parser.add_argument("--expected-problems", type=int)
-    parser.add_argument("--title", default="English-Chinese Bilingual Study Edition")
-    parser.add_argument("--header-label", default="Bilingual study edition")
-    parser.add_argument("--footer-label", default="英中双语学习版")
-    parser.add_argument("--latin-font", default=docx_style.LATIN_FONT)
-    parser.add_argument("--cjk-font", default=docx_style.CJK_FONT)
-    parser.add_argument("--code-font", default=docx_style.CODE_FONT)
+    parser.add_argument("--title")
+    parser.add_argument("--header-label")
+    parser.add_argument("--footer-label")
+    parser.add_argument("--latin-font")
+    parser.add_argument("--cjk-font")
+    parser.add_argument("--code-font")
     parser.add_argument("--work-dir", type=Path)
     args = parser.parse_args()
 
     source = args.input_markdown.resolve()
     output = args.output_docx.resolve()
+    try:
+        profile = load_profile(args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    defaults = profile["render"]["docx"]
+    args.title = args.title or defaults["title"]
+    args.header_label = args.header_label or defaults["header_label"]
+    args.footer_label = args.footer_label or defaults["footer_label"]
+    args.latin_font = args.latin_font or defaults["latin_font"]
+    args.cjk_font = args.cjk_font or defaults["cjk_font"]
+    args.code_font = args.code_font or defaults["code_font"]
     if not source.is_file():
         raise SystemExit(f"input Markdown not found: {source}")
     if shutil.which("pandoc") is None:
@@ -62,7 +79,7 @@ def main() -> None:
 
     run(["pandoc", str(source), "--from", "markdown", "--to", "json", "--output", str(ast_path)])
     ast = json.loads(ast_path.read_text(encoding="utf-8"))
-    grouped = transform(ast)
+    grouped = transform(ast, profile)
     problem_count = int(grouped.get("meta", {}).get("v2-problem-group-count", {}).get("c", "0"))
     if args.expected_problems is not None and problem_count != args.expected_problems:
         raise SystemExit(
@@ -90,6 +107,7 @@ def main() -> None:
     docx_style.LATIN_FONT = args.latin_font
     docx_style.CJK_FONT = args.cjk_font
     docx_style.CODE_FONT = args.code_font
+    docx_style.configure_profile(profile)
     document = Document(raw_docx)
     style_report = docx_style.apply_styles(
         document,
@@ -127,6 +145,7 @@ def main() -> None:
 
     report = {
         "status": "passed",
+        "profile": profile["id"],
         "output": str(output),
         "problem_groups": problem_count,
         **style_report,

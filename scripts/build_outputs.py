@@ -17,6 +17,7 @@ from common import (
     sha256_file,
     write_json,
 )
+from profile import canonical_profile_sha256, load_work_profile
 
 
 LATEX_REPLACEMENTS = {
@@ -567,8 +568,17 @@ def main() -> None:
     if emitted_external_uris != external_uris:
         raise SystemExit("not every external URI was emitted")
 
+    profile = load_work_profile(work_dir)
     build_manifest = {
         "schema_version": 1,
+        "profile_id": manifest.get("profile", {}).get("id"),
+        "profile_sha256": canonical_profile_sha256(profile),
+        "profile_file_sha256": (
+            sha256_file(work_dir / "profile.json")
+            if (work_dir / "profile.json").is_file()
+            else None
+        ),
+        "document_ir_sha256": sha256_file(work_dir / "document-ir.json") if (work_dir / "document-ir.json").is_file() else None,
         "source_pdf_sha256": manifest["source_sha256"],
         "source_manifest_sha256": sha256_file(work_dir / "manifest.json"),
         "source_blocks_sha256": sha256_file(work_dir / "blocks.jsonl"),

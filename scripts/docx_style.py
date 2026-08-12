@@ -26,13 +26,48 @@ TIP = "4D7C8A"
 TIP_FILL = "F3F8FA"
 EXAMPLE = "708890"
 EXAMPLE_FILL = "F6F8F9"
-CJK_RE = re.compile(r"[\u3400-\u9fff]")
+TARGET_TEXT_RE = re.compile(r"[\u3400-\u9fff]")
+CALLOUT_SOURCE_PATTERNS = {
+    "problem": re.compile(r"^Problem\s*[（(]", re.I),
+    "example": re.compile(r"^Example\s*[（(]", re.I),
+    "tip": re.compile(r"^Low-Resource Tip(?:\s*[:：]|$)", re.I),
+}
+CALLOUT_TARGET_PATTERNS = {
+    "problem": re.compile(r"^问题\s*[（(]", re.I),
+    "example": re.compile(r"^示例\s*[（(]", re.I),
+    "tip": re.compile(r"^低资源提示(?:\s*[:：]|$)", re.I),
+}
 PROBLEM_BEGIN = "V2-PROBLEM-CALLOUT-BEGIN"
 PROBLEM_END = "V2-PROBLEM-CALLOUT-END"
 
 
+def configure_profile(profile: dict) -> None:
+    global TARGET_TEXT_RE, CALLOUT_SOURCE_PATTERNS, CALLOUT_TARGET_PATTERNS
+    TARGET_TEXT_RE = re.compile(profile["translation"]["target_text_pattern"])
+    CALLOUT_SOURCE_PATTERNS = {
+        group["style"]: re.compile(group["source_pattern"], re.I)
+        for group in profile["semantics"]["groups"]
+    }
+    CALLOUT_TARGET_PATTERNS = {
+        group["style"]: re.compile(group["target_pattern"], re.I)
+        for group in profile["semantics"]["groups"]
+    }
+
+
 def has_cjk(text: str) -> bool:
-    return bool(CJK_RE.search(text))
+    return bool(TARGET_TEXT_RE.search(text))
+
+
+def callout_role(text: str, *, include_target: bool = True) -> str | None:
+    stripped = text.strip()
+    for role, pattern in CALLOUT_SOURCE_PATTERNS.items():
+        if pattern.search(stripped):
+            return role
+    if include_target:
+        for role, pattern in CALLOUT_TARGET_PATTERNS.items():
+            if pattern.search(stripped):
+                return role
+    return None
 
 
 def set_run_font(run, name: str, size: float, *, color: str = INK, bold: bool | None = None) -> None:
@@ -204,8 +239,9 @@ def is_math_paragraph(paragraph) -> bool:
 
 def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[int]]:
     def starts_callout(paragraph) -> bool:
-        text = paragraph.text.strip()
-        return text.startswith(("Problem (", "Low-Resource Tip", "Example ("))
+        # Target-language labels belong to the current bilingual callout. Only
+        # source-language labels or explicit range markers may open a new range.
+        return callout_role(paragraph.text, include_target=False) is not None
 
     ranges: list[tuple[int, int, str]] = []
     marker_indices: list[int] = []
@@ -235,13 +271,10 @@ def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[in
         if paragraph.style.name != "Block Text":
             index += 1
             continue
-        if text.startswith("Problem (") and not problem_ranges:
-            role = "problem"
-        elif text.startswith("Low-Resource Tip"):
-            role = "tip"
-        elif text.startswith("Example ("):
-            role = "example"
-        else:
+        role = callout_role(text, include_target=False)
+        if role == "problem" and problem_ranges:
+            role = None
+        if role is None:
             index += 1
             continue
         end = index
@@ -474,7 +507,8 @@ def apply_styles(
         ),
         "standalone_tip_callouts": sum(1 for _, _, role in callout_ranges if role == "tip"),
         "semantic_tip_labels": sum(
-            paragraph.text.count("Low-Resource Tip") for paragraph in paragraphs
+            bool(CALLOUT_SOURCE_PATTERNS["tip"].search(paragraph.text.strip()))
+            for paragraph in paragraphs
         ),
         "example_callouts": sum(1 for _, _, role in callout_ranges if role == "example"),
     }

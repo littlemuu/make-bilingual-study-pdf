@@ -16,6 +16,8 @@ from common import (
     sha256_text,
     write_json,
 )
+from document_ir import validate_ir_against_sources
+from profile import canonical_profile_sha256, load_work_profile
 
 
 def page_overlap(oracle: str, extracted: str) -> tuple[int, int, float]:
@@ -31,8 +33,8 @@ def main() -> None:
         description="Audit extracted source blocks against an independent Poppler text oracle."
     )
     parser.add_argument("work_dir", type=Path)
-    parser.add_argument("--minimum-global-coverage", type=float, default=0.95)
-    parser.add_argument("--warn-page-below", type=float, default=0.75)
+    parser.add_argument("--minimum-global-coverage", type=float)
+    parser.add_argument("--warn-page-below", type=float)
     args = parser.parse_args()
 
     work_dir = args.work_dir.expanduser().resolve()
@@ -52,6 +54,39 @@ def main() -> None:
 
     failures: list[str] = []
     warnings: list[str] = []
+    profile = None
+    ir_role_counts: dict[str, int] = {}
+    if manifest.get("profile"):
+        try:
+            profile = load_work_profile(work_dir)
+            expected_binding = {
+                "id": profile["id"],
+                "sha256": canonical_profile_sha256(profile),
+            }
+            if manifest.get("profile") != expected_binding:
+                failures.append("manifest profile binding is stale or mismatched")
+            failures.extend(validate_ir_against_sources(work_dir, profile))
+            ir_path = work_dir / "document-ir.json"
+            if ir_path.is_file():
+                ir_role_counts = read_json(ir_path).get("inventories", {}).get(
+                    "semantic_role_counts", {}
+                )
+        except (ValueError, KeyError, FileNotFoundError) as exc:
+            failures.append(f"invalid profile binding: {exc}")
+    minimum_global_coverage = (
+        args.minimum_global_coverage
+        if args.minimum_global_coverage is not None
+        else profile.get("qa", {}).get("minimum_global_fivegram_coverage", 0.95)
+        if profile
+        else 0.95
+    )
+    warn_page_below = (
+        args.warn_page_below
+        if args.warn_page_below is not None
+        else profile.get("qa", {}).get("warn_page_below", 0.75)
+        if profile
+        else 0.75
+    )
     source_pdf = Path(manifest["source_pdf"])
     if not source_pdf.is_file():
         failures.append(f"source PDF no longer exists: {source_pdf}")
@@ -128,16 +163,16 @@ def main() -> None:
         )
         if len(ascii_tokens(oracle)) >= 20 and not page_blocks:
             failures.append(f"page {page_number} has oracle text but no extracted blocks")
-        if score < args.warn_page_below:
+        if score < warn_page_below:
             warnings.append(
                 f"page {page_number} five-gram coverage {score:.3f} requires visual review"
             )
 
     global_coverage = total_hits / total_grams if total_grams else 1.0
-    if global_coverage < args.minimum_global_coverage:
+    if global_coverage < minimum_global_coverage:
         failures.append(
             f"global five-gram coverage {global_coverage:.4f} below "
-            f"{args.minimum_global_coverage:.4f}"
+            f"{minimum_global_coverage:.4f}"
         )
 
     oracle_problem_ids = set(problem_ids(oracle_text))
@@ -211,8 +246,23 @@ def main() -> None:
 
     report = {
         "status": "failed" if failures else "passed",
+        "profile": profile["id"] if profile else "legacy-unbound",
+        "source_manifest_sha256": sha256_file(manifest_path),
+        "source_blocks_sha256": sha256_file(blocks_path),
+        "profile_sha256": canonical_profile_sha256(profile) if profile else None,
+        "profile_file_sha256": (
+            sha256_file(work_dir / "profile.json")
+            if (work_dir / "profile.json").is_file()
+            else None
+        ),
+        "document_ir_sha256": (
+            sha256_file(work_dir / "document-ir.json")
+            if (work_dir / "document-ir.json").is_file()
+            else None
+        ),
+        "semantic_role_counts": ir_role_counts,
         "global_fivegram_coverage": round(global_coverage, 4),
-        "minimum_global_coverage": args.minimum_global_coverage,
+        "minimum_global_coverage": minimum_global_coverage,
         "problem_ids": {
             "oracle": sorted(oracle_problem_ids),
             "extracted": sorted(extracted_problem_ids),

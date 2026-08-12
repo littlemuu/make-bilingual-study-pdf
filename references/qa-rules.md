@@ -6,6 +6,8 @@ All gates are mandatory. A later gate never excuses an earlier failure.
 
 Pass only when:
 
+- the bound Profile is valid and matches the manifest Profile hash;
+- `document-ir.json` exactly matches the Profile, manifest, and source blocks;
 - the source PDF hash is unchanged;
 - at least 70% of pages contain at least 100 normalized text characters;
 - PyMuPDF and the independent Poppler oracle agree on page count;
@@ -16,6 +18,9 @@ Pass only when:
 - every protected font span points to the exact stored source substring;
 - every visual and link reference resolves.
 
+Reject a stale IR even when `blocks.jsonl` remains readable. Reject inferred complete
+semantic membership when the adapter records only an anchor.
+
 Low per-page coverage is a visual-review trigger even when the global score passes.
 Do not describe the five-gram score as a literal percentage of semantic completeness;
 it is a conservative missing-sequence detector.
@@ -24,6 +29,7 @@ it is a conservative missing-sequence detector.
 
 Pass only when:
 
+- Profile and document IR hashes still match the frozen translation plan;
 - request files and glossary still match their frozen hashes;
 - the response ID set equals the expected ID set in the same deterministic order;
 - no ID is duplicated or extra;
@@ -42,6 +48,7 @@ gate is incomplete or failed.
 
 Pass only when:
 
+- Profile and document IR hashes still match the build manifest;
 - all source, audit, glossary, and translation inputs retain their build-time hashes;
 - Markdown and XeLaTeX retain their generated hashes;
 - every source block has exactly one explicit disposition;

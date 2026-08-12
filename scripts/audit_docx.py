@@ -9,17 +9,14 @@ import zipfile
 from pathlib import Path
 
 from lxml import etree
+from profile import load_profile, semantic_group, target_text_pattern
 
 
 W_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
-CJK_RE = re.compile(r"[\u3400-\u9fff]")
-PROBLEM_RE = re.compile(r"Problem \(([^)]+)\)")
-EXAMPLE_RE = re.compile(r"Example \(([^)]+)\)")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("docx", type=Path)
+    parser.add_argument("--profile", default="assignment-en-zh")
     parser.add_argument("--expected-problems", type=int)
     parser.add_argument("--expected-examples", type=int)
     parser.add_argument("--expected-tips", type=int)
@@ -27,6 +24,18 @@ def main() -> None:
     parser.add_argument("--minimum-images", type=int, default=0)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+    try:
+        profile = load_profile(args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    target_re = target_text_pattern(profile)
+    problem_re = re.compile(
+        semantic_group(profile, "problem")["source_pattern"], re.I | re.M
+    )
+    example_re = re.compile(
+        semantic_group(profile, "example")["source_pattern"], re.I | re.M
+    )
+    tip_re = re.compile(semantic_group(profile, "tip")["source_pattern"], re.I | re.M)
 
     with zipfile.ZipFile(args.docx) as archive:
         document_xml = archive.read("word/document.xml")
@@ -45,9 +54,9 @@ def main() -> None:
             if name.startswith("word/media/") and not name.endswith("/")
         ]
 
-    problem_ids = PROBLEM_RE.findall(text)
-    example_ids = EXAMPLE_RE.findall(text)
-    tips = text.count("Low-Resource Tip")
+    problem_ids = [match.groupdict().get("identifier") for match in problem_re.finditer(text)]
+    example_ids = [match.groupdict().get("identifier") for match in example_re.finditer(text)]
+    tips = len(list(tip_re.finditer(text)))
     problem_ranges = []
     active = []
 
@@ -60,7 +69,7 @@ def main() -> None:
             for paragraph in active
             for text in paragraph.xpath(".//w:t/text()", namespaces=W_NS)
         ).lstrip()
-        if range_text.startswith("Problem ("):
+        if problem_re.search(range_text):
             problem_ranges.append(active)
         active = []
 
@@ -128,7 +137,7 @@ def main() -> None:
         "docx_opens": True,
         "problem_ids_are_unique": len(problem_ids) == len(set(problem_ids)),
         "no_internal_problem_markers": "V2-PROBLEM-CALLOUT" not in text,
-        "chinese_present": bool(CJK_RE.search(text)),
+        "chinese_present": bool(target_re.search(text)),
         "minimum_images_met": len(images) >= args.minimum_images,
         "problem_callout_borders_are_aligned": (
             len(problem_ranges) == len(problem_ids) and all(stable_problem_ranges)
@@ -145,6 +154,7 @@ def main() -> None:
 
     report = {
         "status": "passed" if all(checks.values()) else "failed",
+        "profile": profile["id"],
         "docx": str(args.docx.resolve()),
         "problem_count": len(problem_ids),
         "problem_ids": problem_ids,
@@ -154,7 +164,7 @@ def main() -> None:
         "external_link_count": len(external_links),
         "external_links": external_links,
         "image_count": len(images),
-        "chinese_character_count": len(CJK_RE.findall(text)),
+        "chinese_character_count": len(target_re.findall(text)),
         "checks": checks,
         "failures": [name for name, value in checks.items() if not value],
     }

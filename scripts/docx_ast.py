@@ -7,6 +7,7 @@ import json
 import re
 from pathlib import Path
 
+from profile import load_profile, semantic_match
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 LEADING_NUMBER_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+")
@@ -282,11 +283,17 @@ def transform_headers(blocks: list[dict]) -> list[dict]:
     return output
 
 
-def transform(document: dict) -> dict:
+def transform(document: dict, profile: dict | None = None) -> dict:
+    active_profile = profile or load_profile()
     blocks: list[dict] = []
     problem_count = 0
     for block in document.get("blocks", []):
-        if block.get("t") == "BlockQuote" and "Problem (" in stringify(block):
+        semantic = (
+            semantic_match(active_profile, stringify(block))
+            if block.get("t") == "BlockQuote"
+            else None
+        )
+        if semantic and semantic["role"] == "problem" and semantic["docx_regroup"]:
             blocks.append(group_problem(block))
             problem_count += 1
         else:
@@ -304,9 +311,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--profile", default="assignment-en-zh")
     args = parser.parse_args()
     document = json.loads(args.input.read_text(encoding="utf-8"))
-    transformed = transform(document)
+    try:
+        profile = load_profile(args.profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    transformed = transform(document, profile)
     args.output.write_text(json.dumps(transformed, ensure_ascii=False) + "\n", encoding="utf-8")
     print(args.output)
 

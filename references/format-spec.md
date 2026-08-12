@@ -30,6 +30,21 @@
 - The selected CJK font family must resolve exactly through Fontconfig. A Latin-font
   fallback is a hard failure even if DOCX/PDF text extraction still returns Chinese.
 
+## V2.2 Profile and IR contract
+
+- Bind every new job to `profiles/assignment-en-zh.json` or another implemented and
+  validated Profile. Copy it into the work directory so resumed jobs never inherit
+  later Profile edits.
+- Generate `document-ir.json` after extraction. It hash-binds ordered source nodes,
+  semantic anchors, source evidence, links, visuals, and the active Profile.
+- Native PDF semantic groups are `anchor-only` unless the adapter has structural proof
+  of complete membership. Do not guess a callout range from nearby paragraphs.
+- Treat Profile, IR, manifest, and blocks as one frozen input set. A change to any
+  member invalidates downstream translation plans and builds.
+- Use `scripts/pipeline.py` as the deterministic entry point for setup, status/recovery,
+  translation preparation, build, DOCX/PDF stages, and finalization. Translation
+  responses and visual approval remain explicit checkpoints.
+
 ## Preservation rules
 
 - Keep formulas, mathematical symbols, code, identifiers, CLI flags, paths, URLs,
@@ -49,6 +64,8 @@
 
 ```text
 WORK_DIR/
+  profile.json                  frozen job Profile
+  document-ir.json              Profile-bound unified document IR
   manifest.json                 source hash, pages, links, visuals, tool versions
   blocks.jsonl                  stable source blocks with IDs, hashes, coordinates
   oracle.txt                    independent Poppler text extraction

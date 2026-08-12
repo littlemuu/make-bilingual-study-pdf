@@ -83,6 +83,7 @@ def main() -> None:
     if not exact_cjk_font or not resolved_cjk_file:
         report = {
             "status": "failed",
+            "automated_status": "failed",
             "requested_cjk_font": args.cjk_font,
             "resolved_cjk_family": resolved_cjk_family,
             "resolved_cjk_file": resolved_cjk_file,
@@ -210,6 +211,9 @@ def main() -> None:
         checks["problem_count_matches"] = len(problem_ids) == args.expected_problems
     report = {
         "status": "passed" if all(checks.values()) else "failed",
+        "automated_status": "passed" if all(checks.values()) else "failed",
+        "docx": source.name,
+        "pdf": target.name,
         "docx_sha256": sha256(source),
         "pdf_sha256": sha256(target),
         "page_count": len(page_sizes),
@@ -224,6 +228,7 @@ def main() -> None:
         "minimum_page_text_characters": min(text_lengths) if text_lengths else 0,
         "minimum_nonwhite_fraction": min(nonwhite_fractions) if nonwhite_fractions else 0,
         "checks": checks,
+        "warnings": [],
         "failures": [name for name, value in checks.items() if not value],
     }
     args.audit_output.parent.mkdir(parents=True, exist_ok=True)

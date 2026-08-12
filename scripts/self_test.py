@@ -11,14 +11,23 @@ from pathlib import Path
 import fitz
 from PIL import Image
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from lxml import etree
 
 from common import read_json, read_jsonl, sha256_file, sha256_text, write_json, write_jsonl
 from build_outputs import latex_escape
-from docx_style import has_legacy_horizontal_rule, style_callout
+from docx_style import (
+    configure_profile,
+    find_callout_ranges,
+    has_legacy_horizontal_rule,
+    style_callout,
+)
 from extract_pdf import invalid_pngs, repair_truncated_renders
+from document_ir import migrate_work_dir, validate_ir_against_sources
+from pipeline import translation_plan_status
+from profile import canonical_profile_sha256, load_profile, semantic_match
 from translation_utils import protect_source, restore_placeholders
 
 
@@ -69,6 +78,9 @@ def write_responses(work_dir: Path, mutate=None) -> None:
 
 def setup(work_dir: Path) -> None:
     work_dir.mkdir()
+    profile = load_profile("assignment-en-zh")
+    write_json(work_dir / "profile.json", profile)
+    write_json(work_dir / "document-ir.json", {"fixture": True})
     blocks = [
         {
             "id": "p001-b001",
@@ -136,6 +148,78 @@ def setup(work_dir: Path) -> None:
 
 def main() -> None:
     results = []
+    profile = load_profile("assignment-en-zh")
+    assert profile["translation"]["target_language"] == "zh-CN"
+    assert semantic_match(profile, "Problem (profile_fixture): Test")["role"] == "problem"
+    assert semantic_match(profile, "Example (profile_fixture): Test")["role"] == "example"
+    assert semantic_match(profile, "Low-Resource Tip: Test")["role"] == "tip"
+    results.append("default profile validates and classifies all assignment semantic roles")
+
+    with tempfile.TemporaryDirectory(prefix="bilingual-ir-test-") as temp:
+        work_dir = Path(temp)
+        fixture_blocks = [
+            {
+                "id": "p001-b001",
+                "page": 1,
+                "bbox": [10, 10, 100, 30],
+                "source": "Problem (ir_fixture): Test",
+                "kind": "callout",
+                "translatable": True,
+                "protected_spans": [],
+                "links": [],
+            },
+            {
+                "id": "p001-b002",
+                "page": 1,
+                "bbox": [10, 40, 100, 60],
+                "source": "Example (ir_example): Test",
+                "kind": "callout",
+                "translatable": True,
+                "protected_spans": [],
+                "links": [],
+            },
+            {
+                "id": "p001-b003",
+                "page": 1,
+                "bbox": [10, 70, 100, 90],
+                "source": "Low-Resource Tip: Test",
+                "kind": "callout",
+                "translatable": True,
+                "protected_spans": [],
+                "links": [],
+            },
+        ]
+        for block in fixture_blocks:
+            block["source_sha256"] = sha256_text(block["source"])
+        write_jsonl(work_dir / "blocks.jsonl", fixture_blocks)
+        write_json(
+            work_dir / "manifest.json",
+            {
+                "schema_version": 3,
+                "source_pdf": "/fixture/source.pdf",
+                "source_sha256": "0" * 64,
+                "page_count": 1,
+                "external_uris": [],
+                "visuals": [],
+                "artifacts": {"blocks": "blocks.jsonl"},
+            },
+        )
+        ir_path = migrate_work_dir(work_dir, "assignment-en-zh")
+        ir = read_json(ir_path)
+        assert ir["inventories"]["semantic_role_counts"] == {
+            "problem": 1,
+            "example": 1,
+            "tip": 1,
+        }
+        assert all(
+            group["membership"] == "anchor-only" for group in ir["semantic_groups"]
+        )
+        assert validate_ir_against_sources(work_dir) == []
+        fixture_blocks[0]["source"] = "Problem (ir_fixture): Changed"
+        fixture_blocks[0]["source_sha256"] = sha256_text(fixture_blocks[0]["source"])
+        write_jsonl(work_dir / "blocks.jsonl", fixture_blocks)
+        assert validate_ir_against_sources(work_dir)
+        results.append("document IR is profile-bound, explicit about evidence, and detects drift")
     wrapped_url_block = {
         "source": "Read https://example.\ncom/study_fixture for details.",
         "protected_spans": [
@@ -301,9 +385,98 @@ def main() -> None:
         assert audit.returncode == 0, audit.stdout + audit.stderr
         results.append("numbered Problem borders share one origin and one bounded divider")
 
+    configure_profile(profile)
+    document = Document()
+    document.styles.add_style("Block Text", WD_STYLE_TYPE.PARAGRAPH)
+    callout_paragraphs = [
+        document.add_paragraph("Low-Resource Tip: Source label", style="Block Text"),
+        document.add_paragraph("低资源提示：目标语言标签", style="Block Text"),
+        document.add_paragraph("Example (range_fixture): Source label", style="Block Text"),
+        document.add_paragraph("示例（range_fixture）：目标语言标签", style="Block Text"),
+    ]
+    ranges, _markers = find_callout_ranges(callout_paragraphs)
+    assert [(start, end, role) for start, end, role in ranges] == [
+        (0, 1, "tip"),
+        (2, 3, "example"),
+    ]
+    results.append("target-language labels stay inside rather than reopening semantic callouts")
+
+    with tempfile.TemporaryDirectory(prefix="bilingual-docx-finalize-test-") as temp:
+        work_dir = Path(temp)
+        output_dir = work_dir / "output"
+        translation_dir = work_dir / "translation"
+        output_dir.mkdir()
+        translation_dir.mkdir()
+        write_json(work_dir / "manifest.json", {"source_sha256": "0" * 64})
+        for path, payload in (
+            (output_dir / "fixture.md", "source\n\n译文\n"),
+            (output_dir / "fixture.tex", "fixture\n"),
+            (output_dir / "fixture.docx", "docx fixture\n"),
+            (output_dir / "fixture.pdf", "pdf fixture\n"),
+        ):
+            path.write_text(payload, encoding="utf-8")
+        write_json(
+            output_dir / "build-manifest.json",
+            {"markdown": "fixture.md", "latex": "fixture.tex"},
+        )
+        write_json(work_dir / "source-audit.json", {"status": "passed"})
+        write_json(translation_dir / "translation-audit.json", {"status": "passed"})
+        write_json(output_dir / "output-audit.json", {"status": "passed"})
+        pdf_hash = sha256_file(output_dir / "fixture.pdf")
+        write_json(
+            output_dir / "compile-audit.json",
+            {
+                "status": "passed",
+                "automated_status": "passed",
+                "docx": "fixture.docx",
+                "pdf": "fixture.pdf",
+                "pdf_sha256": pdf_hash,
+                "page_count": 1,
+                "warnings": [],
+            },
+        )
+        write_json(
+            output_dir / "visual-review.json",
+            {"status": "passed", "pdf_sha256": pdf_hash, "reviewed_pages": [1]},
+        )
+        finalized = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "finalize_qa.py"), str(work_dir)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert finalized.returncode == 0, finalized.stdout + finalized.stderr
+        qa = read_json(output_dir / "qa-report.json")
+        assert qa["status"] == "passed" and "docx" in qa["deliverables"]
+        results.append("DOCX-profile compile and visual gates finalize all editable deliverables")
+
     with tempfile.TemporaryDirectory(prefix="bilingual-skill-self-test-") as temp:
         work_dir = Path(temp) / "work"
         setup(work_dir)
+
+        plan_path = work_dir / "translation" / "plan.json"
+        plan = read_json(plan_path)
+        assert plan["profile_sha256"] == canonical_profile_sha256(profile)
+        assert plan["profile_file_sha256"] == sha256_file(work_dir / "profile.json")
+        assert translation_plan_status(work_dir, plan_path) == "passed"
+        request_path = work_dir / "translation" / plan["batches"][0]["request_file"]
+        request_path.write_text(
+            request_path.read_text(encoding="utf-8") + "\n", encoding="utf-8"
+        )
+        assert translation_plan_status(work_dir, plan_path) == "stale"
+        subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "prepare_translation.py"),
+                str(work_dir),
+                "--max-source-chars",
+                "1000",
+                "--force",
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        results.append("canonical Profile hashes and frozen request batches have distinct verified bindings")
 
         write_responses(work_dir)
         report = run("audit_translation.py", work_dir, True)

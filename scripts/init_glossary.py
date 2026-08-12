@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from common import read_jsonl, sha256_file, write_json
+from profile import canonical_profile_sha256, load_work_profile
 
 
 def main() -> None:
@@ -27,9 +28,15 @@ def main() -> None:
         raise SystemExit(f"glossary already exists: {glossary_path}")
 
     blocks = read_jsonl(blocks_path)
+    try:
+        profile = load_work_profile(work_dir)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     glossary = {
         "schema_version": 1,
-        "target_language": "zh-CN",
+        "profile_id": profile["id"],
+        "profile_sha256": canonical_profile_sha256(profile),
+        "target_language": profile["translation"]["target_language"],
         "source_blocks_sha256": sha256_file(blocks_path),
         "instructions": (
             "Review before planning. Add repeated domain terms only; use enforce=true "

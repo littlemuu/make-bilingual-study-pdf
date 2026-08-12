@@ -35,7 +35,10 @@ def main() -> None:
     for name in ("source", "translation", "output", "visual"):
         if name in reports and reports[name].get("status") != "passed":
             failures.append(f"{name} gate is {reports[name].get('status')}")
-    if "compile" in reports and reports["compile"].get("automated_status") != "passed":
+    if "compile" in reports and (
+        reports["compile"].get("automated_status")
+        or reports["compile"].get("status")
+    ) != "passed":
         failures.append("compile automated gate is not passed")
     if "compile" in reports and "visual" in reports:
         if reports["compile"].get("pdf_sha256") != reports["visual"].get("pdf_sha256"):
@@ -48,11 +51,15 @@ def main() -> None:
     deliverables = {}
     if not failures:
         build = read_json(output_dir / "build-manifest.json")
-        for label, relative in (
-            ("markdown", build["markdown"]),
-            ("latex", build["latex"]),
-            ("pdf", reports["compile"]["pdf"]),
-        ):
+        candidates = [
+            ("markdown", build.get("markdown")),
+            ("latex", build.get("latex")),
+            ("docx", reports["compile"].get("docx")),
+            ("pdf", reports["compile"].get("pdf")),
+        ]
+        for label, relative in candidates:
+            if not relative:
+                continue
             path = output_dir / relative
             if not path.is_file():
                 failures.append(f"missing final {label}: {relative}")
@@ -69,7 +76,11 @@ def main() -> None:
             or read_json(work_dir / "manifest.json").get("source_sha256")
         ),
         "gate_statuses": {
-            name: report.get("status") if name != "compile" else report.get("automated_status")
+            name: (
+                report.get("status")
+                if name != "compile"
+                else report.get("automated_status") or report.get("status")
+            )
             for name, report in reports.items()
         },
         "deliverables": deliverables,

@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from common import read_json, read_jsonl, sha256_file, write_json
+from profile import canonical_profile_sha256, load_work_profile
 
 
 MARKER_RE = re.compile(
@@ -45,9 +46,20 @@ def main() -> None:
             "translations_merged_sha256"
         ],
     }
+    if build.get("profile_file_sha256"):
+        inputs[work_dir / "profile.json"] = build["profile_file_sha256"]
+    if build.get("document_ir_sha256"):
+        inputs[work_dir / "document-ir.json"] = build["document_ir_sha256"]
     for path, expected in inputs.items():
         if not path.is_file() or sha256_file(path) != expected:
             failures.append(f"build input changed: {path.relative_to(work_dir)}")
+    try:
+        if build.get("profile_sha256") != canonical_profile_sha256(
+            load_work_profile(work_dir)
+        ):
+            failures.append("build input changed: canonical profile")
+    except ValueError as exc:
+        failures.append(f"invalid profile binding: {exc}")
 
     markdown_path = output_dir / build["markdown"]
     latex_path = output_dir / build["latex"]
@@ -121,6 +133,7 @@ def main() -> None:
 
     report = {
         "status": "failed" if failures else "passed",
+        "profile": build.get("profile_id") or "legacy-unbound",
         "markdown": build.get("markdown"),
         "latex": build.get("latex"),
         "block_count": len(blocks),
