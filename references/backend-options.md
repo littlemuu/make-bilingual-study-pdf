@@ -10,7 +10,8 @@ needs original-page layout preservation.
 |---|---|---|---|
 | Original-layout scientific bilingual PDF | [BabelDOC](https://github.com/funstory-ai/BabelDOC) | Parsing/rendering stages, formula-aware translation, glossary support, and OpenAI-compatible translation APIs | Treat as an optional extraction/rendering backend. Do not copy or bundle its AGPL-3.0 code. Keep this skill's hashes, record IDs, audits, and English-first study output as a separate path. |
 | Mature scientific-PDF translation interface | [PDFMathTranslate](https://github.com/PDFMathTranslate/PDFMathTranslate) | Layout-preserving translation with formulas, charts, annotations, CLI, GUI, and multiple providers | Recommend only when source-layout preservation is the primary requirement. It is AGPL-3.0; do not silently add it as a dependency. |
-| Scans, complex tables, or difficult multi-column extraction | [MinerU](https://github.com/opendatalab/MinerU) | OCR-capable structured Markdown/JSON extraction, tables, formulas, and complex layouts | Future opt-in backend. Confirm its model/download footprint and license terms before installation. Convert its output into the Profile-bound document IR, retain parser evidence, and rerun all audits. |
+| Native-text papers/notes already parsed by MinerU | [MinerU](https://github.com/opendatalab/MinerU) | Structured legacy JSON, tables, formulas, visuals, and complex reading order | V2.3 imports frozen stable 3.x `pipeline` output without installing or running MinerU. Require hash-equal `origin.pdf`, freeze every input/asset, and rerun independent Poppler/source audits. |
+| Scans or garbled pages parsed by MinerU | [MinerU](https://github.com/opendatalab/MinerU) | OCR/layout evidence for manual comparison | Import may prepare source/layout/span comparison pages, but status remains `manual_source_review_required`; it cannot automatically pass source or final QA. |
 | General document conversion or VLM-assisted parsing | [Docling](https://github.com/docling-project/docling) | PDF/Office/image conversion to structured Markdown or JSON through CLI and Python APIs | Future opt-in backend for unsupported inputs. Never treat its output as proof of completeness; compare it against an independent oracle and the rendered pages. |
 
 ## Architectural boundary
@@ -36,3 +37,15 @@ source. PyMuPDF supplies geometry, fonts, links, and crops; Poppler independentl
 checks text sequences and renders pages. This gives the workflow two independent
 views of the source without model downloads or a copyleft runtime dependency. The
 more capable backends above remain replaceable options for later versions.
+
+## MinerU V2.3 support boundary
+
+The verified public fixture records MinerU 3.4.4 with `_backend: "pipeline"` and the
+legacy flat `content_list.json` format. Other stable 3.x pipeline versions are accepted
+only after strict field validation and recorded as compatible rather than fixture-
+verified. VLM, hybrid, office, prerelease/4.x output, `content_list_v2.json`-only output,
+and `structured_content.json` are not accepted as V2.3 success inputs.
+
+Review MinerU's current license before each release or hosted-service deployment. The
+importer contains no MinerU code, model, or weight and never invokes its CLI; that does
+not remove an operator's obligations for the external parser they chose to run.

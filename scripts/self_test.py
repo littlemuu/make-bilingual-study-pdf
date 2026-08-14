@@ -34,6 +34,29 @@ from translation_utils import protect_source, restore_placeholders
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
+def working_command(name: str) -> str:
+    """Return a probed executable, bypassing broken shell wrappers if needed."""
+    seen: set[str] = set()
+    for candidate in (shutil.which(name), shutil.which(f"{name}.exe")):
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            probe = subprocess.run(
+                [candidate, "-v"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
+            return candidate
+    raise AssertionError(f"no working {name} executable is available")
+
+
 def run(script: str, work_dir: Path, expect_success: bool) -> dict:
     completed = subprocess.run(
         [sys.executable, str(SCRIPT_DIR / script), str(work_dir)],
@@ -313,8 +336,7 @@ def main() -> None:
         document.close()
         broken_render = temp_dir / "page-1.png"
         broken_render.write_bytes(b"not a PNG")
-        pdftoppm = shutil.which("pdftoppm")
-        assert pdftoppm is not None
+        pdftoppm = working_command("pdftoppm")
         repair_truncated_renders(pdftoppm, pdf_path, [broken_render], 72)
         assert invalid_pngs([broken_render]) == []
         results.append("single-page retry repairs a truncated PNG with a blocking copy")
@@ -423,6 +445,16 @@ def main() -> None:
         write_json(translation_dir / "translation-audit.json", {"status": "passed"})
         write_json(output_dir / "output-audit.json", {"status": "passed"})
         pdf_hash = sha256_file(output_dir / "fixture.pdf")
+        contact_dir = output_dir / "contact"
+        contact_dir.mkdir()
+        contact_path = contact_dir / "contact-001.png"
+        Image.new("RGB", (64, 64), "white").save(contact_path)
+        contact_record = {
+            "path": "contact/contact-001.png",
+            "sha256": sha256_file(contact_path),
+            "first_page": 1,
+            "last_page": 1,
+        }
         write_json(
             output_dir / "compile-audit.json",
             {
@@ -432,12 +464,22 @@ def main() -> None:
                 "pdf": "fixture.pdf",
                 "pdf_sha256": pdf_hash,
                 "page_count": 1,
+                "contact_sheets": [contact_record],
                 "warnings": [],
             },
         )
         write_json(
             output_dir / "visual-review.json",
-            {"status": "passed", "pdf_sha256": pdf_hash, "reviewed_pages": [1]},
+            {
+                "status": "passed",
+                "pdf_sha256": pdf_hash,
+                "reviewed_pages": [1],
+                "contact_sheets_inspected": [contact_record["path"]],
+                "contact_sheets_sha256": {
+                    contact_record["path"]: contact_record["sha256"]
+                },
+                "notes": "Inspected the synthetic one-page contact sheet.",
+            },
         )
         finalized = subprocess.run(
             [sys.executable, str(SCRIPT_DIR / "finalize_qa.py"), str(work_dir)],

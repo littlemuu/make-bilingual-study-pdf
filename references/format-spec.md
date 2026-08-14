@@ -45,6 +45,21 @@
   translation preparation, build, DOCX/PDF stages, and finalization. Translation
   responses and visual approval remain explicit checkpoints.
 
+## V2.3 generic Profile and MinerU contract
+
+- `academic-paper-en-zh` and `lecture-notes-en-zh` use schema V2 role inventories.
+  Every declared role is present in the inventory even when its allowed count is zero.
+- Every node has one explicit output: bilingual, source-only, visual-once, or
+  artifact-omitted. Code/equation/table bodies appear once; their natural-language
+  captions and footnotes remain independently translatable.
+- Role identity is separate from style identity. Multiple theorem-family roles may
+  share a visual style while retaining separate counts and ordering constraints.
+- The frozen MinerU adapter supports stable 3.x pipeline legacy output only. It binds a
+  hash-equal exported origin PDF, strict content/middle JSON, and every referenced
+  asset without installing or running MinerU.
+- Pattern-based semantic containers are anchor-only. Complete membership requires an
+  explicit adapter structural-membership proof listing every member.
+
 ## Preservation rules
 
 - Keep formulas, mathematical symbols, code, identifiers, CLI flags, paths, URLs,
@@ -67,6 +82,9 @@ WORK_DIR/
   profile.json                  frozen job Profile
   document-ir.json              Profile-bound unified document IR
   manifest.json                 source hash, pages, links, visuals, tool versions
+  adapter-evidence.json         frozen parser version/backend, inputs, assets, items
+  adapter-inputs/               frozen origin/content/middle input bytes
+  adapter-assets/               every frozen parser-referenced asset
   blocks.jsonl                  stable source blocks with IDs, hashes, coordinates
   oracle.txt                    independent Poppler text extraction
   source-audit.json             source completeness gate

@@ -1,0 +1,26 @@
+[
+  {
+    "id": "scan-title",
+    "type": "text",
+    "text": "Synthetic Scanned Lecture",
+    "text_level": 1,
+    "bbox": [80, 80, 920, 150],
+    "page_idx": 0
+  },
+  {
+    "id": "scan-body",
+    "type": "text",
+    "text": "This text exists only in the synthetic parser record. The source PDF page contains pixels rather than an independent native text layer, so the adapter must require manual source review instead of reporting a passed source state.",
+    "bbox": [80, 180, 920, 380],
+    "page_idx": 0
+  },
+  {
+    "id": "scan-image",
+    "type": "image",
+    "img_path": "images/scanned-page.png",
+    "image_caption": ["Figure S1. The synthetic image-only source page."],
+    "image_footnote": [],
+    "bbox": [80, 420, 920, 820],
+    "page_idx": 0
+  }
+]

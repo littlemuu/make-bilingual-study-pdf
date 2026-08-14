@@ -1,0 +1,36 @@
+{
+  "pdf_info": [
+    {
+      "page_idx": 0,
+      "page_size": [1000, 1000],
+      "preproc_blocks": [],
+      "para_blocks": [
+        {"type": "header", "bbox": [50, 10, 950, 30]},
+        {"type": "title", "bbox": [50, 40, 950, 80]},
+        {"type": "text", "bbox": [50, 90, 950, 120]},
+        {"type": "title", "bbox": [50, 130, 950, 160]},
+        {"type": "text", "bbox": [50, 170, 950, 220]},
+        {"type": "title", "bbox": [50, 230, 950, 260]},
+        {"type": "text", "bbox": [50, 270, 950, 320]},
+        {"type": "text", "bbox": [50, 325, 950, 345]},
+        {"type": "text", "bbox": [50, 350, 950, 370]},
+        {"type": "text", "bbox": [50, 375, 950, 395]},
+        {"type": "text", "bbox": [50, 400, 950, 420]},
+        {"type": "interline_equation", "bbox": [50, 330, 450, 370]},
+        {"type": "image", "bbox": [50, 380, 450, 500], "image_path": "images/diagram.png"},
+        {"type": "chart", "bbox": [500, 380, 950, 500], "image_path": "images/diagram.png"},
+        {"type": "table", "bbox": [50, 510, 950, 590], "image_path": "images/table.png"},
+        {"type": "code", "bbox": [50, 600, 450, 690]},
+        {"type": "algorithm", "bbox": [500, 600, 950, 690]},
+        {"type": "list", "bbox": [50, 700, 950, 770]},
+        {"type": "page_footnote", "bbox": [50, 900, 950, 925]},
+        {"type": "footer", "bbox": [50, 935, 950, 955]},
+        {"type": "page_number", "bbox": [475, 965, 525, 990]},
+        {"type": "aside_text", "bbox": [5, 300, 40, 700]}
+      ],
+      "discarded_blocks": []
+    }
+  ],
+  "_backend": "pipeline",
+  "_version_name": "3.4.4"
+}

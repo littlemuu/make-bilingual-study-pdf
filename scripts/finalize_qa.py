@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
+from audit_docx import validate_v2_compile_docx_binding
 from common import read_json, sha256_file, write_json
 
 
@@ -17,13 +18,26 @@ def main() -> None:
 
     work_dir = args.work_dir.expanduser().resolve()
     output_dir = work_dir / "output"
+    profile_path = work_dir / "profile.json"
+    profile = read_json(profile_path) if profile_path.is_file() else {}
+    ir_path = work_dir / "document-ir.json"
+    ir = read_json(ir_path) if ir_path.is_file() else {}
+    compile_path = output_dir / "compile-audit.json"
+    compile_hint = read_json(compile_path) if compile_path.is_file() else {}
+    schema_v2 = (
+        profile.get("schema_version") == 2
+        or ir.get("schema_version") == 2
+        or "docx_audit_bindings" in compile_hint
+    )
     gates = {
         "source": work_dir / "source-audit.json",
         "translation": work_dir / "translation" / "translation-audit.json",
         "output": output_dir / "output-audit.json",
-        "compile": output_dir / "compile-audit.json",
+        "compile": compile_path,
         "visual": output_dir / "visual-review.json",
     }
+    if schema_v2:
+        gates["docx"] = output_dir / "docx-audit.json"
     failures: list[str] = []
     reports = {}
     for name, path in gates.items():
@@ -32,7 +46,10 @@ def main() -> None:
             continue
         reports[name] = read_json(path)
 
-    for name in ("source", "translation", "output", "visual"):
+    status_gates = ["source", "translation", "output", "visual"]
+    if schema_v2:
+        status_gates.append("docx")
+    for name in status_gates:
         if name in reports and reports[name].get("status") != "passed":
             failures.append(f"{name} gate is {reports[name].get('status')}")
     if "compile" in reports and (
@@ -47,6 +64,26 @@ def main() -> None:
             "page_count"
         ):
             failures.append("visual review does not cover every compiled page")
+        contact_sheets = reports["compile"].get("contact_sheets")
+        if not isinstance(contact_sheets, list) or not contact_sheets:
+            failures.append("compile gate has no contact-sheet evidence")
+        else:
+            expected_contacts = [item.get("path") for item in contact_sheets]
+            if reports["visual"].get("contact_sheets_inspected") != expected_contacts:
+                failures.append("visual review did not inspect every compiled contact sheet")
+            expected_hashes = {
+                item.get("path"): item.get("sha256") for item in contact_sheets
+            }
+            if reports["visual"].get("contact_sheets_sha256") != expected_hashes:
+                failures.append("visual review contact-sheet hashes do not match compile QA")
+        if not str(reports["visual"].get("notes", "")).strip():
+            failures.append("visual review has no concrete inspection notes")
+
+    if schema_v2 and "compile" in reports and "docx" in reports:
+        _, binding_errors = validate_v2_compile_docx_binding(
+            work_dir, reports["compile"], gates["docx"]
+        )
+        failures.extend(f"DOCX freeze chain: {message}" for message in binding_errors)
 
     deliverables = {}
     if not failures:

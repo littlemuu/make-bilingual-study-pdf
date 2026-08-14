@@ -1,23 +1,77 @@
-# make-bilingual-study-pdf 项目交接：V2.2 基线与 V2.3 施工计划
+# make-bilingual-study-pdf 项目交接：V2.3 实施与验收
 
 > 更新时间：2026-08-14  
-> 当前公开基线：`main@104d5be48222825e59eb961a0c3d07d4a7606115`  
-> 下一目标：V2.3 — MinerU Adapter + `academic-paper-en-zh` / `lecture-notes-en-zh` Profiles
+> 当前发布分支：`main`
+>
+> 合并来源：PR #1（开发基线）与 PR #2（V2.3，均经审查后 squash 合并）
+>
+> 验收记录：`.github/V2.3_ACCEPTANCE.md`
+
+## 0. 当前实施状态
+
+V2.3 已于 2026-08-14 完成独立复验并通过，PR #2 的三项 P1 审查线程均已闭合，
+没有剩余阻塞项。获验收的实现代码为
+`50f526b9edbc8417cd1c336af52651803f6a159b`，获复验的证据 head 为
+`d666febd99ceae776a97c6544cb971e37504f974`；本次收尾只更新交接与验收记录，
+并在合并前再次通过同一组 required CI。PR #2 经授权标记 Ready 后 squash 合并
+至 `main`。
+
+最终实现会把 PyMuPDF `get_image_info()` 返回的未旋转图像矩形先经
+`page.rotation_matrix` 转换，再与旋转感知的 `page.rect` 裁剪并计算不重复并集。
+审阅者独立验证了 0°、90°、180°、270°及非零 CropBox，60% 栅格覆盖均精确为
+0.6；伪造覆盖率或删除人工审查理由，即使同步重绑 evidence/manifest/IR 哈希，
+仍会被冻结 origin PDF 的重新计算拒绝。四页混合扫描回归保持 native=1、
+adapter=0、文档比例 0.75，并停在 `manual_source_review_required`。
+
+最终 GitHub Actions
+[31809114971](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31809114971)
+的 `self-test` 与 `automated-forward` 均通过；MinerU 契约为 16/16。下载 artifact
+SHA-256 为 `a909d7ab0a9eb621589f46030a8f2275a0899039aaf64c6bc742fb1ee908dce7`。
+两个 Profile 的六张最终渲染与此前逐页人工复核集合逐字节一致；CI 没有伪造新的
+人工批准，缺少绑定到当前 PDF 字节的视觉签字时最终 QA 仍按设计 blocked。旧运行
+证据保留在 `.github/V2.3_ACCEPTANCE.md`，并明确标为 superseded。
+私有复杂论文/讲义与 CS336 90 页基线在本工作区不可用，验收记录明确保留该限制，
+未用公开合成测试冒充私有回归。
+
+已落地的主要能力：
+
+- 可选 `mineru-import` 适配器只消费用户提供的 MinerU stable 3.x `pipeline`
+  legacy 输出；不安装、不执行 MinerU，对 `vlm`、`hybrid`、`office`、预发布版、
+  4.x、缺失 origin 绑定和路径/资产逃逸全部 fail closed。
+- `academic-paper-en-zh` 与 `lecture-notes-en-zh` 两个 schema V2 Profile 已加入；
+  角色、样式、输出处置与 QA inventory 通用化，`assignment-en-zh` 文件字节及
+  canonical hash 保持不变。
+- IR、翻译计划、Markdown、DOCX、PDF 与最终 QA 均绑定 Profile、adapter
+  evidence、输入及资产哈希；显式结构证据才能形成 `complete` 容器，否则保持
+  `anchor-only`。
+- 扫描/严重乱码页只能进入 `manual_source_review_required`，不得由 MinerU
+  输出自行证明 source audit passed；人工 review 必须绑定 comparison、非空
+  contact sheets、逐页覆盖和最终 PDF 哈希。
+- MinerU 双字段表格同时冻结结构化 `table_body` 与 `img_path` 视觉节点；V2 DOCX
+  编译要求已通过且绑定精确 DOCX 字节的审计，最终 QA 会再次复核完整冻结链。
+- 提交了原创、可重生成的 MinerU 3.4.4 pipeline 合成夹具及故障注入测试；
+  本地快速矩阵继续包含旧基线 19 项，并分别报告 Profile、MinerU、IR/source、
+  output、DOCX 与 visual/freeze 专项结果。完整命令和最终验收证据以
+  `.github/V2.3_ACCEPTANCE.md` 为准。
+
+以下章节保留 V2.2 基线与 V2.3 冻结设计，供后续审计设计偏差；若描述与已经
+落地的 schema/CLI 冲突，以代码、Profile、测试和验收记录共同形成的当前契约
+为准。
 
 本文是施工交接上下文。实现前请先阅读仓库中的 `SKILL.md`、
 `references/profile-ir.md`、`references/qa-rules.md` 和
 `references/backend-options.md`。不要依赖此前对话才能理解本计划。
 
-## 1. 一句话现状
+## 1. V2.3 开工前的一句话现状（历史基线）
 
-V2.2 已把原先面向单份 CS336 作业的流程重构为“版本化 Profile + 统一文档
-IR + 可恢复 Pipeline”，并保持默认 `assignment-en-zh` 成品零回归；但目前
-**真正实现并承诺支持的输入仍只有 `native-text-pdf`**，Profile 的语义样式和
-DOCX 审计也仍带有 `Problem / Example / Tip` 专用假设。
+V2.2 当时已把原先面向单份 CS336 作业的流程重构为“版本化 Profile + 统一文档
+IR + 可恢复 Pipeline”，并保持默认 `assignment-en-zh` 成品零回归；在 V2.3
+开工前，真正实现并承诺支持的输入仍只有 `native-text-pdf`，Profile 的语义样式
+和 DOCX 审计也仍带有 `Problem / Example / Tip` 专用假设。
 
-V2.3 的任务不是安装或内嵌 MinerU，而是建立一个可选、可审计的 MinerU
-导入适配器，并让论文、讲义两类 Profile 真正走通同一套翻译、DOCX/PDF 和
-QA 链路。
+V2.3 随后按本交接文档冻结的边界完成：没有安装或内嵌 MinerU，而是建立可选、
+可审计的 MinerU 导入适配器，并让论文、讲义两类 Profile 走通同一套翻译、
+DOCX/PDF 和 QA 链路。当前发布结论以上面的实施状态与验收记录为准。
 
 ## 2. 已完成的 V2.2
 
@@ -125,9 +179,10 @@ V2.2 已用原始 47 页英文 PDF 做全新前向测试：
 真实课程 PDF、译文和 90 页成品不属于仓库测试夹具。不要把它们提交到公开
 仓库；若本地仍可用，可作为发布前的私有回归门。
 
-## 4. 当前明确限制与技术债
+## 4. V2.3 开工时的限制与技术债（历史基线）
 
-以下内容仍是“未支持”，不要在 V2.3 完成前更新技能描述宣称已经支持：
+以下内容记录 V2.3 开工时的未支持项，现由实现、测试和验收记录逐项取代；保留
+这些条目用于审计施工范围，不应再把它们解释成当前发布状态：
 
 1. `profile.py` 将输入适配器硬限制为 `native-text-pdf`。
 2. Profile 语义样式仍限制在 `problem / example / tip`。

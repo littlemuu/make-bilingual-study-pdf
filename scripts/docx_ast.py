@@ -7,12 +7,15 @@ import json
 import re
 from pathlib import Path
 
-from profile import load_profile, semantic_match
+from profile import load_profile, profile_contract, semantic_match
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 LEADING_NUMBER_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+")
 PROBLEM_BEGIN = "V2-PROBLEM-CALLOUT-BEGIN"
 PROBLEM_END = "V2-PROBLEM-CALLOUT-END"
+GENERIC_BEGIN = "V23-CALLOUT-BEGIN"
+GENERIC_END = "V23-CALLOUT-END"
+SEGMENT_MARKER_RE = re.compile(r"<!--\s*bilingual:[^\s]+\s+id=([^\s]+)\s+")
 
 
 def stringify(value) -> str:
@@ -283,13 +286,13 @@ def transform_headers(blocks: list[dict]) -> list[dict]:
     return output
 
 
-def transform(document: dict, profile: dict | None = None) -> dict:
-    active_profile = profile or load_profile()
+def _transform_v1(document: dict, profile: dict) -> dict:
+    """The byte-behavior compatible V2.2 assignment transformation."""
     blocks: list[dict] = []
     problem_count = 0
     for block in document.get("blocks", []):
         semantic = (
-            semantic_match(active_profile, stringify(block))
+            semantic_match(profile, stringify(block))
             if block.get("t") == "BlockQuote"
             else None
         )
@@ -305,6 +308,233 @@ def transform(document: dict, profile: dict | None = None) -> dict:
         "c": str(problem_count),
     }
     return document
+
+
+def _segment_node_id(block: dict) -> str | None:
+    if block.get("t") not in {"RawBlock", "RawInline"}:
+        return None
+    content = block.get("c")
+    if not isinstance(content, list) or len(content) != 2:
+        return None
+    rendered = str(content[1])
+    match = SEGMENT_MARKER_RE.search(rendered)
+    return match.group(1) if match else None
+
+
+def _split_segments(blocks: list[dict]) -> tuple[list[dict], list[dict]]:
+    prefix: list[dict] = []
+    segments: list[dict] = []
+    current: dict | None = None
+    for block in blocks:
+        node_id = _segment_node_id(block)
+        if node_id is not None:
+            current = {"node_id": node_id, "marker": copy.deepcopy(block), "blocks": []}
+            segments.append(current)
+            continue
+        if current is None:
+            prefix.append(copy.deepcopy(block))
+        else:
+            current["blocks"].append(copy.deepcopy(block))
+    return prefix, segments
+
+
+def _generic_marker(
+    kind: str, role: str, style: str, membership: str, group_id: str
+) -> dict:
+    return {
+        "t": "Para",
+        "c": text_to_inlines(f"{kind}|{role}|{style}|{membership}|{group_id}"),
+    }
+
+
+def _group_structural_segments(
+    segments: list[dict], *, role: str, style: str, membership: str, group_id: str
+) -> dict:
+    english: list[dict] = []
+    chinese: list[dict] = []
+    target_blocks_total = 0
+    for segment in segments:
+        source_blocks = 0
+        target_blocks = 0
+        for block in segment["blocks"]:
+            if block.get("t") == "BlockQuote":
+                target_blocks += 1
+                for child in block.get("c", []):
+                    chinese.extend(normalize_block(child))
+            else:
+                source_blocks += 1
+                english.extend(normalize_block(block))
+        target_blocks_total += target_blocks
+        if (source_blocks == 0 and target_blocks != 0) or target_blocks > 1:
+            raise ValueError(
+                f"structural group {group_id} member {segment['node_id']} "
+                "must be an empty grouped alias or materialize as source with at most "
+                "one target BlockQuote"
+            )
+    if not english or not chinese or target_blocks_total == 0:
+        raise ValueError(f"structural group {group_id} is not bilingual")
+    if membership == "anchor-only" and (
+        len(segments) != 1
+        or target_blocks_total != 1
+    ):
+        raise ValueError(
+            f"anchor-only structural group {group_id} must contain exactly its anchor "
+            "source and one target BlockQuote"
+        )
+    return {
+        "t": "BlockQuote",
+        "c": [
+            _generic_marker(GENERIC_BEGIN, role, style, membership, group_id),
+            *english,
+            {"t": "HorizontalRule"},
+            *chinese,
+            _generic_marker(GENERIC_END, role, style, membership, group_id),
+        ],
+    }
+
+
+def _transform_v2(
+    document: dict,
+    profile: dict,
+    semantic_groups: list[dict] | None,
+) -> dict:
+    if semantic_groups is None:
+        raise ValueError("schema V2 DOCX transformation requires frozen semantic groups")
+    contract = profile_contract(profile)
+    roles = {item["role"]: item for item in contract["roles"]}
+    structural_groups: dict[str, dict] = {}
+    member_owner: dict[str, str] = {}
+    grouped_counts = {role: 0 for role in roles}
+    complete_counts = {role: 0 for role in roles}
+    anchor_only_counts = {role: 0 for role in roles}
+    for group in semantic_groups:
+        if not isinstance(group, dict):
+            raise ValueError("semantic groups must be objects")
+        membership = group.get("membership")
+        if membership not in {"complete", "anchor-only"}:
+            continue
+        role = group.get("role")
+        spec = roles.get(role)
+        members = group.get("member_node_ids")
+        group_id = group.get("id")
+        if (
+            spec is None
+            or spec["grouping"] != "structural-container"
+            or not isinstance(group_id, str)
+            or not group_id
+            or not isinstance(members, list)
+            or not members
+        ):
+            if spec is not None and spec["grouping"] != "structural-container":
+                continue
+            raise ValueError(f"invalid structural group: {group_id!r}")
+        if membership == "anchor-only" and members != [group.get("anchor_node_id")]:
+            raise ValueError(
+                f"anchor-only structural group {group_id} must contain only its anchor"
+            )
+        structural_groups[group_id] = {
+            "role": role,
+            "style": spec["style"],
+            "members": list(members),
+            "membership": membership,
+        }
+        grouped_counts[role] += 1
+        (complete_counts if membership == "complete" else anchor_only_counts)[role] += 1
+        for member in members:
+            if member in member_owner:
+                raise ValueError(f"node belongs to multiple structural groups: {member}")
+            member_owner[member] = group_id
+
+    prefix, segments = _split_segments(document.get("blocks", []))
+    segment_indices: dict[str, int] = {}
+    for index, segment in enumerate(segments):
+        node_id = segment["node_id"]
+        if node_id in segment_indices:
+            raise ValueError(f"duplicate bilingual segment marker: {node_id}")
+        segment_indices[node_id] = index
+
+    starts: dict[int, tuple[dict, list[dict]]] = {}
+    covered: set[int] = set()
+    for group_id, group in structural_groups.items():
+        try:
+            indices = [segment_indices[member] for member in group["members"]]
+        except KeyError as exc:
+            raise ValueError(
+                f"structural group {group_id} member is absent from Markdown: {exc.args[0]}"
+            ) from exc
+        contiguous = list(range(min(indices), min(indices) + len(indices)))
+        if sorted(indices) != contiguous:
+            raise ValueError(
+                f"structural group {group_id} members are not contiguous"
+            )
+        if indices != contiguous:
+            indexed_segments = [segments[index] for index in contiguous]
+            if (
+                indices[0] != contiguous[-1]
+                or any(segment["blocks"] for segment in indexed_segments[:-1])
+            ):
+                raise ValueError(
+                    f"structural group {group_id} marker order is not source order"
+                )
+        if any(index in covered for index in indices):
+            raise ValueError(f"structural group overlaps another group: {group_id}")
+        covered.update(indices)
+        starts[min(indices)] = (group, [segments[index] for index in indices])
+
+    output = prefix
+    index = 0
+    while index < len(segments):
+        start = starts.get(index)
+        if start is not None:
+            group, members = start
+            group_id = member_owner[members[0]["node_id"]]
+            output.append(
+                _group_structural_segments(
+                    members,
+                    role=group["role"],
+                    style=group["style"],
+                    membership=group["membership"],
+                    group_id=group_id,
+                )
+            )
+            index += len(members)
+            continue
+        if index in covered:
+            index += 1
+            continue
+        segment = segments[index]
+        output.append(segment["marker"])
+        for block in segment["blocks"]:
+            output.extend(normalize_block(block))
+        index += 1
+
+    transformed = copy.deepcopy(document)
+    transformed["blocks"] = transform_headers(output)
+    transformed.setdefault("meta", {})["v23-structural-group-counts"] = {
+        "t": "MetaString",
+        "c": json.dumps(grouped_counts, sort_keys=True, separators=(",", ":")),
+    }
+    transformed["meta"]["v23-complete-structural-group-counts"] = {
+        "t": "MetaString",
+        "c": json.dumps(complete_counts, sort_keys=True, separators=(",", ":")),
+    }
+    transformed["meta"]["v23-anchor-only-callout-counts"] = {
+        "t": "MetaString",
+        "c": json.dumps(anchor_only_counts, sort_keys=True, separators=(",", ":")),
+    }
+    return transformed
+
+
+def transform(
+    document: dict,
+    profile: dict | None = None,
+    *,
+    semantic_groups: list[dict] | None = None,
+) -> dict:
+    active_profile = profile or load_profile()
+    if active_profile.get("schema_version") == 1:
+        return _transform_v1(document, active_profile)
+    return _transform_v2(document, active_profile, semantic_groups)
 
 
 def main() -> None:

@@ -1,0 +1,17 @@
+{
+  "pdf_info": [
+    {
+      "page_idx": 0,
+      "page_size": [1000, 1000],
+      "preproc_blocks": [],
+      "para_blocks": [
+        {"type": "title", "bbox": [80, 80, 920, 150]},
+        {"type": "text", "bbox": [80, 180, 920, 380]},
+        {"type": "image", "bbox": [80, 420, 920, 820], "image_path": "images/scanned-page.png"}
+      ],
+      "discarded_blocks": []
+    }
+  ],
+  "_backend": "pipeline",
+  "_version_name": "3.4.4"
+}
