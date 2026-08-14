@@ -1,0 +1,2 @@
+# Development currently uses the complete runtime dependency set.
+-r requirements.txt

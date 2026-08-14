@@ -1,0 +1,7 @@
+# Tested runtime dependency set for Python 3.11.7.
+# Keep exact pins so source extraction, DOCX generation, and audits are repeatable.
+lxml==6.1.1
+Pillow==12.3.0
+PyMuPDF==1.28.2
+python-docx==1.2.0
+typing_extensions==4.16.0
