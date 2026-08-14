@@ -108,7 +108,8 @@
   {
     "id": "table-1",
     "type": "table",
-    "table_body": "<table><tr><th>Gate</th><th>Count</th></tr><tr><td>explicit</td><td>1</td></tr></table>",
+    "img_path": "images/table.png",
+    "table_body": "<html><body><table><tr><th>Gate</th><th>Count</th></tr><tr><td>explicit</td><td>1</td></tr></table></body></html>",
     "table_caption": ["Table 1. Synthetic gate inventory."],
     "table_footnote": ["HTML is preserved as structured source."],
     "bbox": [50, 510, 950, 590],

@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import warnings
 from collections import Counter
+from html import unescape
 from hashlib import sha256
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable
@@ -671,13 +672,12 @@ def normalize_content(
                     raise AdapterError(f"{item_pointer} table needs table_body or img_path")
                 if body is not None:
                     body = _require_text(body, f"{item_pointer}/table_body")
-                    if body.lstrip().lower().startswith("<table"):
-                        try:
-                            validate_table_html(body)
-                        except ValueError as exc:
-                            raise AdapterError(
-                                f"{item_pointer}/table_body is unsafe or invalid: {exc}"
-                            ) from exc
+                    try:
+                        body = validate_table_html(body)
+                    except ValueError as exc:
+                        raise AdapterError(
+                            f"{item_pointer}/table_body is unsafe or invalid: {exc}"
+                        ) from exc
             else:
                 prefix = "image" if raw_type == "image" else "chart"
                 captions = _require_string_list(
@@ -689,9 +689,29 @@ def normalize_content(
                 image_path = _require_text(
                     item.get("img_path"), f"{item_pointer}/img_path"
                 )
-            if image_path is not None:
-                image_path = _require_text(image_path, f"{item_pointer}/img_path")
-                asset_paths.add(image_path)
+            visual_parent: str | None = None
+            if raw_type == "table" and body is not None:
+                # Pipeline tables commonly carry both editable HTML and a source
+                # screenshot.  They are independent evidence: keep the table as
+                # a native source-only node and model the screenshot separately
+                # as visual-once so neither representation can erase the other.
+                parent = item_node(
+                    body,
+                    "table",
+                    False,
+                    field="table_body",
+                    adapter_role="table",
+                )
+                if image_path is not None:
+                    visual_parent = item_node(
+                        "",
+                        "image",
+                        False,
+                        field="img_path",
+                        suffix="visual",
+                        adapter_role="table_visual",
+                    )
+            elif image_path is not None:
                 parent = item_node(
                     "",
                     "image",
@@ -699,30 +719,27 @@ def normalize_content(
                     field="img_path",
                     adapter_role=("table_visual" if raw_type == "table" else raw_type),
                 )
-                visual_id = f"visual-{parent}"
+                visual_parent = parent
+            else:
+                raise AdapterError(f"{item_pointer} visual content lacks an image or table body")
+
+            if visual_parent is not None:
+                image_path = _require_text(image_path, f"{item_pointer}/img_path")
+                asset_paths.add(image_path)
+                visual_id = f"visual-{visual_parent}"
                 visual_ids.append(visual_id)
                 visual_requests.append(
                     {
                         "id": visual_id,
                         "page": page_idx + 1,
                         "kind": raw_type,
-                        "anchor_id": parent,
+                        "anchor_id": visual_parent,
                         "caption_id": None,
                         "bbox": bbox,
                         "source_asset": image_path,
-                        "contained_block_ids": [parent],
+                        "contained_block_ids": [visual_parent],
                         "item_pointer": item_pointer,
                     }
-                )
-            else:
-                # A table may be represented only by protected HTML/Markdown body.
-                # Preserve it once as structured source instead of inventing a visual.
-                parent = item_node(
-                    body,
-                    "table",
-                    False,
-                    field="table_body",
-                    adapter_role="table",
                 )
             for index, caption in enumerate(captions):
                 caption_id = item_node(
@@ -836,6 +853,34 @@ def normalize_content(
             }
         )
     return blocks, visual_requests, dispositions, asset_paths
+
+
+def adapter_substantive_text_lengths(
+    blocks: list[dict[str, Any]], page_count: int
+) -> list[int]:
+    """Count parser text independently for every page.
+
+    Visual placeholders and profile-omitted page furniture are not substantive.
+    Validated HTML tables contribute their cell text rather than markup bytes.
+    """
+
+    page_parts: list[list[str]] = [[] for _ in range(page_count)]
+    for block in blocks:
+        page = block.get("page")
+        if (
+            not isinstance(page, int)
+            or isinstance(page, bool)
+            or not 1 <= page <= page_count
+            or block.get("kind") in {"artifact", "image"}
+        ):
+            continue
+        source = block.get("source")
+        if not isinstance(source, str) or not source:
+            continue
+        if block.get("kind") == "table":
+            source = unescape(re.sub(r"<[^>]+>", " ", source))
+        page_parts[page - 1].append(source)
+    return [len(normalize_text("\n".join(parts))) for parts in page_parts]
 
 
 def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list[Path]]:
@@ -1073,16 +1118,32 @@ def import_mineru(
     native_pages = sum(length >= minimum_chars for length in native_lengths)
     native_ratio = native_pages / page_count
     blocks_per_page = Counter(int(block["page"]) for block in blocks)
-    manual_pages = sorted(
-        page_number
-        for page_number, length in enumerate(native_lengths, start=1)
-        if length == 0
-        or (
-            length >= minimum_chars
-            and native_ascii_letter_ratios[page_number - 1] < 0.2
-        )
-        or (native_ratio < minimum_ratio and length < minimum_chars)
-    )
+    adapter_lengths = adapter_substantive_text_lengths(blocks, page_count)
+    manual_reasons_by_page: list[list[str]] = []
+    for index, (native_length, adapter_length) in enumerate(
+        zip(native_lengths, adapter_lengths)
+    ):
+        reasons: list[str] = []
+        if native_length == 0:
+            reasons.append("native_oracle_empty")
+        if (
+            native_length >= minimum_chars
+            and native_ascii_letter_ratios[index] < 0.2
+        ):
+            reasons.append("native_oracle_not_substantive_english")
+        if native_ratio < minimum_ratio and native_length < minimum_chars:
+            reasons.append("document_native_ratio_below_threshold")
+        # A document-wide ratio cannot absolve one page whose parser text is
+        # substantial but whose independent Poppler layer is not.  This is the
+        # mixed native/scanned-page gate.
+        if native_length < minimum_chars <= adapter_length:
+            reasons.append("adapter_text_without_native_oracle")
+        manual_reasons_by_page.append(reasons)
+    manual_pages = [
+        index + 1
+        for index, reasons in enumerate(manual_reasons_by_page)
+        if reasons
+    ]
     page_evidence = []
     for index, page in enumerate(middle_pages):
         source_size = source_page_sizes[index]
@@ -1104,6 +1165,9 @@ def import_mineru(
                 "page_idx": index,
                 "page_size": mineru_size,
                 "source_page_size": source_size,
+                "native_text_characters": native_lengths[index],
+                "adapter_text_characters": adapter_lengths[index],
+                "manual_review_reasons": manual_reasons_by_page[index],
                 "status": (
                     "manual_source_review_required"
                     if index + 1 in manual_pages
@@ -1347,6 +1411,8 @@ def import_mineru(
                     "native_ascii_letter_ratio": round(
                         native_ascii_letter_ratios[index], 4
                     ),
+                    "adapter_text_characters": adapter_lengths[index],
+                    "manual_review_reasons": manual_reasons_by_page[index],
                     "manual_source_review_required": index + 1 in manual_pages,
                 }
                 for index in range(page_count)

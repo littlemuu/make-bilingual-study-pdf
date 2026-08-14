@@ -34,6 +34,7 @@ from adapters.mineru import (
     validate_middle,
 )
 from common import sha256_file, sha256_text
+from build_outputs import source_only_markdown_body
 from profile import load_profile
 
 
@@ -185,6 +186,171 @@ class MinerUContractTests(unittest.TestCase):
                 render_dpi=72,
             )
 
+    def make_mixed_native_scan_case(self, root: Path) -> tuple[Path, Path, int]:
+        """Create 3 native pages plus one OCR-only image page with a page number."""
+
+        output_dir = root / "mixed-output"
+        output_dir.mkdir()
+        source = root / "mixed-source.pdf"
+        document = fitz.open()
+        native_items = [
+            [
+                {
+                    "id": "mixed-title",
+                    "type": "text",
+                    "text": "Mixed Native and Scanned Evidence",
+                    "text_level": 1,
+                    "bbox": [50, 50, 950, 100],
+                    "page_idx": 0,
+                },
+                {
+                    "id": "mixed-abstract-heading",
+                    "type": "text",
+                    "text": "Abstract",
+                    "text_level": 1,
+                    "bbox": [50, 120, 950, 160],
+                    "page_idx": 0,
+                },
+                {
+                    "id": "mixed-abstract-body",
+                    "type": "text",
+                    "text": (
+                        "This native abstract supplies an independent Poppler oracle "
+                        "with enough substantive English text to prove that the first "
+                        "page is native and does not need OCR or manual source review."
+                    ),
+                    "bbox": [50, 180, 950, 320],
+                    "page_idx": 0,
+                },
+            ],
+            [
+                {
+                    "id": "mixed-section",
+                    "type": "text",
+                    "text": "1 Native Evidence",
+                    "text_level": 1,
+                    "bbox": [50, 50, 950, 100],
+                    "page_idx": 1,
+                },
+                {
+                    "id": "mixed-body",
+                    "type": "text",
+                    "text": (
+                        "The second native page deliberately contains a complete text "
+                        "layer. Independent extraction and adapter content should agree "
+                        "on this prose while remaining isolated from every other page."
+                    ),
+                    "bbox": [50, 130, 950, 300],
+                    "page_idx": 1,
+                },
+            ],
+            [
+                {
+                    "id": "mixed-references-heading",
+                    "type": "text",
+                    "text": "References",
+                    "text_level": 1,
+                    "bbox": [50, 50, 950, 100],
+                    "page_idx": 2,
+                },
+                {
+                    "id": "mixed-references",
+                    "type": "list",
+                    "sub_type": "ref_text",
+                    "list_items": [
+                        "[1] A. Example. Independent native source evidence for mixed documents, 2026.",
+                        "[2] B. Example. Page-local scan detection and explicit manual review, 2026.",
+                    ],
+                    "bbox": [50, 130, 950, 300],
+                    "page_idx": 2,
+                },
+            ],
+        ]
+        for page_items in native_items:
+            page = document.new_page(width=1000, height=1000)
+            lines: list[str] = []
+            for item in page_items:
+                if item["type"] == "list":
+                    lines.extend(item["list_items"])
+                else:
+                    lines.append(item["text"])
+            inserted = page.insert_textbox(
+                fitz.Rect(50, 50, 950, 900),
+                "\n\n".join(lines),
+                fontname="helv",
+                fontsize=12,
+            )
+            self.assertGreaterEqual(inserted, 0)
+
+        scanned_page = document.new_page(width=1000, height=1000)
+        scanned_page.insert_image(
+            scanned_page.rect,
+            filename=str(FIXTURE_ROOT / "scan" / "images" / "scanned-page.png"),
+        )
+        scanned_page.insert_text((490, 980), "4", fontname="helv", fontsize=10)
+        source.write_bytes(document.tobytes(garbage=4, deflate=True, no_new_id=True))
+        document.close()
+        shutil.copyfile(source, output_dir / "mixed_origin.pdf")
+
+        ocr_seed = (
+            "MinerU OCR recovered substantive English from the scanned fourth page, "
+            "but those characters do not exist in the independent Poppler text layer. "
+        )
+        ocr_text = (ocr_seed * 5)[:495]
+        self.assertEqual(len(ocr_text), 495)
+        content = [item for page_items in native_items for item in page_items]
+        content.append(
+            {
+                "id": "mixed-ocr-body",
+                "type": "text",
+                "text": ocr_text,
+                "bbox": [50, 80, 950, 900],
+                "page_idx": 3,
+            }
+        )
+        middle_pages = []
+        for page_index in range(4):
+            page_items = [item for item in content if item["page_idx"] == page_index]
+            blocks = [
+                {
+                    "type": (
+                        "title"
+                        if item["type"] == "text" and item.get("text_level", 0) > 0
+                        else "ref_text"
+                        if item["type"] == "list"
+                        else "text"
+                    ),
+                    "bbox": item["bbox"],
+                }
+                for item in page_items
+            ]
+            middle_pages.append(
+                {
+                    "page_idx": page_index,
+                    "page_size": [1000, 1000],
+                    "preproc_blocks": [],
+                    "para_blocks": blocks,
+                    "discarded_blocks": [],
+                }
+            )
+        (output_dir / "mixed_content_list.json").write_text(
+            json.dumps(content, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        (output_dir / "mixed_middle.json").write_text(
+            json.dumps(
+                {
+                    "pdf_info": middle_pages,
+                    "_backend": SUPPORTED_BACKEND,
+                    "_version_name": VERIFIED_VERSION,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        return source, output_dir, len(ocr_text)
+
     def test_fixture_hashes_and_origin_binding(self) -> None:
         for relative, expected_hash in self.fixture_manifest["files"].items():
             path = FIXTURE_ROOT / relative
@@ -315,6 +481,55 @@ class MinerUContractTests(unittest.TestCase):
                 evidence["bbox_coordinate_system"], "mineru-normalized-1000"
             )
 
+    def test_official_dual_field_table_preserves_structure_and_visual(self) -> None:
+        case = self.load_case("native")
+        table_index, table_item = next(
+            (index, item)
+            for index, item in enumerate(case["content"])
+            if item["type"] == "table"
+        )
+        self.assertEqual(table_item["img_path"], "images/table.png")
+        self.assertTrue(table_item["table_body"].startswith("<html><body><table>"))
+
+        disposition = case["dispositions"][table_index]
+        self.assertEqual(len(disposition["node_ids"]), 4)
+        self.assertEqual(len(disposition["visual_ids"]), 1)
+        blocks = {
+            block["id"]: block
+            for block in case["blocks"]
+            if block["id"] in disposition["node_ids"]
+        }
+        structured = next(
+            block for block in blocks.values() if block["adapter_role"] == "table"
+        )
+        visual_node = next(
+            block
+            for block in blocks.values()
+            if block["adapter_role"] == "table_visual"
+        )
+        self.assertEqual(structured["kind"], "table")
+        self.assertTrue(structured["source"].startswith("<table>"))
+        self.assertNotIn("<html", structured["source"].lower())
+        self.assertEqual(visual_node["kind"], "image")
+        captions = [
+            block
+            for block in blocks.values()
+            if block["adapter_role"] in {"table_caption", "table_footnote"}
+        ]
+        self.assertEqual(len(captions), 2)
+        self.assertTrue(
+            all(block["caption_parent"] == structured["id"] for block in captions)
+        )
+        visual = next(
+            item for item in case["visuals"] if item["id"] in disposition["visual_ids"]
+        )
+        self.assertEqual(visual["anchor_id"], visual_node["id"])
+        self.assertEqual(visual["caption_id"], captions[0]["id"])
+        self.assertEqual(visual["source_asset"], "images/table.png")
+        markdown = source_only_markdown_body(structured)
+        self.assertTrue(markdown.startswith("```{=html}\n<table>"))
+        self.assertTrue(markdown.endswith("</table>\n```"))
+
     def test_backend_version_page_and_bbox_fail_closed(self) -> None:
         middle = self.load_case("native")["middle"]
         for backend in (None, "vlm", "office"):
@@ -415,6 +630,15 @@ class MinerUContractTests(unittest.TestCase):
         with self.assertRaises(AdapterError):
             self.normalize_mutation(unsafe_table)
 
+        unsafe_wrapper = copy.deepcopy(content)
+        table_item = next(entry for entry in unsafe_wrapper if entry["type"] == "table")
+        table_item["table_body"] = (
+            "<html><head><script>bad()</script></head><body>"
+            "<table><tr><td>safe</td></tr></table></body></html>"
+        )
+        with self.assertRaises(AdapterError):
+            self.normalize_mutation(unsafe_wrapper)
+
         duplicate_id = copy.deepcopy(content)
         duplicate_id[1]["id"] = duplicate_id[0]["id"]
         with self.assertRaises(AdapterError):
@@ -469,16 +693,17 @@ class MinerUContractTests(unittest.TestCase):
 
     def test_asset_decode_hash_and_corruption_fail_closed(self) -> None:
         case = self.load_case("native")
-        self.assertEqual(len(case["assets"]), 1)
-        asset = case["assets"][0]
-        self.assertEqual(asset["relative_path"], "images/diagram.png")
-        self.assertEqual(asset["mime"], "image/png")
-        self.assertGreater(asset["width"], 0)
-        self.assertGreater(asset["height"], 0)
-        self.assertEqual(
-            asset["sha256"],
-            self.fixture_manifest["files"]["native/images/diagram.png"],
-        )
+        self.assertEqual(len(case["assets"]), 2)
+        assets = {asset["relative_path"]: asset for asset in case["assets"]}
+        self.assertEqual(set(assets), {"images/diagram.png", "images/table.png"})
+        for relative, asset in assets.items():
+            self.assertEqual(asset["mime"], "image/png")
+            self.assertGreater(asset["width"], 0)
+            self.assertGreater(asset["height"], 0)
+            self.assertEqual(
+                asset["sha256"],
+                self.fixture_manifest["files"][f"native/{relative}"],
+            )
 
         with tempfile.TemporaryDirectory(prefix="v23-mineru-assets-") as temporary:
             output = Path(temporary)
@@ -574,6 +799,48 @@ class MinerUContractTests(unittest.TestCase):
                 evidence["pages"][0]["status"], "manual_source_review_required"
             )
             self.assertFalse((work_dir / "source-audit.json").exists())
+
+    def test_mixed_scan_page_cannot_hide_behind_document_native_ratio(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-mixed-scan-") as temporary:
+            root = Path(temporary)
+            source, output_dir, ocr_length = self.make_mixed_native_scan_case(root)
+            work_dir = root / "work"
+            result = self.guarded_import(source, output_dir, work_dir)
+            self.assertEqual(result["status"], "manual_source_review_required")
+            self.assertEqual(result["manual_review_pages"], [4])
+
+            evidence = json.loads(
+                (work_dir / "adapter-evidence.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(evidence["manual_review_pages"], [4])
+            first_three = evidence["pages"][:3]
+            self.assertTrue(
+                all(page["status"] == "native_oracle_available" for page in first_three)
+            )
+            scanned = evidence["pages"][3]
+            self.assertLess(scanned["native_text_characters"], 100)
+            self.assertEqual(scanned["adapter_text_characters"], ocr_length)
+            self.assertIn(
+                "adapter_text_without_native_oracle",
+                scanned["manual_review_reasons"],
+            )
+            manifest = json.loads(
+                (work_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["native_text_page_ratio"], 0.75)
+
+            completed = subprocess.run(
+                [sys.executable, str(REPOSITORY / "scripts" / "audit_source.py"), str(work_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            report = json.loads(
+                (work_dir / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(report["status"], "manual_source_review_required")
+            self.assertEqual(report["failures"], [])
 
 
 if __name__ == "__main__":

@@ -107,6 +107,103 @@ def write_report(report: dict[str, Any], output: Path | None) -> None:
     print(rendered, end="")
 
 
+def validate_v2_docx_audit_binding(
+    work_dir: Path,
+    docx_path: Path,
+    audit_path: Path | None = None,
+) -> tuple[dict[str, Any] | None, dict[str, str], list[str]]:
+    """Validate that a passed DOCX audit binds the current frozen V2 inputs.
+
+    The returned expected binding is suitable for copying into downstream reports.
+    Callers must treat every returned error as fatal.
+    """
+    work_dir = work_dir.expanduser().resolve()
+    docx_path = docx_path.expanduser().resolve()
+    audit_path = (
+        audit_path.expanduser().resolve()
+        if audit_path is not None
+        else work_dir / "output" / "docx-audit.json"
+    )
+    profile_path = work_dir / "profile.json"
+    ir_path = work_dir / "document-ir.json"
+    build_path = work_dir / "output" / "build-manifest.json"
+    required = {
+        "frozen Profile": profile_path,
+        "document IR": ir_path,
+        "build manifest": build_path,
+        "DOCX": docx_path,
+        "DOCX audit": audit_path,
+    }
+    missing = [label for label, path in required.items() if not path.is_file()]
+    if missing:
+        return None, {}, [f"missing {label}" for label in missing]
+
+    try:
+        profile = read_json(profile_path)
+        audit = read_json(audit_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return None, {}, [f"cannot read DOCX audit binding: {exc}"]
+    expected = {
+        "profile": str(profile.get("id", "")),
+        "profile_file_sha256": sha256_file(profile_path),
+        "document_ir_sha256": sha256_file(ir_path),
+        "build_manifest_sha256": sha256_file(build_path),
+        "docx_sha256": sha256_file(docx_path),
+    }
+    errors: list[str] = []
+    if profile.get("schema_version") != 2:
+        errors.append("frozen Profile is not schema V2")
+    if audit.get("status") != "passed":
+        errors.append("DOCX audit status is not passed")
+    for field, value in expected.items():
+        if audit.get(field) != value:
+            errors.append(f"DOCX audit {field} does not match current bytes")
+    return audit, expected, errors
+
+
+def validate_v2_compile_docx_binding(
+    work_dir: Path,
+    compile_report: dict[str, Any],
+    audit_path: Path | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Validate the complete compile-report to DOCX-audit freeze chain."""
+    work_dir = work_dir.expanduser().resolve()
+    output_dir = work_dir / "output"
+    audit_path = (
+        audit_path.expanduser().resolve()
+        if audit_path is not None
+        else output_dir / "docx-audit.json"
+    )
+    docx_name = compile_report.get("docx")
+    if not isinstance(docx_name, str) or not docx_name:
+        return {}, ["compile gate does not identify the audited DOCX"]
+    docx_path = (output_dir / docx_name).resolve()
+    try:
+        docx_path.relative_to(output_dir.resolve())
+    except ValueError:
+        return {}, ["compile gate DOCX path escapes the output directory"]
+
+    _, expected, errors = validate_v2_docx_audit_binding(
+        work_dir, docx_path, audit_path
+    )
+    comparisons = {
+        "docx_sha256": "compile gate refers to different DOCX bytes",
+        "profile": "compile gate refers to a different frozen Profile",
+        "document_ir_sha256": "compile gate refers to a different document IR",
+        "build_manifest_sha256": "compile gate refers to a different build manifest",
+    }
+    for field, message in comparisons.items():
+        if compile_report.get(field) != expected.get(field):
+            errors.append(message)
+    if compile_report.get("docx_audit_bindings") != expected:
+        errors.append("compile gate DOCX audit bindings are stale")
+    if audit_path.is_file() and compile_report.get("docx_audit_sha256") != sha256_file(
+        audit_path
+    ):
+        errors.append("compile gate refers to different DOCX audit bytes")
+    return expected, errors
+
+
 def audit_v2(args, profile: dict[str, Any]) -> None:
     try:
         profile, ir, build, ir_path, build_path = load_v2_context(
@@ -384,6 +481,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
     report = {
         "status": "passed" if all(checks.values()) else "failed",
         "profile": profile["id"],
+        "profile_file_sha256": sha256_file(
+            args.work_dir.expanduser().resolve() / "profile.json"
+        ),
         "docx": str(args.docx.resolve()),
         "docx_sha256": sha256_file(args.docx.resolve()),
         "document_ir_sha256": sha256_file(ir_path),

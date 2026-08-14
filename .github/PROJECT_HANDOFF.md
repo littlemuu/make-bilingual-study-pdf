@@ -3,16 +3,18 @@
 > 更新时间：2026-08-14  
 > 当前开发分支：`agent/v2.3`
 >
-> 依赖基线：`agent/add-reproducible-dev-baseline@e8c74f3`（PR #1，尚未合入 `main`）
+> 目标基线：`main@e69fd57`（PR #1 已 squash 合并）
 >
 > 验收记录：`.github/V2.3_ACCEPTANCE.md`
 
 ## 0. 当前实施状态
 
-V2.3 的代码、公开合成夹具、本地自动测试、Ubuntu/LibreOffice 双 Profile 前向、
-逐页人工视觉复核与最终 QA 已完成；公开验收的精确运行号和产物哈希记录在
-`.github/V2.3_ACCEPTANCE.md`。PR #1 未合并，因此 V2.3 PR 仍以
-`agent/add-reproducible-dev-baseline` 为 base，不能声称这些变更已经进入 `main`。
+V2.3 初版的代码、公开合成夹具、Ubuntu/LibreOffice 双 Profile 前向、逐页人工
+视觉复核与最终 QA 曾完成，但 PR #2 审查随后发现三项 P1 契约缺口：双字段表格
+丢失结构正文、混合扫描页绕过人工源审查、DOCX 审计未绑定 PDF 编译和最终 QA。
+三项返修及其负向回归已在本地通过；分支须重放到 `main@e69fd57`，并用新的
+Ubuntu/LibreOffice 产物和人工视觉复核替换旧验收哈希后，才能再次宣称完成。
+旧运行证据保留在 `.github/V2.3_ACCEPTANCE.md`，但已明确标为 superseded。
 私有复杂论文/讲义与 CS336 90 页基线在本工作区不可用，验收记录明确保留该限制，
 未用公开合成测试冒充私有回归。
 
@@ -30,8 +32,11 @@ V2.3 的代码、公开合成夹具、本地自动测试、Ubuntu/LibreOffice �
 - 扫描/严重乱码页只能进入 `manual_source_review_required`，不得由 MinerU
   输出自行证明 source audit passed；人工 review 必须绑定 comparison、非空
   contact sheets、逐页覆盖和最终 PDF 哈希。
+- MinerU 双字段表格同时冻结结构化 `table_body` 与 `img_path` 视觉节点；V2 DOCX
+  编译要求已通过且绑定精确 DOCX 字节的审计，最终 QA 会再次复核完整冻结链。
 - 提交了原创、可重生成的 MinerU 3.4.4 pipeline 合成夹具及故障注入测试；
-  本地快速矩阵为旧基线 19 项加 V2.3 36 个场景。完整命令和验收证据以
+  本地快速矩阵继续包含旧基线 19 项，并分别报告 Profile、MinerU、IR/source、
+  output、DOCX 与 visual/freeze 专项结果。完整命令和最终验收证据以
   `.github/V2.3_ACCEPTANCE.md` 为准。
 
 以下章节保留 V2.2 基线与 V2.3 冻结设计，供后续审计设计偏差；若描述与已经

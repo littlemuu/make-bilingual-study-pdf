@@ -5,7 +5,7 @@
   "schema_source": "https://opendatalab.github.io/MinerU/reference/output_files/",
   "generator": {
     "path": "tests/fixtures/mineru/generate_fixtures.py",
-    "sha256": "2cf3297adf0cb95078fc551069cf461c43ce0a8db253ce32174b055778239c9c"
+    "sha256": "f57066fa734ef7f4df9d7c01fc659b5e122f055b1e0568951bbb9225729bab86"
   },
   "mineru_contract": {
     "version": "3.4.4",
@@ -15,12 +15,13 @@
     "middle_bbox_coordinate_system": "raw-page-coordinates"
   },
   "files": {
-    "README.md": "eb1b34204cf5f97079606f4f35b1b01323ac61f80031846a1eca29ec7589abd1",
+    "README.md": "9c34b19913300bb3ac0653028e8b7b3ba5741a71056dc6d11d7868368f1f1646",
     "native-source.pdf": "d88815bf08d2b21437948c2a7bb7e4118ce4979bfabf2927dd2223a3badfe777",
     "native/fixture_origin.pdf": "d88815bf08d2b21437948c2a7bb7e4118ce4979bfabf2927dd2223a3badfe777",
-    "native/fixture_content_list.json": "31bb4733a06412555bddada0b434bc198226132c48f7e0dba04faf15ecff2086",
-    "native/fixture_middle.json": "32e94140555fb8eacf7d3f309647edcb394de7fc4698e5e717bcd5836eee90bc",
+    "native/fixture_content_list.json": "a6b178a5cb08ee970b9577f8ea8dde5bc3b282af15ca21f751ec52db9d2ebe0c",
+    "native/fixture_middle.json": "5c33f855cb51aafaefab6fe8cca597f2800bda4491d6d93852a0b62124bd1457",
     "native/images/diagram.png": "efe7ee14203bbe9a26f5d8d4aa23f3fd3252eae3fabe1f9c77ca9fd0f11a5bc9",
+    "native/images/table.png": "6684b51a1a3c4475b6e7a4c5e5884e73adf5dff857b0e79341cb828d126ed1e7",
     "scan-source.pdf": "5c8d9c3b2e072717ef696e16043c459c7908cb1edef814b1f1ca8d86f0daa2bf",
     "scan/scan_origin.pdf": "5c8d9c3b2e072717ef696e16043c459c7908cb1edef814b1f1ca8d86f0daa2bf",
     "scan/scan_content_list.json": "e8b9b35f9272ad05d343dd1da256b9b1bd1ecb58a16dc73cd97ad027e57d65ea",
@@ -32,9 +33,9 @@
       "source": "native-source.pdf",
       "output_dir": "native",
       "content_items": 22,
-      "normalized_blocks": 31,
-      "visual_requests": 2,
-      "validated_assets": 1,
+      "normalized_blocks": 32,
+      "visual_requests": 3,
+      "validated_assets": 2,
       "disposition_counts": {
         "artifact_omitted": 4,
         "emitted": 18
@@ -56,7 +57,7 @@
         "table",
         "text"
       ],
-      "normalized_contract_sha256": "d3bffbe967de66ca19e4815ab6fe9b5f179b882fc05f0ba03a544967266620ef",
+      "normalized_contract_sha256": "26451f95cebb1feef15d3ef188554da2d284df59410f2a8a1a2607a4cd79a0b8",
       "expected_import_status": "passed"
     },
     "scan": {

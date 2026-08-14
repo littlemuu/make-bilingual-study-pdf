@@ -19,7 +19,7 @@
         {"type": "interline_equation", "bbox": [50, 330, 450, 370]},
         {"type": "image", "bbox": [50, 380, 450, 500], "image_path": "images/diagram.png"},
         {"type": "chart", "bbox": [500, 380, 950, 500], "image_path": "images/diagram.png"},
-        {"type": "table", "bbox": [50, 510, 950, 590]},
+        {"type": "table", "bbox": [50, 510, 950, 590], "image_path": "images/table.png"},
         {"type": "code", "bbox": [50, 600, 450, 690]},
         {"type": "algorithm", "bbox": [500, 600, 950, 690]},
         {"type": "list", "bbox": [50, 700, 950, 770]},

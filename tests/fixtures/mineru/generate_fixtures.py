@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Regenerate the original synthetic PDFs committed under pipeline-3.4.4.
+"""Regenerate the original synthetic PDFs/assets under pipeline-3.4.4.
 
 The fixture JSON is hand-authored against the documented MinerU 3.4.4 legacy
-pipeline schema.  This script only creates the corresponding original PDF bytes;
-it never invokes MinerU or downloads a model.
+pipeline schema.  This script creates the corresponding original PDF bytes and
+the synthetic structured-table screenshot; it never invokes MinerU or downloads
+a model.
 """
 from __future__ import annotations
 
@@ -13,9 +14,30 @@ import textwrap
 from pathlib import Path
 
 import pymupdf
+from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parent / "pipeline-3.4.4"
+
+
+def write_table_image() -> None:
+    """Create the deterministic screenshot paired with the structured table."""
+
+    path = ROOT / "native" / "images" / "table.png"
+    image = Image.new("RGB", (720, 180), "white")
+    draw = ImageDraw.Draw(image)
+    columns = (0, 480, 719)
+    rows = (0, 70, 179)
+    for x in columns:
+        draw.line((x, 0, x, 179), fill="#202938", width=3)
+    for y in rows:
+        draw.line((0, y, 719, y), fill="#202938", width=3)
+    draw.rectangle((2, 2, 717, 68), fill="#dbeafe")
+    draw.text((24, 24), "Gate", fill="#111827")
+    draw.text((504, 24), "Count", fill="#111827")
+    draw.text((24, 112), "explicit", fill="#111827")
+    draw.text((504, 112), "1", fill="#111827")
+    image.save(path, format="PNG", optimize=False, compress_level=9)
 
 
 def source_lines(content: list[dict]) -> list[str]:
@@ -90,6 +112,7 @@ def write_native_pdf() -> None:
 
 
 def main() -> None:
+    write_table_image()
     write_native_pdf()
     print(f"regenerated {ROOT / 'native-source.pdf'}")
 

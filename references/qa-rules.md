@@ -74,6 +74,8 @@ upstream and rebuild.
 Before rendering a DOCX-profile PDF, pass only when:
 
 - the frozen Profile, document IR, build manifest, Markdown, and their hashes agree;
+- `output/docx-audit.json` exists with `status: passed` and binds the current Profile
+  file, document IR, build manifest, and exact DOCX byte hash;
 - every declared role, including allowed-zero roles, has the frozen occurrence count;
 - every source-only node occurs once and every visual-once node owns one embedded asset;
 - every `complete` structural container has all English members first, exactly one
@@ -114,7 +116,11 @@ without fallback, and the resolved CJK font file's family must appear in `pdffon
 Every rendered PNG must also survive a full pixel decode after any single-page repair;
 file existence and a successful batch-render exit are insufficient. Do not accept
 extractable Chinese alone as proof of visible glyphs. Record both the DOCX and PDF
-hashes. For the XeLaTeX profile, retain the existing XeLaTeX/log checks.
+hashes. The compile report must also freeze the DOCX-audit file hash and its Profile,
+IR, build-manifest, and DOCX bindings. Final QA revalidates those bindings against the
+current files, so changing either the audited DOCX or its audit after compilation makes
+the compile/final gates stale. For the XeLaTeX profile, retain the existing
+XeLaTeX/log checks.
 
 Overfull boxes are warnings that require targeted visual inspection. Non-embedded-font
 suspicions are warnings unless portability requirements make them a project-specific

@@ -554,13 +554,48 @@ def test_frozen_audit() -> None:
         assert "scoped_anchor_callouts_are_structurally_stable" in absorbed_audit.stdout
         assert "non_structural_anchor_groups_are_not_boxed" in absorbed_audit.stdout
 
-        compile_context = compile_docx_pdf.load_v2_context(work)
+        compile_context = compile_docx_pdf.load_v2_context(work, docx_path)
         assert compile_context["schema_version"] == 2
         assert compile_context["build"]["role_inventory"] == inventory
+        assert compile_context["docx_audit"]["status"] == "passed"
+        assert compile_context["docx_audit_bindings"]["docx_sha256"] == sha256_file(
+            docx_path
+        )
         assert compile_docx_pdf.parse_expected_roles(["theorem=1", "equation=1"]) == {
             "theorem": 1,
             "equation": 1,
         }
+
+        audit_bytes = audit_path.read_bytes()
+        audit_path.unlink()
+        try:
+            compile_docx_pdf.load_v2_context(work, docx_path)
+        except ValueError as exc:
+            assert "missing DOCX audit" in str(exc)
+        else:
+            raise AssertionError("schema V2 compile accepted a missing DOCX audit")
+        audit_path.write_bytes(audit_bytes)
+
+        docx_bytes = docx_path.read_bytes()
+        docx_path.write_bytes(docx_bytes + b"changed after DOCX audit")
+        try:
+            compile_docx_pdf.load_v2_context(work, docx_path)
+        except ValueError as exc:
+            assert "docx_sha256" in str(exc)
+        else:
+            raise AssertionError("schema V2 compile accepted modified DOCX bytes")
+        docx_path.write_bytes(docx_bytes)
+
+        stale_audit = json.loads(audit_bytes.decode("utf-8"))
+        stale_audit["profile_file_sha256"] = "0" * 64
+        write_json(audit_path, stale_audit)
+        try:
+            compile_docx_pdf.load_v2_context(work, docx_path)
+        except ValueError as exc:
+            assert "profile_file_sha256" in str(exc)
+        else:
+            raise AssertionError("schema V2 compile accepted stale audit bindings")
+        audit_path.write_bytes(audit_bytes)
 
 
 def main() -> None:

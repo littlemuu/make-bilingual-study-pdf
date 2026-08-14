@@ -247,6 +247,11 @@ class V23IrSourceTests(unittest.TestCase):
                     "page_idx": 0,
                     "page_size": [612.0, 792.0],
                     "source_page_size": [612.0, 792.0],
+                    "native_text_characters": 0 if manual else 59,
+                    "adapter_text_characters": 59,
+                    "manual_review_reasons": (
+                        ["native_oracle_empty"] if manual else []
+                    ),
                     "status": (
                         "manual_source_review_required"
                         if manual

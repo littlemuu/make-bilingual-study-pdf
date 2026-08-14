@@ -8,6 +8,10 @@ import sys
 from pathlib import Path
 
 from adapters import get_adapter
+from audit_docx import (
+    validate_v2_compile_docx_binding,
+    validate_v2_docx_audit_binding,
+)
 from common import read_json, read_jsonl, sha256_file
 from profile import (
     canonical_profile_sha256,
@@ -104,6 +108,23 @@ def report_status(work_dir: Path) -> dict:
     }
     exists = {name: path.is_file() for name, path in artifacts.items()}
 
+    def is_schema_v2() -> bool:
+        try:
+            profile = read_json(artifacts["profile"]) if exists["profile"] else {}
+            ir = read_json(artifacts["document_ir"]) if exists["document_ir"] else {}
+            compile_report = (
+                read_json(artifacts["compile_audit"])
+                if exists["compile_audit"]
+                else {}
+            )
+            return (
+                profile.get("schema_version") == 2
+                or ir.get("schema_version") == 2
+                or "docx_audit_bindings" in compile_report
+            )
+        except (ValueError, OSError):
+            return False
+
     def status(name: str) -> str | None:
         path = artifacts[name]
         if not path.is_file() or path.suffix != ".json":
@@ -133,6 +154,21 @@ def report_status(work_dir: Path) -> dict:
                 if report.get("profile_sha256") != canonical_profile_sha256(
                     load_work_profile(work_dir)
                 ):
+                    return "stale"
+            if name == "docx_audit" and value == "passed" and is_schema_v2():
+                docx_reference = report.get("docx")
+                if not isinstance(docx_reference, str) or not docx_reference:
+                    return "invalid"
+                _, _, binding_errors = validate_v2_docx_audit_binding(
+                    work_dir, Path(docx_reference), path
+                )
+                if binding_errors:
+                    return "stale"
+            if name == "compile_audit" and value == "passed" and is_schema_v2():
+                _, binding_errors = validate_v2_compile_docx_binding(
+                    work_dir, report, artifacts["docx_audit"]
+                )
+                if binding_errors:
                     return "stale"
             return value
         except (ValueError, OSError):

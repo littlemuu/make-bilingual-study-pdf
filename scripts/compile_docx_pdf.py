@@ -18,6 +18,7 @@ import fitz
 
 from extract_pdf import invalid_pngs, repair_truncated_renders
 from common import read_json, sha256_file
+from audit_docx import validate_v2_docx_audit_binding
 from profile import load_work_profile, profile_contract, target_text_pattern
 from visual_utils import make_contact_sheets
 
@@ -78,7 +79,7 @@ def searchable_sources(node: dict[str, Any]) -> list[str]:
     return [item for item in candidates if item]
 
 
-def load_v2_context(work_dir: Path) -> dict[str, Any]:
+def load_v2_context(work_dir: Path, docx_path: Path) -> dict[str, Any]:
     work_dir = work_dir.expanduser().resolve()
     profile_path = work_dir / "profile.json"
     ir_path = work_dir / "document-ir.json"
@@ -101,6 +102,12 @@ def load_v2_context(work_dir: Path) -> dict[str, Any]:
         raise ValueError("build manifest does not bind the frozen document IR")
     if build.get("role_inventory") != ir.get("inventories", {}).get("role_inventory"):
         raise ValueError("build manifest role inventory does not match document IR")
+    docx_audit_path = work_dir / "output" / "docx-audit.json"
+    docx_audit, docx_audit_bindings, binding_errors = validate_v2_docx_audit_binding(
+        work_dir, docx_path, docx_audit_path
+    )
+    if binding_errors:
+        raise ValueError("schema V2 PDF compile rejects DOCX audit: " + "; ".join(binding_errors))
     return {
         "schema_version": 2,
         "work_dir": work_dir,
@@ -109,6 +116,9 @@ def load_v2_context(work_dir: Path) -> dict[str, Any]:
         "build": build,
         "ir_path": ir_path,
         "build_path": build_path,
+        "docx_audit": docx_audit,
+        "docx_audit_path": docx_audit_path,
+        "docx_audit_bindings": docx_audit_bindings,
     }
 
 
@@ -128,7 +138,7 @@ def main() -> None:
     context: dict[str, Any] | None = None
     if args.work_dir is not None:
         try:
-            context = load_v2_context(args.work_dir)
+            context = load_v2_context(args.work_dir, args.docx)
             expected_role_flags = parse_expected_roles(args.expected_role)
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
@@ -395,6 +405,8 @@ def main() -> None:
                 "occurrence_presence": occurrence_presence,
                 "document_ir_sha256": sha256_file(context["ir_path"]),
                 "build_manifest_sha256": sha256_file(context["build_path"]),
+                "docx_audit_sha256": sha256_file(context["docx_audit_path"]),
+                "docx_audit_bindings": context["docx_audit_bindings"],
             }
         )
     args.audit_output.parent.mkdir(parents=True, exist_ok=True)

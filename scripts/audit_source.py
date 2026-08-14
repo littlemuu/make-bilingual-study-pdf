@@ -322,6 +322,12 @@ def audit_adapter_source(
     if manual != bool(manual_pages):
         failures.append("manual source review flag disagrees with manual_review_pages")
     page_statuses = evidence.get("pages")
+    allowed_manual_reasons = {
+        "native_oracle_empty",
+        "native_oracle_not_substantive_english",
+        "document_native_ratio_below_threshold",
+        "adapter_text_without_native_oracle",
+    }
     if not isinstance(page_statuses, list) or len(page_statuses) != manifest.get(
         "page_count"
     ):
@@ -355,6 +361,28 @@ def audit_adapter_source(
                     )
                 ):
                     failures.append(f"adapter page evidence has invalid {field}")
+            for field in ("native_text_characters", "adapter_text_characters"):
+                count = page.get(field)
+                if (
+                    not isinstance(count, int)
+                    or isinstance(count, bool)
+                    or count < 0
+                ):
+                    failures.append(f"adapter page evidence has invalid {field}")
+            reasons = page.get("manual_review_reasons")
+            if (
+                not isinstance(reasons, list)
+                or any(not isinstance(reason, str) for reason in reasons)
+                or len(reasons) != len(set(reasons))
+                or any(reason not in allowed_manual_reasons for reason in reasons)
+            ):
+                failures.append("adapter page evidence has invalid manual review reasons")
+                reasons = []
+            expected_manual = page.get("status") == "manual_source_review_required"
+            if expected_manual != bool(reasons):
+                failures.append(
+                    "adapter page status disagrees with its manual review reasons"
+                )
         flagged = sorted(
             int(page.get("page_idx")) + 1
             for page in page_statuses

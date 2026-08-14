@@ -236,6 +236,12 @@ python3 "$SKILL_DIR/scripts/compile_docx_pdf.py" \
   --cjk-font "Noto Sans CJK SC"
 ```
 
+`compile_docx_pdf.py` refuses a missing, failed, or stale `output/docx-audit.json`.
+The audit must bind the current frozen Profile, document IR, build manifest, and exact
+DOCX bytes. The compile report freezes that audit and `finalize_qa.py` rechecks the
+whole chain; rebuilding or modifying the DOCX requires a new DOCX audit before another
+compile.
+
 This conversion gate requires A4 pages, embedded PDF fonts, extractable Chinese, every
 expected Problem ID, one render per page, no apparently blank page, exact resolution of
 the requested CJK family, and that resolved CJK font embedded in the PDF. Extractable
