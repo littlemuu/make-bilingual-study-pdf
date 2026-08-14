@@ -23,6 +23,7 @@ from adapters.base import AdapterError
 from adapters.mineru import (
     SUPPORTED_BACKEND,
     VERIFIED_VERSION,
+    adapter_text_exceeds_native_oracle,
     canonical_json_sha256,
     discover_inputs,
     import_mineru,
@@ -33,7 +34,7 @@ from adapters.mineru import (
     validate_content_bbox,
     validate_middle,
 )
-from common import sha256_file, sha256_text
+from common import normalize_text, sha256_file, sha256_text
 from build_outputs import source_only_markdown_body
 from profile import load_profile
 
@@ -186,7 +187,9 @@ class MinerUContractTests(unittest.TestCase):
                 render_dpi=72,
             )
 
-    def make_mixed_native_scan_case(self, root: Path) -> tuple[Path, Path, int]:
+    def make_mixed_native_scan_case(
+        self, root: Path, *, short_ocr: bool = False
+    ) -> tuple[Path, Path, int, int]:
         """Create 3 native pages plus one OCR-only image page with a page number."""
 
         output_dir = root / "mixed-output"
@@ -296,8 +299,16 @@ class MinerUContractTests(unittest.TestCase):
             "MinerU OCR recovered substantive English from the scanned fourth page, "
             "but those characters do not exist in the independent Poppler text layer. "
         )
-        ocr_text = (ocr_seed * 5)[:495]
-        self.assertEqual(len(ocr_text), 495)
+        if short_ocr:
+            normalized_ocr_text = (ocr_seed * 2)[:98]
+            normalized_ocr_text = normalized_ocr_text.rstrip()
+            normalized_ocr_text += "x" * (98 - len(normalized_ocr_text))
+            ocr_text = normalized_ocr_text.replace(" ", "  ", 1)
+            self.assertEqual(len(ocr_text), 99)
+            self.assertEqual(len(normalize_text(ocr_text)), 98)
+        else:
+            ocr_text = (ocr_seed * 5)[:495]
+            self.assertEqual(len(ocr_text), 495)
         content = [item for page_items in native_items for item in page_items]
         content.append(
             {
@@ -349,7 +360,7 @@ class MinerUContractTests(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
-        return source, output_dir, len(ocr_text)
+        return source, output_dir, len(ocr_text), len(normalize_text(ocr_text))
 
     def test_fixture_hashes_and_origin_binding(self) -> None:
         for relative, expected_hash in self.fixture_manifest["files"].items():
@@ -803,7 +814,9 @@ class MinerUContractTests(unittest.TestCase):
     def test_mixed_scan_page_cannot_hide_behind_document_native_ratio(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v23-mineru-mixed-scan-") as temporary:
             root = Path(temporary)
-            source, output_dir, ocr_length = self.make_mixed_native_scan_case(root)
+            source, output_dir, raw_ocr_length, adapter_ocr_length = (
+                self.make_mixed_native_scan_case(root)
+            )
             work_dir = root / "work"
             result = self.guarded_import(source, output_dir, work_dir)
             self.assertEqual(result["status"], "manual_source_review_required")
@@ -819,7 +832,10 @@ class MinerUContractTests(unittest.TestCase):
             )
             scanned = evidence["pages"][3]
             self.assertLess(scanned["native_text_characters"], 100)
-            self.assertEqual(scanned["adapter_text_characters"], ocr_length)
+            self.assertEqual(raw_ocr_length, 495)
+            self.assertEqual(
+                scanned["adapter_text_characters"], adapter_ocr_length
+            )
             self.assertIn(
                 "adapter_text_without_native_oracle",
                 scanned["manual_review_reasons"],
@@ -831,6 +847,55 @@ class MinerUContractTests(unittest.TestCase):
 
             completed = subprocess.run(
                 [sys.executable, str(REPOSITORY / "scripts" / "audit_source.py"), str(work_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            report = json.loads(
+                (work_dir / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(report["status"], "manual_source_review_required")
+            self.assertEqual(report["failures"], [])
+
+    def test_short_mixed_scan_page_cannot_hide_below_native_threshold(self) -> None:
+        self.assertTrue(adapter_text_exceeds_native_oracle(1, 98, 100))
+        with tempfile.TemporaryDirectory(
+            prefix="v23-mineru-short-mixed-scan-"
+        ) as temporary:
+            root = Path(temporary)
+            source, output_dir, raw_ocr_length, adapter_ocr_length = (
+                self.make_mixed_native_scan_case(root, short_ocr=True)
+            )
+            self.assertEqual(raw_ocr_length, 99)
+            self.assertEqual(adapter_ocr_length, 98)
+
+            work_dir = root / "work"
+            result = self.guarded_import(source, output_dir, work_dir)
+            self.assertEqual(result["status"], "manual_source_review_required")
+            self.assertEqual(result["manual_review_pages"], [4])
+
+            evidence = json.loads(
+                (work_dir / "adapter-evidence.json").read_text(encoding="utf-8")
+            )
+            scanned = evidence["pages"][3]
+            self.assertEqual(scanned["native_text_characters"], 1)
+            self.assertEqual(scanned["adapter_text_characters"], 98)
+            self.assertEqual(
+                scanned["manual_review_reasons"],
+                ["adapter_text_without_native_oracle"],
+            )
+            manifest = json.loads(
+                (work_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["native_text_page_ratio"], 0.75)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPOSITORY / "scripts" / "audit_source.py"),
+                    str(work_dir),
+                ],
                 check=False,
                 capture_output=True,
                 text=True,

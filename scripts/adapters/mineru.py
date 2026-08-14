@@ -883,6 +883,26 @@ def adapter_substantive_text_lengths(
     return [len(normalize_text("\n".join(parts))) for parts in page_parts]
 
 
+def adapter_text_exceeds_native_oracle(
+    native_length: int,
+    adapter_length: int,
+    minimum_native_characters: int,
+) -> bool:
+    """Detect page-local parser text that the independent oracle cannot support.
+
+    ``minimum_native_characters`` describes when Poppler alone is a sufficient
+    native-text oracle; it must not also impose a minimum size on OCR/parser
+    text.  On a short page, twice as much adapter text as native text is enough
+    evidence of a substantive page-local gap and therefore requires review.
+    Empty native pages are already caught by ``native_oracle_empty``.
+    """
+
+    return (
+        0 < native_length < minimum_native_characters
+        and adapter_length >= 2 * native_length
+    )
+
+
 def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list[Path]]:
     if not output_dir.is_dir():
         raise AdapterError(f"MinerU output directory does not exist: {output_dir}")
@@ -1134,9 +1154,12 @@ def import_mineru(
         if native_ratio < minimum_ratio and native_length < minimum_chars:
             reasons.append("document_native_ratio_below_threshold")
         # A document-wide ratio cannot absolve one page whose parser text is
-        # substantial but whose independent Poppler layer is not.  This is the
-        # mixed native/scanned-page gate.
-        if native_length < minimum_chars <= adapter_length:
+        # substantial relative to its independent Poppler layer.  The adapter
+        # text does not need to reach the Profile's native-page character
+        # threshold: short scanned lecture/slide pages need the same gate.
+        if adapter_text_exceeds_native_oracle(
+            native_length, adapter_length, minimum_chars
+        ):
             reasons.append("adapter_text_without_native_oracle")
         manual_reasons_by_page.append(reasons)
     manual_pages = [
