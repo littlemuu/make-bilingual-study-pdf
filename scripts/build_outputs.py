@@ -530,7 +530,7 @@ def source_only_markdown_body(block: dict[str, Any]) -> str:
         return f"*{markdown_escape(source)}*"
     if kind == "table" and source.lstrip().lower().startswith("<table"):
         validate_table_html(source)
-        return source.strip()
+        return f"```{{=html}}\n{source.strip()}\n```"
     if kind == "list":
         lines = [line for line in source.splitlines() if line.strip()]
         bullet_match = re.compile(r"^\s*[-*+]\s+(.*)$")

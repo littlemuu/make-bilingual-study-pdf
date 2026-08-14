@@ -239,7 +239,8 @@ def test_structured_source_only_markdown() -> None:
         translatable=False,
     )
     table_body = source_only_markdown_body(table)
-    assert table_body.startswith("<table>")
+    assert table_body.startswith("```{=html}\n<table>")
+    assert table_body.endswith("</table>\n```")
     assert "\\<table" not in table_body
 
     references = make_block(

@@ -224,20 +224,20 @@ def test_shared_style_roles() -> None:
 def test_html_table_materialization() -> None:
     if not shutil.which("pandoc"):
         return
-    ast = {
-        "pandoc-api-version": [1, 23],
-        "meta": {},
-        "blocks": [
-            {
-                "t": "RawBlock",
-                "c": [
-                    "html",
-                    "<table><thead><tr><th>Metric</th><th>Value</th></tr></thead>"
-                    "<tbody><tr><td>Coverage</td><td>100%</td></tr></tbody></table>",
-                ],
-            }
-        ],
-    }
+    table_html = (
+        "<table><thead><tr><th>Metric</th><th>Value</th></tr></thead>"
+        "<tbody><tr><td>Coverage</td><td>100%</td></tr></tbody></table>"
+    )
+    parsed = subprocess.run(
+        ["pandoc", "--from", "markdown", "--to", "json"],
+        input=f"```{{=html}}\n{table_html}\n```\n",
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=True,
+    )
+    ast = json.loads(parsed.stdout)
+    assert ast["blocks"] == [{"t": "RawBlock", "c": ["html", table_html]}]
     materialized = materialize_html_tables(ast)
     assert [block["t"] for block in materialized["blocks"]] == ["Table"]
 
