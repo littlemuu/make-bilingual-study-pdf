@@ -190,7 +190,11 @@ class MinerUContractTests(unittest.TestCase):
             )
 
     def make_mixed_native_scan_case(
-        self, root: Path, *, ocr_mode: str = "long"
+        self,
+        root: Path,
+        *,
+        ocr_mode: str = "long",
+        rotated_partial_scan: bool = False,
     ) -> tuple[Path, Path, int, int]:
         """Create 3 native pages plus one OCR-only image page with a page number."""
 
@@ -287,12 +291,28 @@ class MinerUContractTests(unittest.TestCase):
             )
             self.assertGreaterEqual(inserted, 0)
 
-        scanned_page = document.new_page(width=1000, height=1000)
+        scanned_page_width = 612 if rotated_partial_scan else 1000
+        scanned_page_height = 792 if rotated_partial_scan else 1000
+        scanned_page = document.new_page(
+            width=scanned_page_width, height=scanned_page_height
+        )
+        scan_rect = (
+            fitz.Rect(0, 0, scanned_page_width * 0.6, scanned_page_height)
+            if rotated_partial_scan
+            else scanned_page.rect
+        )
         scanned_page.insert_image(
-            scanned_page.rect,
+            scan_rect,
             filename=str(FIXTURE_ROOT / "scan" / "images" / "scanned-page.png"),
         )
-        scanned_page.insert_text((490, 980), "4", fontname="helv", fontsize=10)
+        scanned_page.insert_text(
+            (scanned_page_width - 30, scanned_page_height - 12),
+            "4",
+            fontname="helv",
+            fontsize=10,
+        )
+        if rotated_partial_scan:
+            scanned_page.set_rotation(90)
         source.write_bytes(document.tobytes(garbage=4, deflate=True, no_new_id=True))
         document.close()
         shutil.copyfile(source, output_dir / "mixed_origin.pdf")
@@ -347,7 +367,11 @@ class MinerUContractTests(unittest.TestCase):
             middle_pages.append(
                 {
                     "page_idx": page_index,
-                    "page_size": [1000, 1000],
+                    "page_size": (
+                        [612, 792]
+                        if rotated_partial_scan and page_index == 3
+                        else [1000, 1000]
+                    ),
                     "preproc_blocks": [],
                     "para_blocks": blocks,
                     "discarded_blocks": [],
@@ -983,6 +1007,68 @@ class MinerUContractTests(unittest.TestCase):
                     report["status"], "manual_source_review_required"
                 )
                 self.assertEqual(report["failures"], [])
+
+    def test_rotated_large_raster_uses_rotated_page_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="v23-mineru-rotated-partial-scan-"
+        ) as temporary:
+            root = Path(temporary)
+            source, output_dir, raw_ocr_length, adapter_ocr_length = (
+                self.make_mixed_native_scan_case(
+                    root, ocr_mode="none", rotated_partial_scan=True
+                )
+            )
+            self.assertEqual(raw_ocr_length, 0)
+            self.assertEqual(adapter_ocr_length, 0)
+            with fitz.open(source) as source_document:
+                scanned_page = source_document[3]
+                self.assertEqual(scanned_page.rotation, 90)
+                self.assertEqual(
+                    [scanned_page.rect.width, scanned_page.rect.height],
+                    [792.0, 612.0],
+                )
+                self.assertEqual(
+                    page_raster_coverage_ratios(source_document),
+                    [0.0, 0.0, 0.0, 0.6],
+                )
+
+            work_dir = root / "work"
+            result = self.guarded_import(source, output_dir, work_dir)
+            self.assertEqual(result["status"], "manual_source_review_required")
+            self.assertEqual(result["manual_review_pages"], [4])
+
+            evidence = json.loads(
+                (work_dir / "adapter-evidence.json").read_text(encoding="utf-8")
+            )
+            scanned = evidence["pages"][3]
+            self.assertEqual(scanned["native_text_characters"], 1)
+            self.assertEqual(scanned["adapter_text_characters"], 0)
+            self.assertEqual(scanned["raster_image_area_ratio"], 0.6)
+            self.assertEqual(
+                scanned["manual_review_reasons"],
+                ["large_raster_without_native_oracle"],
+            )
+            manifest = json.loads(
+                (work_dir / "manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["native_text_page_ratio"], 0.75)
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(REPOSITORY / "scripts" / "audit_source.py"),
+                    str(work_dir),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            report = json.loads(
+                (work_dir / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(report["status"], "manual_source_review_required")
+            self.assertEqual(report["failures"], [])
 
 
 if __name__ == "__main__":

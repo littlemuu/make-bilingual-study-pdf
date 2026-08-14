@@ -42,7 +42,7 @@ SUPPORTED_MAJOR = 3
 VERIFIED_VERSION = "3.4.4"
 SUPPORTED_BACKEND = "pipeline"
 LARGE_RASTER_PAGE_AREA_RATIO = 0.5
-RASTER_COVERAGE_METHOD = "pymupdf-image-bbox-union-v1"
+RASTER_COVERAGE_METHOD = "pymupdf-rotated-image-bbox-union-v2"
 CONTENT_TYPES = {
     "text",
     "equation",
@@ -967,10 +967,17 @@ def page_raster_coverage_ratios(document: fitz.Document) -> list[float]:
                 raise AdapterError(
                     f"source PDF page {page.number + 1} has invalid image geometry"
                 )
-            x0 = max(float(bbox[0]), float(page_rect.x0))
-            y0 = max(float(bbox[1]), float(page_rect.y0))
-            x1 = min(float(bbox[2]), float(page_rect.x1))
-            y1 = min(float(bbox[3]), float(page_rect.y1))
+            # get_image_info() reports unrotated page coordinates, while
+            # Page.rect reflects page rotation.  Map every image rectangle
+            # through the page rotation matrix before clipping so both operands
+            # share the same coordinate system.
+            rotated_bbox = (
+                fitz.Rect(*(float(value) for value in bbox)) * page.rotation_matrix
+            )
+            x0 = max(float(rotated_bbox.x0), float(page_rect.x0))
+            y0 = max(float(rotated_bbox.y0), float(page_rect.y0))
+            x1 = min(float(rotated_bbox.x1), float(page_rect.x1))
+            y1 = min(float(rotated_bbox.y1), float(page_rect.y1))
             if x0 < x1 and y0 < y1:
                 rectangles.append((x0, y0, x1, y1))
         union_area = _rectangle_union_area(rectangles)
