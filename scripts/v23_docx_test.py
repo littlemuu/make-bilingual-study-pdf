@@ -244,6 +244,16 @@ def test_html_table_materialization() -> None:
     materialized = materialize_html_tables(ast)
     assert [block["t"] for block in materialized["blocks"]] == ["Table"]
 
+    reference_node = {
+        "type": "list",
+        "source": {
+            "text": "- [1] Alpha (2025).\n- [2] Beta (2026).",
+        },
+    }
+    assert "• [1] Alpha (2025). • [2] Beta (2026)." in (
+        compile_docx_pdf.searchable_sources(reference_node)
+    )
+
 
 def make_inventory(profile: dict) -> dict:
     result = {}
