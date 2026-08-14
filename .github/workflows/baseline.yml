@@ -1,0 +1,49 @@
+name: Baseline
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  self-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: |
+            requirements-dev.txt
+            requirements.txt
+
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m pip check
+
+      - name: Record toolchain
+        run: |
+          python --version
+          python -m pip freeze
+          pdftoppm -v
+
+      - name: Run deterministic baseline
+        run: |
+          python scripts/self_test.py
+          python scripts/pipeline.py validate-profile assignment-en-zh
