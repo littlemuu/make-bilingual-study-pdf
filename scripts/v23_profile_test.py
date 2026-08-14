@@ -24,7 +24,7 @@ from profile import (
 from semantic_registry import registered_constraint_ids, registered_style_ids
 
 
-ASSIGNMENT_FILE_SHA256 = "27b5baedd62f75c7a980ccc554f2d063fd529b55c92fed596cbe59d77eba10d0"
+ASSIGNMENT_FILE_SHA256 = "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2"
 ASSIGNMENT_CANONICAL_SHA256 = (
     "8ce2863ab72adc1ac11f415576060afbbdf39ab7d4f62fc7f25b88b31539c774"
 )
@@ -51,7 +51,9 @@ def main() -> None:
 
     assignment_path = PROFILE_DIR / "assignment-en-zh.json"
     assignment_bytes = assignment_path.read_bytes()
-    assert hashlib.sha256(assignment_bytes).hexdigest() == ASSIGNMENT_FILE_SHA256
+    repository_bytes = assignment_bytes.replace(b"\r\n", b"\n")
+    assert b"\r" not in repository_bytes
+    assert hashlib.sha256(repository_bytes).hexdigest() == ASSIGNMENT_FILE_SHA256
     assignment = load_profile("assignment-en-zh")
     assert canonical_profile_sha256(assignment) == ASSIGNMENT_CANONICAL_SHA256
     results.append("assignment Profile byte and canonical hashes are unchanged")
