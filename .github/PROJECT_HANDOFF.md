@@ -10,17 +10,19 @@
 ## 0. 当前实施状态
 
 PR #2 审查发现的三项 P1 契约缺口已经返修：双字段表格不再丢失结构正文，混合
-扫描页不能绕过人工源审查，DOCX 审计已绑定 PDF 编译与最终 QA。两轮后续复验又
-证明只比较 MinerU OCR 文本量仍不安全；当前代码 `d3d47f9` 已改用冻结源 PDF 的
-独立栅格几何证据。PyMuPDF 逐页读取图像显示矩形、裁到页面并计算不重复并集；
-原生文本不足且栅格覆盖达到 `0.5` 的页面必须进入
+扫描页不能绕过人工源审查，DOCX 审计已绑定 PDF 编译与最终 QA。后续复验又证明
+只比较 MinerU OCR 文本量仍不安全，而且首版独立栅格检测混用了未旋转图像坐标与
+旋转后页面边界。当前代码 `50f526b` 会把 PyMuPDF `get_image_info()` 返回的每个
+未旋转图像矩形先经 `page.rotation_matrix` 转换，再与旋转感知的 `page.rect` 裁剪
+并计算不重复并集。原生文本不足且栅格覆盖达到 `0.5` 的页面必须进入
 `manual_source_review_required`，无论 MinerU 返回 98 字、单个 `x` 或完全没有
 OCR 节点。`audit_source.py` 会从冻结 origin PDF 重新计算并核对该证据。新增四页
-回归固定第 4 页为整页扫描图加原生页码 `4`，同时覆盖 OCR=`x` 与无 OCR；两者的
-native 均为 1、栅格覆盖 1.0、文档比例 0.75，import/source audit 均非 passed。
+回归将第 4 页设为 612×792 A4、旋转 90°、60% 栅格、原生页码 `4` 且无 OCR；
+旋转后页面为 792×612，计算覆盖率精确为 0.6，native 为 1、adapter 为 0、文档
+比例为 0.75，import/source audit 均停在 `manual_source_review_required`。
 分支仍以 `main@e69fd57` 为 base；GitHub Actions
-[31806544825](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31806544825)
-双任务均通过，其中 MinerU 契约为 15/15。两个 Profile 的六张最终渲染与此前
+[31808652590](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31808652590)
+双任务均通过，其中 MinerU 契约为 16/16。两个 Profile 的六张最终渲染与此前
 逐页人工复核的文件哈希完全相同；当前 CI 产物没有伪造新的人工批准，最终 QA
 按设计保持 blocked。PR #2 仍保持 Draft，等待审阅者复核未解决线程。旧运行证据
 保留在 `.github/V2.3_ACCEPTANCE.md`，并明确标为 superseded。
