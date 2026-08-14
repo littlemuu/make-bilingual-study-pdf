@@ -159,8 +159,20 @@ def report_status(work_dir: Path) -> dict:
                 docx_reference = report.get("docx")
                 if not isinstance(docx_reference, str) or not docx_reference:
                     return "invalid"
+                # DOCX audit reports may be copied out of CI for human review.
+                # Their absolute diagnostic path belongs to the producing host;
+                # the frozen identity is the byte hash, so resolve the portable
+                # basename inside this work directory's output folder.
+                docx_name = docx_reference.replace("\\", "/").rsplit("/", 1)[-1]
+                if not docx_name or docx_name in {".", ".."}:
+                    return "invalid"
+                docx_path = (work_dir / "output" / docx_name).resolve()
+                try:
+                    docx_path.relative_to((work_dir / "output").resolve())
+                except ValueError:
+                    return "invalid"
                 _, _, binding_errors = validate_v2_docx_audit_binding(
-                    work_dir, Path(docx_reference), path
+                    work_dir, docx_path, path
                 )
                 if binding_errors:
                     return "stale"

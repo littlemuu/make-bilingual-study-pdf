@@ -129,7 +129,11 @@ def main() -> None:
         }
         write_json(
             audit_path,
-            {"status": "passed", "docx": str(docx_path.resolve()), **bindings},
+            {
+                "status": "passed",
+                "docx": "/home/runner/work/repository/artifacts/output/fixture.docx",
+                **bindings,
+            },
         )
         contact_record = {
             "path": "contact/contact-001.png",
@@ -177,7 +181,9 @@ def main() -> None:
         valid_status = report_status(work_dir)
         assert valid_status["gate_statuses"]["docx_audit"] == "passed"
         assert valid_status["gate_statuses"]["compile_audit"] == "passed"
-        results.append("final QA binds the passed DOCX audit to compile and DOCX bytes")
+        results.append(
+            "final QA and status bind relocated DOCX audits by current bytes"
+        )
 
         audit_bytes = audit_path.read_bytes()
         audit_path.unlink()
