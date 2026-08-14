@@ -10,13 +10,16 @@
 ## 0. 当前实施状态
 
 PR #2 审查发现的三项 P1 契约缺口已经返修：双字段表格不再丢失结构正文，混合
-扫描页不能绕过人工源审查，DOCX 审计已绑定 PDF 编译与最终 QA。分支已重放到
-`main@e69fd57`；最终代码 `0b70dc7` 的本地矩阵与 GitHub Actions
-[31796660686](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31796660686)
-双任务均通过。两个 Profile 的六页最终渲染已逐页人工复核，下载产物中的
-source/translation/output/DOCX/compile/visual gate 全部通过，`status` 均为
-`next_action: complete`。PR #2 仍保持 Draft，等待审阅者复核三个未解决线程。
-旧运行证据保留在 `.github/V2.3_ACCEPTANCE.md`，并明确标为 superseded。
+扫描页不能绕过人工源审查，DOCX 审计已绑定 PDF 编译与最终 QA。后续复验发现的
+“adapter/OCR 不满 100 字即可绕过逐页门禁”也已在代码 `36feb01` 关闭：新增的
+四页回归固定第 4 页为扫描图加原生页码 `4`，MinerU 原文 99 字、规范化 98 字，
+独立 Poppler oracle 仅 1 字；import 与 source audit 均停在
+`manual_source_review_required`。分支仍以 `main@e69fd57` 为 base；GitHub Actions
+[31804023291](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31804023291)
+双任务均通过，其中 MinerU 契约为 14/14。两个 Profile 的六张最终渲染与此前
+逐页人工复核的文件哈希完全相同；当前 CI 产物没有伪造新的人工批准，最终 QA
+按设计保持 blocked。PR #2 仍保持 Draft，等待审阅者复核未解决线程。旧运行证据
+保留在 `.github/V2.3_ACCEPTANCE.md`，并明确标为 superseded。
 私有复杂论文/讲义与 CS336 90 页基线在本工作区不可用，验收记录明确保留该限制，
 未用公开合成测试冒充私有回归。
 
