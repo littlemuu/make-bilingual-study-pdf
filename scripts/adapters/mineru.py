@@ -41,6 +41,8 @@ MAX_MIDDLE_VALUES = 1_000_000
 SUPPORTED_MAJOR = 3
 VERIFIED_VERSION = "3.4.4"
 SUPPORTED_BACKEND = "pipeline"
+LARGE_RASTER_PAGE_AREA_RATIO = 0.5
+RASTER_COVERAGE_METHOD = "pymupdf-image-bbox-union-v1"
 CONTENT_TYPES = {
     "text",
     "equation",
@@ -903,6 +905,79 @@ def adapter_text_exceeds_native_oracle(
     )
 
 
+def _rectangle_union_area(
+    rectangles: list[tuple[float, float, float, float]],
+) -> float:
+    """Return the exact union area of axis-aligned rectangles."""
+
+    x_edges = sorted({edge for rect in rectangles for edge in (rect[0], rect[2])})
+    area = 0.0
+    for left, right in zip(x_edges, x_edges[1:]):
+        if right <= left:
+            continue
+        intervals = sorted(
+            (top, bottom)
+            for x0, top, x1, bottom in rectangles
+            if x0 < right and x1 > left
+        )
+        covered_height = 0.0
+        current_top: float | None = None
+        current_bottom: float | None = None
+        for top, bottom in intervals:
+            if current_top is None or current_bottom is None:
+                current_top, current_bottom = top, bottom
+            elif top > current_bottom:
+                covered_height += current_bottom - current_top
+                current_top, current_bottom = top, bottom
+            else:
+                current_bottom = max(current_bottom, bottom)
+        if current_top is not None and current_bottom is not None:
+            covered_height += current_bottom - current_top
+        area += (right - left) * covered_height
+    return area
+
+
+def page_raster_coverage_ratios(document: fitz.Document) -> list[float]:
+    """Measure displayed raster-image coverage from the source PDF itself.
+
+    The measurement is independent of MinerU output and uses the union of image
+    display rectangles, clipped to each page.  Overlapping images are counted
+    once.  Values are rounded so importer and source-audit evidence is portable.
+    """
+
+    ratios: list[float] = []
+    for page in document:
+        page_rect = page.rect
+        page_area = float(page_rect.width * page_rect.height)
+        if not math.isfinite(page_area) or page_area <= 0:
+            raise AdapterError(f"source PDF page {page.number + 1} has invalid geometry")
+        rectangles: list[tuple[float, float, float, float]] = []
+        for image in page.get_image_info(xrefs=True):
+            bbox = image.get("bbox")
+            if (
+                not isinstance(bbox, (list, tuple))
+                or len(bbox) != 4
+                or any(
+                    not isinstance(value, (int, float))
+                    or isinstance(value, bool)
+                    or not math.isfinite(float(value))
+                    for value in bbox
+                )
+            ):
+                raise AdapterError(
+                    f"source PDF page {page.number + 1} has invalid image geometry"
+                )
+            x0 = max(float(bbox[0]), float(page_rect.x0))
+            y0 = max(float(bbox[1]), float(page_rect.y0))
+            x1 = min(float(bbox[2]), float(page_rect.x1))
+            y1 = min(float(bbox[3]), float(page_rect.y1))
+            if x0 < x1 and y0 < y1:
+                rectangles.append((x0, y0, x1, y1))
+        union_area = _rectangle_union_area(rectangles)
+        ratios.append(round(min(1.0, max(0.0, union_area / page_area)), 6))
+    return ratios
+
+
 def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list[Path]]:
     if not output_dir.is_dir():
         raise AdapterError(f"MinerU output directory does not exist: {output_dir}")
@@ -1102,6 +1177,13 @@ def import_mineru(
         [float(document[index].rect.width), float(document[index].rect.height)]
         for index in range(page_count)
     ]
+    try:
+        raster_coverage_ratios = page_raster_coverage_ratios(document)
+    except Exception as exc:
+        document.close()
+        if isinstance(exc, AdapterError):
+            raise
+        raise AdapterError(f"cannot inspect source PDF raster geometry: {exc}") from exc
 
     backend, version, middle_pages, middle_asset_paths = validate_middle(
         middle, page_count
@@ -1153,6 +1235,14 @@ def import_mineru(
             reasons.append("native_oracle_not_substantive_english")
         if native_ratio < minimum_ratio and native_length < minimum_chars:
             reasons.append("document_native_ratio_below_threshold")
+        # MinerU cannot prove the completeness of its own OCR.  A large raster
+        # region in the source PDF is independent evidence that a low-text page
+        # may be scanned, even if MinerU emits one character or no text at all.
+        if (
+            native_length < minimum_chars
+            and raster_coverage_ratios[index] >= LARGE_RASTER_PAGE_AREA_RATIO
+        ):
+            reasons.append("large_raster_without_native_oracle")
         # A document-wide ratio cannot absolve one page whose parser text is
         # substantial relative to its independent Poppler layer.  The adapter
         # text does not need to reach the Profile's native-page character
@@ -1190,6 +1280,7 @@ def import_mineru(
                 "source_page_size": source_size,
                 "native_text_characters": native_lengths[index],
                 "adapter_text_characters": adapter_lengths[index],
+                "raster_image_area_ratio": raster_coverage_ratios[index],
                 "manual_review_reasons": manual_reasons_by_page[index],
                 "status": (
                     "manual_source_review_required"
@@ -1374,6 +1465,10 @@ def import_mineru(
                     "verified" if version == VERIFIED_VERSION else "compatible-unverified"
                 ),
             },
+            "raster_detection": {
+                "method": RASTER_COVERAGE_METHOD,
+                "large_page_area_ratio": LARGE_RASTER_PAGE_AREA_RATIO,
+            },
             "inputs": input_records,
             "assets": evidence_assets,
             "pages": page_evidence,
@@ -1435,6 +1530,7 @@ def import_mineru(
                         native_ascii_letter_ratios[index], 4
                     ),
                     "adapter_text_characters": adapter_lengths[index],
+                    "raster_image_area_ratio": raster_coverage_ratios[index],
                     "manual_review_reasons": manual_reasons_by_page[index],
                     "manual_source_review_required": index + 1 in manual_pages,
                 }

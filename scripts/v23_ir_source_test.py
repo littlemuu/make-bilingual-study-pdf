@@ -9,8 +9,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pymupdf as fitz
 from PIL import Image
 
+from adapters.mineru import LARGE_RASTER_PAGE_AREA_RATIO, RASTER_COVERAGE_METHOD
 from audit_source import audit_adapter_source
 from common import sha256_file, sha256_text, write_json, write_jsonl
 from document_ir import (
@@ -112,7 +114,12 @@ class V23IrSourceTests(unittest.TestCase):
         (work_dir / "adapter-inputs").mkdir()
         (work_dir / "adapter-assets").mkdir()
         source_path = work_dir / "source.pdf"
-        source_path.write_bytes(b"frozen-source")
+        source_document = fitz.open()
+        source_document.new_page(width=612, height=792)
+        source_path.write_bytes(
+            source_document.tobytes(garbage=4, deflate=True, no_new_id=True)
+        )
+        source_document.close()
 
         specifications = [
             ("Title", "title", 1, "heading"),
@@ -240,6 +247,10 @@ class V23IrSourceTests(unittest.TestCase):
                 "backend": "pipeline",
                 "support_level": "verified",
             },
+            "raster_detection": {
+                "method": RASTER_COVERAGE_METHOD,
+                "large_page_area_ratio": LARGE_RASTER_PAGE_AREA_RATIO,
+            },
             "inputs": inputs,
             "assets": assets,
             "pages": [
@@ -249,6 +260,7 @@ class V23IrSourceTests(unittest.TestCase):
                     "source_page_size": [612.0, 792.0],
                     "native_text_characters": 0 if manual else 59,
                     "adapter_text_characters": 59,
+                    "raster_image_area_ratio": 0.0,
                     "manual_review_reasons": (
                         ["native_oracle_empty"] if manual else []
                     ),
@@ -407,7 +419,7 @@ class V23IrSourceTests(unittest.TestCase):
     def test_adapter_freeze_dispositions_assets_and_drift(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v23-ir-source-") as temporary:
             work_dir, manifest, blocks = self.make_work(Path(temporary))
-            adapter = audit_adapter_source(work_dir, manifest, blocks)
+            adapter = audit_adapter_source(work_dir, manifest, blocks, self.profile)
             self.assertEqual(adapter["failures"], [])
             self.assertEqual(adapter["item_count"], 5)
             ir = expected_ir(work_dir, self.profile)
@@ -423,7 +435,7 @@ class V23IrSourceTests(unittest.TestCase):
     def test_manual_review_is_a_nonpassed_source_audit_status(self) -> None:
         with tempfile.TemporaryDirectory(prefix="v23-ir-manual-") as temporary:
             work_dir, manifest, blocks = self.make_work(Path(temporary), manual=True)
-            adapter = audit_adapter_source(work_dir, manifest, blocks)
+            adapter = audit_adapter_source(work_dir, manifest, blocks, self.profile)
             self.assertEqual(adapter["failures"], [])
             self.assertTrue(adapter["manual_source_review_required"])
 
@@ -462,7 +474,7 @@ class V23IrSourceTests(unittest.TestCase):
 
             review_page = work_dir / manifest["source_review_pages"][0]
             review_page.write_bytes(b"not-a-decodable-image")
-            drifted = audit_adapter_source(work_dir, manifest, blocks)
+            drifted = audit_adapter_source(work_dir, manifest, blocks, self.profile)
             self.assertTrue(
                 any("comparison cannot be fully decoded" in item for item in drifted["failures"])
             )

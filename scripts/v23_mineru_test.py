@@ -21,6 +21,7 @@ import pymupdf as fitz
 
 from adapters.base import AdapterError
 from adapters.mineru import (
+    LARGE_RASTER_PAGE_AREA_RATIO,
     SUPPORTED_BACKEND,
     VERIFIED_VERSION,
     adapter_text_exceeds_native_oracle,
@@ -29,6 +30,7 @@ from adapters.mineru import (
     import_mineru,
     load_strict_json,
     normalize_content,
+    page_raster_coverage_ratios,
     resolve_asset,
     validate_assets,
     validate_content_bbox,
@@ -188,7 +190,7 @@ class MinerUContractTests(unittest.TestCase):
             )
 
     def make_mixed_native_scan_case(
-        self, root: Path, *, short_ocr: bool = False
+        self, root: Path, *, ocr_mode: str = "long"
     ) -> tuple[Path, Path, int, int]:
         """Create 3 native pages plus one OCR-only image page with a page number."""
 
@@ -299,26 +301,33 @@ class MinerUContractTests(unittest.TestCase):
             "MinerU OCR recovered substantive English from the scanned fourth page, "
             "but those characters do not exist in the independent Poppler text layer. "
         )
-        if short_ocr:
+        if ocr_mode == "short":
             normalized_ocr_text = (ocr_seed * 2)[:98]
             normalized_ocr_text = normalized_ocr_text.rstrip()
             normalized_ocr_text += "x" * (98 - len(normalized_ocr_text))
             ocr_text = normalized_ocr_text.replace(" ", "  ", 1)
             self.assertEqual(len(ocr_text), 99)
             self.assertEqual(len(normalize_text(ocr_text)), 98)
-        else:
+        elif ocr_mode == "long":
             ocr_text = (ocr_seed * 5)[:495]
             self.assertEqual(len(ocr_text), 495)
+        elif ocr_mode == "minimal":
+            ocr_text = "x"
+        elif ocr_mode == "none":
+            ocr_text = ""
+        else:
+            self.fail(f"unknown mixed-scan OCR mode: {ocr_mode}")
         content = [item for page_items in native_items for item in page_items]
-        content.append(
-            {
-                "id": "mixed-ocr-body",
-                "type": "text",
-                "text": ocr_text,
-                "bbox": [50, 80, 950, 900],
-                "page_idx": 3,
-            }
-        )
+        if ocr_text:
+            content.append(
+                {
+                    "id": "mixed-ocr-body",
+                    "type": "text",
+                    "text": ocr_text,
+                    "bbox": [50, 80, 950, 900],
+                    "page_idx": 3,
+                }
+            )
         middle_pages = []
         for page_index in range(4):
             page_items = [item for item in content if item["page_idx"] == page_index]
@@ -865,7 +874,7 @@ class MinerUContractTests(unittest.TestCase):
         ) as temporary:
             root = Path(temporary)
             source, output_dir, raw_ocr_length, adapter_ocr_length = (
-                self.make_mixed_native_scan_case(root, short_ocr=True)
+                self.make_mixed_native_scan_case(root, ocr_mode="short")
             )
             self.assertEqual(raw_ocr_length, 99)
             self.assertEqual(adapter_ocr_length, 98)
@@ -881,9 +890,14 @@ class MinerUContractTests(unittest.TestCase):
             scanned = evidence["pages"][3]
             self.assertEqual(scanned["native_text_characters"], 1)
             self.assertEqual(scanned["adapter_text_characters"], 98)
-            self.assertEqual(
+            self.assertEqual(scanned["raster_image_area_ratio"], 1.0)
+            self.assertIn(
+                "large_raster_without_native_oracle",
                 scanned["manual_review_reasons"],
-                ["adapter_text_without_native_oracle"],
+            )
+            self.assertIn(
+                "adapter_text_without_native_oracle",
+                scanned["manual_review_reasons"],
             )
             manifest = json.loads(
                 (work_dir / "manifest.json").read_text(encoding="utf-8")
@@ -906,6 +920,69 @@ class MinerUContractTests(unittest.TestCase):
             )
             self.assertEqual(report["status"], "manual_source_review_required")
             self.assertEqual(report["failures"], [])
+
+    def test_large_raster_scan_requires_review_with_minimal_or_no_ocr(self) -> None:
+        for ocr_mode, expected_adapter_length in (("minimal", 1), ("none", 0)):
+            with self.subTest(ocr_mode=ocr_mode), tempfile.TemporaryDirectory(
+                prefix=f"v23-mineru-{ocr_mode}-ocr-scan-"
+            ) as temporary:
+                root = Path(temporary)
+                source, output_dir, raw_ocr_length, adapter_ocr_length = (
+                    self.make_mixed_native_scan_case(root, ocr_mode=ocr_mode)
+                )
+                self.assertEqual(raw_ocr_length, expected_adapter_length)
+                self.assertEqual(adapter_ocr_length, expected_adapter_length)
+                with fitz.open(source) as source_document:
+                    self.assertEqual(
+                        page_raster_coverage_ratios(source_document),
+                        [0.0, 0.0, 0.0, 1.0],
+                    )
+
+                work_dir = root / "work"
+                result = self.guarded_import(source, output_dir, work_dir)
+                self.assertEqual(result["status"], "manual_source_review_required")
+                self.assertEqual(result["manual_review_pages"], [4])
+
+                evidence = json.loads(
+                    (work_dir / "adapter-evidence.json").read_text(encoding="utf-8")
+                )
+                scanned = evidence["pages"][3]
+                self.assertEqual(scanned["native_text_characters"], 1)
+                self.assertEqual(
+                    scanned["adapter_text_characters"], expected_adapter_length
+                )
+                self.assertEqual(scanned["raster_image_area_ratio"], 1.0)
+                self.assertGreaterEqual(
+                    scanned["raster_image_area_ratio"],
+                    LARGE_RASTER_PAGE_AREA_RATIO,
+                )
+                self.assertEqual(
+                    scanned["manual_review_reasons"],
+                    ["large_raster_without_native_oracle"],
+                )
+                manifest = json.loads(
+                    (work_dir / "manifest.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(manifest["native_text_page_ratio"], 0.75)
+
+                completed = subprocess.run(
+                    [
+                        sys.executable,
+                        str(REPOSITORY / "scripts" / "audit_source.py"),
+                        str(work_dir),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertNotEqual(completed.returncode, 0)
+                report = json.loads(
+                    (work_dir / "source-audit.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(
+                    report["status"], "manual_source_review_required"
+                )
+                self.assertEqual(report["failures"], [])
 
 
 if __name__ == "__main__":

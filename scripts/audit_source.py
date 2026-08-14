@@ -3,12 +3,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 from collections import defaultdict
 from pathlib import Path
 
+import pymupdf as fitz
 from PIL import Image
 
+from adapters.base import AdapterError
+from adapters.mineru import (
+    LARGE_RASTER_PAGE_AREA_RATIO,
+    RASTER_COVERAGE_METHOD,
+    page_raster_coverage_ratios,
+)
 from common import (
     ascii_tokens,
     ngrams,
@@ -64,6 +72,7 @@ def audit_adapter_source(
     work_dir: Path,
     manifest: dict,
     blocks: list[dict],
+    profile: dict | None = None,
 ) -> dict:
     """Close the MinerU evidence, disposition, node, and frozen-file chains."""
     failures: list[str] = []
@@ -135,6 +144,19 @@ def audit_adapter_source(
         input_roles["origin"][0].get("sha256") != manifest.get("source_sha256")
     ):
         failures.append("frozen origin input hash does not match source manifest")
+
+    audited_raster_ratios: list[float] | None = None
+    if len(input_roles["origin"]) == 1:
+        origin_path = work_dir / input_roles["origin"][0]["work_path"]
+        try:
+            with fitz.open(origin_path) as source_document:
+                if source_document.needs_pass:
+                    raise ValueError("frozen origin PDF is encrypted")
+                if source_document.page_count != manifest.get("page_count"):
+                    raise ValueError("frozen origin PDF page count changed")
+                audited_raster_ratios = page_raster_coverage_ratios(source_document)
+        except (AdapterError, OSError, RuntimeError, ValueError) as exc:
+            failures.append(f"cannot audit frozen origin raster geometry: {exc}")
 
     assets_by_id: dict[str, dict] = {}
     asset_work_paths: set[str] = set()
@@ -326,8 +348,20 @@ def audit_adapter_source(
         "native_oracle_empty",
         "native_oracle_not_substantive_english",
         "document_native_ratio_below_threshold",
+        "large_raster_without_native_oracle",
         "adapter_text_without_native_oracle",
     }
+    raster_detection = evidence.get("raster_detection")
+    if raster_detection != {
+        "method": RASTER_COVERAGE_METHOD,
+        "large_page_area_ratio": LARGE_RASTER_PAGE_AREA_RATIO,
+    }:
+        failures.append("adapter raster detection contract is invalid")
+    minimum_native_characters = None
+    if isinstance(profile, dict):
+        value = profile.get("input", {}).get("minimum_text_characters_per_page")
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            minimum_native_characters = value
     if not isinstance(page_statuses, list) or len(page_statuses) != manifest.get(
         "page_count"
     ):
@@ -339,7 +373,7 @@ def audit_adapter_source(
         ]
         if page_indices != list(range(manifest.get("page_count", 0))):
             failures.append("adapter page evidence indices must be contiguous and ordered")
-        for page in page_statuses:
+        for page_index, page in enumerate(page_statuses):
             if not isinstance(page, dict):
                 failures.append("adapter page evidence entry must be an object")
                 continue
@@ -369,6 +403,24 @@ def audit_adapter_source(
                     or count < 0
                 ):
                     failures.append(f"adapter page evidence has invalid {field}")
+            raster_ratio = page.get("raster_image_area_ratio")
+            if (
+                not isinstance(raster_ratio, (int, float))
+                or isinstance(raster_ratio, bool)
+                or not math.isfinite(float(raster_ratio))
+                or not 0 <= float(raster_ratio) <= 1
+            ):
+                failures.append(
+                    "adapter page evidence has invalid raster_image_area_ratio"
+                )
+                raster_ratio = None
+            elif (
+                audited_raster_ratios is not None
+                and float(raster_ratio) != audited_raster_ratios[page_index]
+            ):
+                failures.append(
+                    "adapter page raster coverage disagrees with frozen origin PDF"
+                )
             reasons = page.get("manual_review_reasons")
             if (
                 not isinstance(reasons, list)
@@ -378,6 +430,23 @@ def audit_adapter_source(
             ):
                 failures.append("adapter page evidence has invalid manual review reasons")
                 reasons = []
+            if (
+                raster_ratio is not None
+                and minimum_native_characters is not None
+                and isinstance(page.get("native_text_characters"), int)
+                and not isinstance(page.get("native_text_characters"), bool)
+            ):
+                expected_large_raster_reason = (
+                    page["native_text_characters"] < minimum_native_characters
+                    and float(raster_ratio) >= LARGE_RASTER_PAGE_AREA_RATIO
+                )
+                if expected_large_raster_reason != (
+                    "large_raster_without_native_oracle" in reasons
+                ):
+                    failures.append(
+                        "large raster page manual-review reason disagrees with "
+                        "independent PDF evidence"
+                    )
             expected_manual = page.get("status") == "manual_source_review_required"
             if expected_manual != bool(reasons):
                 failures.append(
@@ -629,7 +698,7 @@ def main() -> None:
             f"{sorted(set(corrupt_protected_spans))}"
         )
 
-    adapter_audit = audit_adapter_source(work_dir, manifest, blocks)
+    adapter_audit = audit_adapter_source(work_dir, manifest, blocks, profile)
     failures.extend(adapter_audit["failures"])
     warnings.extend(adapter_audit["warnings"])
 
