@@ -9,7 +9,12 @@ from pathlib import Path
 
 from common import read_json, read_jsonl, sha256_file, write_json
 from profile import canonical_profile_sha256, load_work_profile
-from build_outputs import load_semantic_model, markdown_escape, response_marker
+from build_outputs import (
+    load_semantic_model,
+    markdown_escape,
+    response_marker,
+    source_only_markdown_body,
+)
 
 
 MARKER_RE = re.compile(
@@ -343,7 +348,13 @@ def main() -> None:
                 if block is None or disposition == "artifact-omitted" or marker is None:
                     continue
                 marker_end = marker.end()
-                if block["kind"] == "code":
+                if disposition == "source-only":
+                    try:
+                        rendered_source = source_only_markdown_body(block)
+                    except ValueError as exc:
+                        content_failures.append(f"{block_id}:unsafe-source:{exc}")
+                        continue
+                elif block["kind"] == "code":
                     rendered_source = block["source"]
                 else:
                     rendered_source = markdown_escape(block["source"])

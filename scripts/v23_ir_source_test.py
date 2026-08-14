@@ -95,6 +95,16 @@ class V23IrSourceTests(unittest.TestCase):
             contract,
         )
         self.assertEqual(footnote["role"], "page-footnote")
+        byline = _classify_v2_block(
+            {
+                "source": "Ada Example — Department of Reproducible Learning",
+                "kind": "prose",
+                "adapter_role": "paragraph",
+                "evidence": {"raw_sub_type": None, "text_level": 0},
+            },
+            profile_contract(self.profile),
+        )
+        self.assertEqual(byline["role"], "author-affiliation")
 
     def make_work(self, root: Path, *, manual: bool = False) -> tuple[Path, dict, list[dict]]:
         work_dir = root / "work"

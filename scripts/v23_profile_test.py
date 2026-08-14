@@ -118,6 +118,9 @@ def main() -> None:
     assert academic_inventory["table-footnote"]["minimum"] == 0
     assert academic_inventory["references"]["minimum"] == 1
     assert semantic_match(academic, "Abstract: Motivation")["role"] == "abstract"
+    assert semantic_match(
+        academic, "Ada Example — Department of Reproducible Learning"
+    )["role"] == "author-affiliation"
     assert semantic_match(academic, "参考文献：")["role"] == "references"
     results.append("academic-paper roles encode executable inventory and disposition rules")
 

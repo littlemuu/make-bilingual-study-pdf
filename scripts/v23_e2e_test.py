@@ -101,7 +101,14 @@ def assert_automated_forward(profile: str, output_root: Path) -> dict[str, Any]:
     ir = read_json(work_dir / "document-ir.json")
     counts = ir["inventories"]["semantic_role_counts"]
     required_counts = (
-        {"title": 1, "abstract": 1, "section": 1, "paragraph": 1, "references": 1}
+        {
+            "title": 1,
+            "author-affiliation": 1,
+            "abstract": 1,
+            "section": 1,
+            "paragraph": 1,
+            "references": 1,
+        }
         if profile == "academic-paper-en-zh"
         else {
             "title": 1,

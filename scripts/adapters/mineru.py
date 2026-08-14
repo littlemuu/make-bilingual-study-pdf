@@ -23,6 +23,7 @@ from common import (
     write_json,
     write_jsonl,
 )
+from html_table import validate_table_html
 from visual_utils import make_contact_sheets
 
 
@@ -669,7 +670,14 @@ def normalize_content(
                 ):
                     raise AdapterError(f"{item_pointer} table needs table_body or img_path")
                 if body is not None:
-                    _require_text(body, f"{item_pointer}/table_body")
+                    body = _require_text(body, f"{item_pointer}/table_body")
+                    if body.lstrip().lower().startswith("<table"):
+                        try:
+                            validate_table_html(body)
+                        except ValueError as exc:
+                            raise AdapterError(
+                                f"{item_pointer}/table_body is unsafe or invalid: {exc}"
+                            ) from exc
             else:
                 prefix = "image" if raw_type == "image" else "chart"
                 captions = _require_string_list(

@@ -406,6 +406,15 @@ class MinerUContractTests(unittest.TestCase):
             image_disposition["raw_sub_type"], "synthetic-opaque-visual-kind"
         )
 
+        unsafe_table = copy.deepcopy(content)
+        table_item = next(entry for entry in unsafe_table if entry["type"] == "table")
+        table_item["table_body"] = (
+            "<table><tr><td>safe<script>bad()</script></td></tr></table>"
+        )
+        table_item.pop("img_path", None)
+        with self.assertRaises(AdapterError):
+            self.normalize_mutation(unsafe_table)
+
         duplicate_id = copy.deepcopy(content)
         duplicate_id[1]["id"] = duplicate_id[0]["id"]
         with self.assertRaises(AdapterError):

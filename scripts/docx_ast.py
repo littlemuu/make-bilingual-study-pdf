@@ -338,15 +338,17 @@ def _split_segments(blocks: list[dict]) -> tuple[list[dict], list[dict]]:
     return prefix, segments
 
 
-def _generic_marker(kind: str, role: str, style: str, group_id: str) -> dict:
+def _generic_marker(
+    kind: str, role: str, style: str, membership: str, group_id: str
+) -> dict:
     return {
         "t": "Para",
-        "c": text_to_inlines(f"{kind}|{role}|{style}|{group_id}"),
+        "c": text_to_inlines(f"{kind}|{role}|{style}|{membership}|{group_id}"),
     }
 
 
 def _group_structural_segments(
-    segments: list[dict], *, role: str, style: str, group_id: str
+    segments: list[dict], *, role: str, style: str, membership: str, group_id: str
 ) -> dict:
     english: list[dict] = []
     chinese: list[dict] = []
@@ -365,20 +367,28 @@ def _group_structural_segments(
         target_blocks_total += target_blocks
         if (source_blocks == 0 and target_blocks != 0) or target_blocks > 1:
             raise ValueError(
-                f"complete structural group {group_id} member {segment['node_id']} "
+                f"structural group {group_id} member {segment['node_id']} "
                 "must be an empty grouped alias or materialize as source with at most "
                 "one target BlockQuote"
             )
     if not english or not chinese or target_blocks_total == 0:
-        raise ValueError(f"complete structural group {group_id} is not bilingual")
+        raise ValueError(f"structural group {group_id} is not bilingual")
+    if membership == "anchor-only" and (
+        len(segments) != 1
+        or target_blocks_total != 1
+    ):
+        raise ValueError(
+            f"anchor-only structural group {group_id} must contain exactly its anchor "
+            "source and one target BlockQuote"
+        )
     return {
         "t": "BlockQuote",
         "c": [
-            _generic_marker(GENERIC_BEGIN, role, style, group_id),
+            _generic_marker(GENERIC_BEGIN, role, style, membership, group_id),
             *english,
             {"t": "HorizontalRule"},
             *chinese,
-            _generic_marker(GENERIC_END, role, style, group_id),
+            _generic_marker(GENERIC_END, role, style, membership, group_id),
         ],
     }
 
@@ -392,11 +402,16 @@ def _transform_v2(
         raise ValueError("schema V2 DOCX transformation requires frozen semantic groups")
     contract = profile_contract(profile)
     roles = {item["role"]: item for item in contract["roles"]}
-    complete_groups: dict[str, dict] = {}
+    structural_groups: dict[str, dict] = {}
     member_owner: dict[str, str] = {}
     grouped_counts = {role: 0 for role in roles}
+    complete_counts = {role: 0 for role in roles}
+    anchor_only_counts = {role: 0 for role in roles}
     for group in semantic_groups:
-        if not isinstance(group, dict) or group.get("membership") != "complete":
+        if not isinstance(group, dict):
+            raise ValueError("semantic groups must be objects")
+        membership = group.get("membership")
+        if membership not in {"complete", "anchor-only"}:
             continue
         role = group.get("role")
         spec = roles.get(role)
@@ -410,16 +425,24 @@ def _transform_v2(
             or not isinstance(members, list)
             or not members
         ):
-            raise ValueError(f"invalid complete structural group: {group_id!r}")
-        complete_groups[group_id] = {
+            if spec is not None and spec["grouping"] != "structural-container":
+                continue
+            raise ValueError(f"invalid structural group: {group_id!r}")
+        if membership == "anchor-only" and members != [group.get("anchor_node_id")]:
+            raise ValueError(
+                f"anchor-only structural group {group_id} must contain only its anchor"
+            )
+        structural_groups[group_id] = {
             "role": role,
             "style": spec["style"],
             "members": list(members),
+            "membership": membership,
         }
         grouped_counts[role] += 1
+        (complete_counts if membership == "complete" else anchor_only_counts)[role] += 1
         for member in members:
             if member in member_owner:
-                raise ValueError(f"node belongs to multiple complete groups: {member}")
+                raise ValueError(f"node belongs to multiple structural groups: {member}")
             member_owner[member] = group_id
 
     prefix, segments = _split_segments(document.get("blocks", []))
@@ -432,17 +455,17 @@ def _transform_v2(
 
     starts: dict[int, tuple[dict, list[dict]]] = {}
     covered: set[int] = set()
-    for group_id, group in complete_groups.items():
+    for group_id, group in structural_groups.items():
         try:
             indices = [segment_indices[member] for member in group["members"]]
         except KeyError as exc:
             raise ValueError(
-                f"complete structural group {group_id} member is absent from Markdown: {exc.args[0]}"
+                f"structural group {group_id} member is absent from Markdown: {exc.args[0]}"
             ) from exc
         contiguous = list(range(min(indices), min(indices) + len(indices)))
         if sorted(indices) != contiguous:
             raise ValueError(
-                f"complete structural group {group_id} members are not contiguous"
+                f"structural group {group_id} members are not contiguous"
             )
         if indices != contiguous:
             indexed_segments = [segments[index] for index in contiguous]
@@ -451,10 +474,10 @@ def _transform_v2(
                 or any(segment["blocks"] for segment in indexed_segments[:-1])
             ):
                 raise ValueError(
-                    f"complete structural group {group_id} marker order is not source order"
+                    f"structural group {group_id} marker order is not source order"
                 )
         if any(index in covered for index in indices):
-            raise ValueError(f"complete structural group overlaps another group: {group_id}")
+            raise ValueError(f"structural group overlaps another group: {group_id}")
         covered.update(indices)
         starts[min(indices)] = (group, [segments[index] for index in indices])
 
@@ -470,6 +493,7 @@ def _transform_v2(
                     members,
                     role=group["role"],
                     style=group["style"],
+                    membership=group["membership"],
                     group_id=group_id,
                 )
             )
@@ -489,6 +513,14 @@ def _transform_v2(
     transformed.setdefault("meta", {})["v23-structural-group-counts"] = {
         "t": "MetaString",
         "c": json.dumps(grouped_counts, sort_keys=True, separators=(",", ":")),
+    }
+    transformed["meta"]["v23-complete-structural-group-counts"] = {
+        "t": "MetaString",
+        "c": json.dumps(complete_counts, sort_keys=True, separators=(",", ":")),
+    }
+    transformed["meta"]["v23-anchor-only-callout-counts"] = {
+        "t": "MetaString",
+        "c": json.dumps(anchor_only_counts, sort_keys=True, separators=(",", ":")),
     }
     return transformed
 

@@ -16,11 +16,53 @@ from docx import Document
 from docx_ast import transform
 import docx_style
 from common import read_json, sha256_file
-from profile import load_profile, load_work_profile
+from html_table import validate_table_html
+from profile import load_profile, load_work_profile, profile_contract
 
 
 def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def materialize_html_tables(ast: dict[str, Any], pandoc: str = "pandoc") -> dict[str, Any]:
+    """Turn validated raw HTML tables into native Pandoc Table nodes."""
+
+    blocks = ast.get("blocks")
+    if not isinstance(blocks, list):
+        raise ValueError("Pandoc AST blocks must be an array")
+    materialized: list[dict[str, Any]] = []
+    for block in blocks:
+        if not (
+            isinstance(block, dict)
+            and block.get("t") == "RawBlock"
+            and isinstance(block.get("c"), list)
+            and len(block["c"]) == 2
+            and block["c"][0] == "html"
+            and isinstance(block["c"][1], str)
+            and block["c"][1].lstrip().lower().startswith("<table")
+        ):
+            materialized.append(block)
+            continue
+        table_html = validate_table_html(block["c"][1])
+        completed = subprocess.run(
+            [pandoc, "--from", "html", "--to", "json"],
+            input=table_html,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=True,
+        )
+        parsed = json.loads(completed.stdout)
+        parsed_blocks = parsed.get("blocks")
+        if not isinstance(parsed_blocks, list) or not parsed_blocks or any(
+            not isinstance(item, dict) or item.get("t") != "Table"
+            for item in parsed_blocks
+        ):
+            raise ValueError("Pandoc did not materialize HTML as a native Table")
+        materialized.extend(parsed_blocks)
+    result = dict(ast)
+    result["blocks"] = materialized
+    return result
 
 
 def parse_expected_roles(values: list[str]) -> dict[str, int]:
@@ -159,6 +201,7 @@ def main() -> None:
     run(["pandoc", str(source), "--from", "markdown", "--to", "json", "--output", str(ast_path)])
     ast = json.loads(ast_path.read_text(encoding="utf-8"))
     try:
+        ast = materialize_html_tables(ast)
         grouped = transform(
             ast,
             profile,
@@ -173,12 +216,24 @@ def main() -> None:
         )
     role_counts: dict[str, int] = {}
     complete_role_counts: dict[str, int] = {}
+    anchor_only_role_counts: dict[str, int] = {}
     if profile["schema_version"] == 2:
         inventory = ir["inventories"]["role_inventory"]
         role_counts = {role: item["occurrence_count"] for role, item in inventory.items()}
+        structural_roles = {
+            item["role"]
+            for item in profile_contract(profile)["roles"]
+            if item["grouping"] == "structural-container"
+        }
         complete_role_counts = {
             role: item["membership_counts"].get("complete", 0)
             for role, item in inventory.items()
+            if role in structural_roles
+        }
+        anchor_only_role_counts = {
+            role: item["membership_counts"].get("anchor-only", 0)
+            for role, item in inventory.items()
+            if role in structural_roles
         }
         unknown = sorted(set(expected_role_flags) - set(role_counts))
         if unknown:
@@ -258,13 +313,33 @@ def main() -> None:
 
     if profile["schema_version"] == 2:
         styled = style_report.get("role_callouts", {})
-        mismatches = {
-            role: {"expected_complete": expected, "styled": styled.get(role, 0)}
+        styled_complete = style_report.get("complete_role_callouts", {})
+        styled_anchor = style_report.get("anchor_only_role_callouts", {})
+        complete_mismatches = {
+            role: {"expected": expected, "styled": styled_complete.get(role, 0)}
             for role, expected in complete_role_counts.items()
-            if styled.get(role, 0) != expected
+            if styled_complete.get(role, 0) != expected
         }
-        if mismatches:
-            raise SystemExit(f"styled structural callout counts changed: {mismatches}")
+        anchor_mismatches = {
+            role: {"expected": expected, "styled": styled_anchor.get(role, 0)}
+            for role, expected in anchor_only_role_counts.items()
+            if styled_anchor.get(role, 0) != expected
+        }
+        total_mismatches = {
+            role: {
+                "expected": complete_role_counts[role] + anchor_only_role_counts[role],
+                "styled": styled.get(role, 0),
+            }
+            for role in complete_role_counts
+            if styled.get(role, 0)
+            != complete_role_counts[role] + anchor_only_role_counts[role]
+        }
+        if complete_mismatches or anchor_mismatches or total_mismatches:
+            raise SystemExit(
+                "styled structural callout counts changed: "
+                f"complete={complete_mismatches}, anchor-only={anchor_mismatches}, "
+                f"total={total_mismatches}"
+            )
 
     report = {
         "status": "passed",
@@ -280,6 +355,7 @@ def main() -> None:
             {
                 "role_counts": role_counts,
                 "complete_structural_role_counts": complete_role_counts,
+                "anchor_only_structural_role_counts": anchor_only_role_counts,
                 "document_ir_sha256": build_manifest["document_ir_sha256"],
                 "build_manifest_sha256": sha256_file(args.work_dir.resolve() / "output" / "build-manifest.json"),
             }

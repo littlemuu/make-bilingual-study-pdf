@@ -69,7 +69,13 @@ def searchable_sources(node: dict[str, Any]) -> list[str]:
     if node.get("type") == "table" and "<" in source:
         candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
     if node.get("type") == "list":
-        candidates.append(source.lstrip("- "))
+        candidates.append(
+            " ".join(
+                re.sub(r"^\s*[-*+]\s+", "", line)
+                for line in source.splitlines()
+                if line.strip()
+            )
+        )
     return [item for item in candidates if item]
 
 

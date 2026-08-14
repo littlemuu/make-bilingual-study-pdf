@@ -8,7 +8,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-from build_outputs import should_group_paragraphs
+from build_outputs import should_group_paragraphs, source_only_markdown_body
 from common import read_json, read_jsonl, sha256_file, sha256_text, write_json, write_jsonl
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
@@ -229,11 +229,40 @@ def test_grouping_boundaries(blocks: list[dict]) -> None:
     )
 
 
+def test_structured_source_only_markdown() -> None:
+    table = make_block(
+        "n-table",
+        "table",
+        "<table><thead><tr><th>Metric</th><th>Value</th></tr></thead>"
+        "<tbody><tr><td>Coverage</td><td>100%</td></tr></tbody></table>",
+        300,
+        translatable=False,
+    )
+    table_body = source_only_markdown_body(table)
+    assert table_body.startswith("<table>")
+    assert "\\<table" not in table_body
+
+    references = make_block(
+        "n-reference-list",
+        "list",
+        "- [1] Alpha (2025).\n- [2] Beta (2026).",
+        330,
+        translatable=False,
+    )
+    list_body = source_only_markdown_body(references)
+    assert list_body.splitlines() == [
+        "- \\[1\\] Alpha (2025).",
+        "- \\[2\\] Beta (2026).",
+    ]
+    assert "Alpha (2025). -" not in list_body
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="v23-output-") as temp:
         work_dir = Path(temp)
         blocks, expected_translation_ids = build_fixture(work_dir)
         test_grouping_boundaries(blocks)
+        test_structured_source_only_markdown()
 
         run_script("prepare_translation.py", work_dir)
         request_rows = []
@@ -300,6 +329,7 @@ def main() -> None:
                     "only bilingual translatable semantic nodes enter translation requests",
                     "paragraph grouping cannot cross role, relation, or semantic group",
                     "all four generic dispositions render exactly once or omit explicitly",
+                    "structured tables and reference lists retain native Markdown structure",
                     "allowed-zero role inventory passes minimum/maximum audit",
                     "unknown output dispositions fail closed",
                 ],

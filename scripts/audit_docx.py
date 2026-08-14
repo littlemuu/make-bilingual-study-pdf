@@ -57,7 +57,13 @@ def searchable_sources(node: dict[str, Any]) -> list[str]:
     if node.get("type") == "table" and "<" in source:
         candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
     if node.get("type") == "list":
-        candidates.append(source.lstrip("- "))
+        candidates.append(
+            " ".join(
+                re.sub(r"^\s*[-*+]\s+", "", line)
+                for line in source.splitlines()
+                if line.strip()
+            )
+        )
     return [item for item in candidates if item]
 
 
@@ -196,26 +202,34 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         if group.get("membership") == "complete"
         and role_specs[group["role"]]["grouping"] == "structural-container"
     ]
-    anchor_only_groups = [
+    scoped_anchor_groups = [
         group for group in ir.get("semantic_groups", [])
         if group.get("membership") == "anchor-only"
+        and role_specs[group["role"]]["grouping"] == "structural-container"
+    ]
+    non_structural_anchor_groups = [
+        group for group in ir.get("semantic_groups", [])
+        if group.get("membership") == "anchor-only"
+        and role_specs[group["role"]]["grouping"] != "structural-container"
     ]
     target_re = target_text_pattern(profile)
-    container_checks: dict[str, bool] = {}
-    matched_range_indexes: set[int] = set()
-    for group in complete_groups:
+    complete_container_checks: dict[str, bool] = {}
+    scoped_anchor_callout_checks: dict[str, bool] = {}
+    complete_range_indexes: set[int] = set()
+    scoped_range_indexes: set[int] = set()
+
+    def check_structural_group(group: dict[str, Any], *, scoped: bool) -> tuple[bool, int | None]:
         group_id = group["id"]
         role = group["role"]
         style = role_specs[role]["style"]
-        anchor_text = nodes[group["anchor_node_id"]]["source"]["text"]
+        anchor_node = nodes[group["anchor_node_id"]]
         matches = [
             range_index for range_index, item in enumerate(ranges)
-            if occurrence_count(item["text"], anchor_text) > 0
+            if source_occurrence_count(item["text"], anchor_node) > 0
         ]
         valid = len(matches) == 1
+        range_index = matches[0] if valid else None
         if valid:
-            range_index = matches[0]
-            matched_range_indexes.add(range_index)
             item = ranges[range_index]
             members = item["paragraphs"]
             dividers = [
@@ -237,22 +251,51 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                 divider = dividers[0]
                 before = "\n".join(member["text"] for member in members[:divider])
                 after = "\n".join(member["text"] for member in members[divider + 1 :])
-                cursor = -1
-                for member_id in group["member_node_ids"]:
-                    source_text = normalized_text(nodes[member_id]["source"]["text"])
-                    position = normalized_text(before).find(source_text, cursor + 1)
-                    if source_text and position < 0:
-                        valid = False
-                        break
-                    cursor = max(cursor, position)
+                if scoped:
+                    source_candidates = {
+                        normalized_text(item)
+                        for item in searchable_sources(anchor_node)
+                        if normalized_text(item)
+                    }
+                    valid = (
+                        group["member_node_ids"] == [group["anchor_node_id"]]
+                        and normalized_text(before) in source_candidates
+                    )
+                else:
+                    cursor = -1
+                    for member_id in group["member_node_ids"]:
+                        member_node = nodes[member_id]
+                        positions = [
+                            normalized_text(before).find(normalized_text(source), cursor + 1)
+                            for source in searchable_sources(member_node)
+                            if normalized_text(source)
+                        ]
+                        valid_positions = [position for position in positions if position >= 0]
+                        position = min(valid_positions, default=-1)
+                        if position < 0:
+                            valid = False
+                            break
+                        cursor = max(cursor, position)
                 valid = valid and bool(target_re.search(after))
-        container_checks[group_id] = valid
+        return valid, range_index
 
-    anchor_only_unboxed: dict[str, bool] = {}
-    for group in anchor_only_groups:
-        source_text = nodes[group["anchor_node_id"]]["source"]["text"]
-        anchor_only_unboxed[group["id"]] = not any(
-            occurrence_count(item["text"], source_text) for item in ranges
+    for group in complete_groups:
+        valid, range_index = check_structural_group(group, scoped=False)
+        complete_container_checks[group["id"]] = valid
+        if valid and range_index is not None:
+            complete_range_indexes.add(range_index)
+
+    for group in scoped_anchor_groups:
+        valid, range_index = check_structural_group(group, scoped=True)
+        scoped_anchor_callout_checks[group["id"]] = valid
+        if valid and range_index is not None:
+            scoped_range_indexes.add(range_index)
+
+    non_structural_anchor_unboxed: dict[str, bool] = {}
+    for group in non_structural_anchor_groups:
+        anchor_node = nodes[group["anchor_node_id"]]
+        non_structural_anchor_unboxed[group["id"]] = not any(
+            source_occurrence_count(item["text"], anchor_node) for item in ranges
         )
 
     occurrence_evidence: dict[str, dict[str, int]] = {}
@@ -279,6 +322,17 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
     )
     expected_links = sorted(build.get("external_uris", []))
     expected_assets = len(build.get("assets", []))
+    expected_native_tables = sum(
+        node.get("type") == "table"
+        and node.get("semantic", {}).get("output") == "source-only"
+        and node.get("source", {})
+        .get("text", "")
+        .lstrip()
+        .lower()
+        .startswith("<table")
+        for node in nodes.values()
+    )
+    native_table_count = len(root.xpath("//w:tbl", namespaces=W_NS))
     role_assertions = {
         role: frozen_role_counts[role] == expected
         for role, expected in expected_flags.items()
@@ -298,16 +352,31 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             for role, evidence in occurrence_evidence.items()
         ),
         "source_only_nodes_appear_once": all(count == 1 for count in source_only_counts.values()),
-        "complete_containers_are_structurally_stable": len(ranges) == len(complete_groups)
-        and len(matched_range_indexes) == len(complete_groups)
-        and all(container_checks.values()),
-        "anchor_only_groups_are_not_expanded": all(anchor_only_unboxed.values()),
+        "complete_containers_are_structurally_stable": (
+            len(complete_range_indexes) == len(complete_groups)
+            and all(complete_container_checks.values())
+        ),
+        "scoped_anchor_callouts_are_structurally_stable": (
+            len(scoped_range_indexes) == len(scoped_anchor_groups)
+            and all(scoped_anchor_callout_checks.values())
+        ),
+        "all_structural_callouts_are_accounted_for": (
+            len(ranges) == len(complete_groups) + len(scoped_anchor_groups)
+            and complete_range_indexes.isdisjoint(scoped_range_indexes)
+            and len(complete_range_indexes | scoped_range_indexes) == len(ranges)
+        ),
+        "non_structural_anchor_groups_are_not_boxed": all(
+            non_structural_anchor_unboxed.values()
+        ),
         "no_internal_problem_markers": "V2-PROBLEM-CALLOUT" not in text,
         "no_internal_generic_markers": not any(marker in text for marker in GENERIC_MARKERS),
         "chinese_present": bool(target_re.search(text)),
         "external_links_match": external_links == expected_links,
         "visual_occurrences_are_embedded": len(images) >= max(visual_occurrences, expected_assets),
         "minimum_images_met": len(images) >= args.minimum_images,
+        "structured_tables_are_native_word_tables": (
+            native_table_count == expected_native_tables
+        ),
     }
     if args.expected_links is not None:
         checks["external_link_count_matches"] = len(external_links) == args.expected_links
@@ -322,17 +391,25 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         "build_manifest_sha256": sha256_file(build_path),
         "role_counts": frozen_role_counts,
         "role_occurrence_evidence": occurrence_evidence,
-        "container_checks": container_checks,
-        "anchor_only_unboxed": anchor_only_unboxed,
+        "complete_container_checks": complete_container_checks,
+        "scoped_anchor_callout_checks": scoped_anchor_callout_checks,
+        "non_structural_anchor_unboxed": non_structural_anchor_unboxed,
+        "container_checks": complete_container_checks,
+        "anchor_only_unboxed": non_structural_anchor_unboxed,
         "source_only_occurrence_counts": source_only_counts,
         "problem_count": frozen_role_counts.get("problem", 0),
         "problem_ids": problem_ids,
-        "problem_range_count": sum(group["role"] == "problem" for group in complete_groups),
+        "problem_range_count": sum(
+            group["role"] == "problem"
+            for group in complete_groups + scoped_anchor_groups
+        ),
         "example_count": frozen_role_counts.get("example", 0),
         "low_resource_tip_count": frozen_role_counts.get("tip", 0),
         "external_link_count": len(external_links),
         "external_links": external_links,
         "image_count": len(images),
+        "native_table_count": native_table_count,
+        "expected_native_table_count": expected_native_tables,
         "chinese_character_count": len(target_re.findall(text)),
         "checks": checks,
         "failures": [name for name, value in checks.items() if not value],

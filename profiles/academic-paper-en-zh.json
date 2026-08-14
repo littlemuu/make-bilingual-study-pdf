@@ -29,7 +29,11 @@
         "role": "author-affiliation",
         "selectors": [
           {"adapter_role": "author"},
-          {"adapter_role": "affiliation"}
+          {"adapter_role": "affiliation"},
+          {
+            "node_types": ["text", "prose"],
+            "source_pattern": "^.+\\s+[—–-]\\s+(?:Department|School|Faculty|Institute|Laboratory|Lab|University)\\b"
+          }
         ],
         "style": "author-affiliation",
         "grouping": "none",

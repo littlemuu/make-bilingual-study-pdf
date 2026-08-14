@@ -23,6 +23,7 @@ from profile import (
     load_work_profile,
     profile_contract,
 )
+from html_table import validate_table_html
 
 
 GENERIC_OUTPUT_DISPOSITIONS = frozenset(
@@ -518,17 +519,34 @@ def make_translation_only_latex(block: dict[str, Any], translation: str) -> str:
     )
 
 
-def make_source_only_markdown(block: dict[str, Any]) -> str:
-    marker = response_marker(block, "source-only")
+def source_only_markdown_body(block: dict[str, Any]) -> str:
     source = block["source"]
     kind = block["kind"]
     if kind == "code":
-        return f"{marker}\n```text\n{source}\n```"
+        return f"```text\n{source}\n```"
     if kind == "heading":
-        return f"{marker}\n{'#' * heading_level(source)} {markdown_escape(source)}"
+        return f"{'#' * heading_level(source)} {markdown_escape(source)}"
     if kind in {"caption", "caption_continuation"}:
-        return f"{marker}\n*{markdown_escape(source)}*"
-    return f"{marker}\n{markdown_escape(source)}"
+        return f"*{markdown_escape(source)}*"
+    if kind == "table" and source.lstrip().lower().startswith("<table"):
+        validate_table_html(source)
+        return source.strip()
+    if kind == "list":
+        lines = [line for line in source.splitlines() if line.strip()]
+        bullet_match = re.compile(r"^\s*[-*+]\s+(.*)$")
+        bullets = [bullet_match.match(line) for line in lines]
+        if lines and all(match is not None for match in bullets):
+            return "\n".join(
+                f"- {markdown_escape(match.group(1))}"
+                for match in bullets
+                if match is not None
+            )
+    return markdown_escape(source)
+
+
+def make_source_only_markdown(block: dict[str, Any]) -> str:
+    marker = response_marker(block, "source-only")
+    return f"{marker}\n{source_only_markdown_body(block)}"
 
 
 def make_source_only_latex(block: dict[str, Any]) -> str:

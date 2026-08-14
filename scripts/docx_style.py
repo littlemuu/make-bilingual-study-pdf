@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from docx import Document
+from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -47,6 +48,7 @@ GENERIC_END = "V23-CALLOUT-END"
 ACTIVE_SCHEMA_VERSION = 1
 ROLE_STYLES: dict[str, str] = {}
 CALLOUT_RANGE_IDS: dict[tuple[int, int, str], str] = {}
+CALLOUT_RANGE_MEMBERSHIPS: dict[tuple[int, int, str], str] = {}
 GENERIC_PALETTES = {
     "abstract": ("4D7C8A", "F3F8FA"),
     "definition": ("2F7D5B", "F3FAF6"),
@@ -271,48 +273,83 @@ def style_math(paragraph) -> None:
     set_spacing(paragraph, before=4, after=8, line=1.0)
 
 
+def style_table(table) -> None:
+    table.style = "Table Grid"
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    table.autofit = True
+    for row_index, row in enumerate(table.rows):
+        if row_index == 0:
+            tr_pr = row._tr.get_or_add_trPr()
+            repeat = OxmlElement("w:tblHeader")
+            repeat.set(qn("w:val"), "true")
+            tr_pr.append(repeat)
+        for cell in row.cells:
+            cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
+            if row_index == 0:
+                tc_pr = cell._tc.get_or_add_tcPr()
+                shading = tc_pr.find(qn("w:shd"))
+                if shading is None:
+                    shading = OxmlElement("w:shd")
+                    tc_pr.append(shading)
+                shading.set(qn("w:fill"), ACCENT_LIGHT)
+            for paragraph in cell.paragraphs:
+                set_spacing(paragraph, before=0, after=2, line=1.08)
+                for run in paragraph.runs:
+                    set_run_font(
+                        run,
+                        LATIN_FONT,
+                        9.2,
+                        color=INK,
+                        bold=True if row_index == 0 else None,
+                    )
+
+
 def is_math_paragraph(paragraph) -> bool:
     return bool(paragraph._p.xpath(".//m:oMath | .//m:oMathPara"))
 
 
 def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[int]]:
-    global CALLOUT_RANGE_IDS
+    global CALLOUT_RANGE_IDS, CALLOUT_RANGE_MEMBERSHIPS
     CALLOUT_RANGE_IDS = {}
+    CALLOUT_RANGE_MEMBERSHIPS = {}
     if ACTIVE_SCHEMA_VERSION == 2:
         ranges: list[tuple[int, int, str]] = []
         marker_indices: list[int] = []
-        active: tuple[int, str, str, str] | None = None
+        active: tuple[int, str, str, str, str] | None = None
         for marker_index, paragraph in enumerate(paragraphs):
             text = paragraph.text.strip()
             if text.startswith(f"{GENERIC_BEGIN}|"):
-                parts = text.split("|", 3)
-                if len(parts) != 4 or active is not None:
+                parts = text.split("|", 4)
+                if len(parts) != 5 or active is not None:
                     raise ValueError("invalid or nested generic callout begin marker")
-                _, role, style, group_id = parts
+                _, role, style, membership, group_id = parts
+                if membership not in {"complete", "anchor-only"}:
+                    raise ValueError(f"invalid generic callout membership: {membership}")
                 if ROLE_STYLES.get(role) != style:
                     raise ValueError(f"generic callout marker style mismatch for role {role}")
                 style_spec = get_style(style)
                 if not style_spec.supports_structural_container:
                     raise ValueError(f"role {role} style cannot form a structural container")
-                active = (marker_index, role, style, group_id)
+                active = (marker_index, role, style, membership, group_id)
                 marker_indices.append(marker_index)
                 continue
             if text.startswith(f"{GENERIC_END}|"):
-                parts = text.split("|", 3)
-                if len(parts) != 4 or active is None:
+                parts = text.split("|", 4)
+                if len(parts) != 5 or active is None:
                     raise ValueError("unmatched generic callout end marker")
-                start_marker, role, style, group_id = active
-                if parts[1:] != [role, style, group_id]:
+                start_marker, role, style, membership, group_id = active
+                if parts[1:] != [role, style, membership, group_id]:
                     raise ValueError(f"generic callout marker pair mismatch: {group_id}")
                 if marker_index <= start_marker + 1:
                     raise ValueError(f"empty generic callout range: {group_id}")
                 item = (start_marker + 1, marker_index - 1, role)
                 ranges.append(item)
                 CALLOUT_RANGE_IDS[item] = group_id
+                CALLOUT_RANGE_MEMBERSHIPS[item] = membership
                 marker_indices.append(marker_index)
                 active = None
         if active is not None:
-            raise ValueError(f"unclosed generic callout marker: {active[3]}")
+            raise ValueError(f"unclosed generic callout marker: {active[4]}")
         return ranges, marker_indices
 
     def starts_callout(paragraph) -> bool:
@@ -545,6 +582,9 @@ def apply_styles(
         marker = paragraphs[marker_index]._element
         marker.getparent().remove(marker)
 
+    for table in document.tables:
+        style_table(table)
+
     for index in range(1, len(paragraphs)):
         current = paragraphs[index]
         previous = paragraphs[index - 1]
@@ -563,6 +603,10 @@ def apply_styles(
     document.core_properties.subject = "English-first Simplified-Chinese study edition"
     report = {
         "paragraph_count": len(paragraphs),
+        "table_count": len(document.tables),
+        "table_cell_count": sum(
+            len(row.cells) for table in document.tables for row in table.rows
+        ),
         "problem_callouts": sum(1 for _, _, role in callout_ranges if role == "problem"),
         "problem_numbered_paragraphs": sum(
             1
@@ -602,11 +646,26 @@ def apply_styles(
     if ACTIVE_SCHEMA_VERSION == 2:
         role_callouts: dict[str, int] = {role: 0 for role in ROLE_STYLES}
         occurrence_ids: dict[str, list[str]] = {role: [] for role in ROLE_STYLES}
+        complete_role_callouts: dict[str, int] = {role: 0 for role in ROLE_STYLES}
+        anchor_only_role_callouts: dict[str, int] = {role: 0 for role in ROLE_STYLES}
+        occurrence_memberships: dict[str, str] = {}
         for item in callout_ranges:
             role_callouts[item[2]] += 1
-            occurrence_ids[item[2]].append(CALLOUT_RANGE_IDS[item])
+            group_id = CALLOUT_RANGE_IDS[item]
+            membership = CALLOUT_RANGE_MEMBERSHIPS[item]
+            occurrence_ids[item[2]].append(group_id)
+            occurrence_memberships[group_id] = membership
+            target = (
+                complete_role_callouts
+                if membership == "complete"
+                else anchor_only_role_callouts
+            )
+            target[item[2]] += 1
         report["role_callouts"] = role_callouts
+        report["complete_role_callouts"] = complete_role_callouts
+        report["anchor_only_role_callouts"] = anchor_only_role_callouts
         report["structural_occurrence_ids"] = occurrence_ids
+        report["structural_occurrence_memberships"] = occurrence_memberships
     return report
 
 
