@@ -11,6 +11,9 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
+from profile import profile_contract
+from semantic_registry import get_style
+
 
 LATIN_FONT = "Noto Sans"
 CJK_FONT = "Noto Sans S Chinese"
@@ -39,19 +42,54 @@ CALLOUT_TARGET_PATTERNS = {
 }
 PROBLEM_BEGIN = "V2-PROBLEM-CALLOUT-BEGIN"
 PROBLEM_END = "V2-PROBLEM-CALLOUT-END"
+GENERIC_BEGIN = "V23-CALLOUT-BEGIN"
+GENERIC_END = "V23-CALLOUT-END"
+ACTIVE_SCHEMA_VERSION = 1
+ROLE_STYLES: dict[str, str] = {}
+CALLOUT_RANGE_IDS: dict[tuple[int, int, str], str] = {}
+GENERIC_PALETTES = {
+    "abstract": ("4D7C8A", "F3F8FA"),
+    "definition": ("2F7D5B", "F3FAF6"),
+    "theorem": ("365E9D", "F4F7FC"),
+    "proof": ("667085", "F7F8FA"),
+    "note": ("4D7C8A", "F3F8FA"),
+    "warning": ("B54708", "FFF8F0"),
+    "exercise": ("7A5AF8", "F7F5FF"),
+}
 
 
 def configure_profile(profile: dict) -> None:
     global TARGET_TEXT_RE, CALLOUT_SOURCE_PATTERNS, CALLOUT_TARGET_PATTERNS
+    global ACTIVE_SCHEMA_VERSION, ROLE_STYLES
     TARGET_TEXT_RE = re.compile(profile["translation"]["target_text_pattern"])
-    CALLOUT_SOURCE_PATTERNS = {
-        group["style"]: re.compile(group["source_pattern"], re.I)
-        for group in profile["semantics"]["groups"]
-    }
-    CALLOUT_TARGET_PATTERNS = {
-        group["style"]: re.compile(group["target_pattern"], re.I)
-        for group in profile["semantics"]["groups"]
-    }
+    ACTIVE_SCHEMA_VERSION = int(profile.get("schema_version", 1))
+    if ACTIVE_SCHEMA_VERSION == 1:
+        CALLOUT_SOURCE_PATTERNS = {
+            group["style"]: re.compile(group["source_pattern"], re.I)
+            for group in profile["semantics"]["groups"]
+        }
+        CALLOUT_TARGET_PATTERNS = {
+            group["style"]: re.compile(group["target_pattern"], re.I)
+            for group in profile["semantics"]["groups"]
+        }
+        ROLE_STYLES = {group["role"]: group["style"] for group in profile["semantics"]["groups"]}
+        return
+    contract = profile_contract(profile)
+    ROLE_STYLES = {item["role"]: item["style"] for item in contract["roles"]}
+    CALLOUT_SOURCE_PATTERNS = {}
+    CALLOUT_TARGET_PATTERNS = {}
+    for item in contract["roles"]:
+        if item["grouping"] != "structural-container":
+            continue
+        for selector in item["selectors"]:
+            if "source_pattern" in selector:
+                CALLOUT_SOURCE_PATTERNS.setdefault(
+                    item["role"], re.compile(selector["source_pattern"], re.I)
+                )
+            if "target_pattern" in selector:
+                CALLOUT_TARGET_PATTERNS.setdefault(
+                    item["role"], re.compile(selector["target_pattern"], re.I)
+                )
 
 
 def has_cjk(text: str) -> bool:
@@ -238,6 +276,45 @@ def is_math_paragraph(paragraph) -> bool:
 
 
 def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[int]]:
+    global CALLOUT_RANGE_IDS
+    CALLOUT_RANGE_IDS = {}
+    if ACTIVE_SCHEMA_VERSION == 2:
+        ranges: list[tuple[int, int, str]] = []
+        marker_indices: list[int] = []
+        active: tuple[int, str, str, str] | None = None
+        for marker_index, paragraph in enumerate(paragraphs):
+            text = paragraph.text.strip()
+            if text.startswith(f"{GENERIC_BEGIN}|"):
+                parts = text.split("|", 3)
+                if len(parts) != 4 or active is not None:
+                    raise ValueError("invalid or nested generic callout begin marker")
+                _, role, style, group_id = parts
+                if ROLE_STYLES.get(role) != style:
+                    raise ValueError(f"generic callout marker style mismatch for role {role}")
+                style_spec = get_style(style)
+                if not style_spec.supports_structural_container:
+                    raise ValueError(f"role {role} style cannot form a structural container")
+                active = (marker_index, role, style, group_id)
+                marker_indices.append(marker_index)
+                continue
+            if text.startswith(f"{GENERIC_END}|"):
+                parts = text.split("|", 3)
+                if len(parts) != 4 or active is None:
+                    raise ValueError("unmatched generic callout end marker")
+                start_marker, role, style, group_id = active
+                if parts[1:] != [role, style, group_id]:
+                    raise ValueError(f"generic callout marker pair mismatch: {group_id}")
+                if marker_index <= start_marker + 1:
+                    raise ValueError(f"empty generic callout range: {group_id}")
+                item = (start_marker + 1, marker_index - 1, role)
+                ranges.append(item)
+                CALLOUT_RANGE_IDS[item] = group_id
+                marker_indices.append(marker_index)
+                active = None
+        if active is not None:
+            raise ValueError(f"unclosed generic callout marker: {active[3]}")
+        return ranges, marker_indices
+
     def starts_callout(paragraph) -> bool:
         # Target-language labels belong to the current bilingual callout. Only
         # source-language labels or explicit range markers may open a new range.
@@ -301,11 +378,13 @@ def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[in
 
 
 def style_callout(paragraphs, start: int, end: int, role: str) -> None:
+    style_id = ROLE_STYLES.get(role, role)
     color, fill = {
         "problem": (PROBLEM, PROBLEM_FILL),
         "tip": (TIP, TIP_FILL),
         "example": (EXAMPLE, EXAMPLE_FILL),
-    }[role]
+        **GENERIC_PALETTES,
+    }[style_id]
     nonempty = [index for index in range(start, end + 1) if paragraphs[index].text.strip()]
     first = nonempty[0]
     last = nonempty[-1]
@@ -326,7 +405,7 @@ def style_callout(paragraphs, start: int, end: int, role: str) -> None:
             paragraph.paragraph_format.first_line_indent = Inches(0)
         if not text:
             set_spacing(paragraph, before=2, after=3, line=1.0)
-            if role == "problem":
+            if role == "problem" or ACTIVE_SCHEMA_VERSION == 2:
                 clear_paragraph_content(paragraph)
             add_paragraph_border(
                 paragraph, color=color, left=True, right=True, top=True, size=8, space=6
@@ -346,7 +425,11 @@ def style_callout(paragraphs, start: int, end: int, role: str) -> None:
             size=12 if role == "problem" else 10,
             space=8,
         )
-        heading = index == first or (role == "problem" and cjk and (separator_index is not None and index == separator_index + 1))
+        heading = index == first or (
+            (role == "problem" or ACTIVE_SCHEMA_VERSION == 2)
+            and cjk
+            and (separator_index is not None and index == separator_index + 1)
+        )
         for run in paragraph.runs:
             if run.style and run.style.name == "Verbatim Char":
                 set_run_font(run, CODE_FONT, 9.1, color=INK)
@@ -478,7 +561,7 @@ def apply_styles(
 
     document.core_properties.title = document_title
     document.core_properties.subject = "English-first Simplified-Chinese study edition"
-    return {
+    report = {
         "paragraph_count": len(paragraphs),
         "problem_callouts": sum(1 for _, _, role in callout_ranges if role == "problem"),
         "problem_numbered_paragraphs": sum(
@@ -506,12 +589,25 @@ def apply_styles(
             if has_legacy_horizontal_rule(paragraphs[index])
         ),
         "standalone_tip_callouts": sum(1 for _, _, role in callout_ranges if role == "tip"),
-        "semantic_tip_labels": sum(
-            bool(CALLOUT_SOURCE_PATTERNS["tip"].search(paragraph.text.strip()))
-            for paragraph in paragraphs
+        "semantic_tip_labels": (
+            sum(
+                bool(CALLOUT_SOURCE_PATTERNS["tip"].search(paragraph.text.strip()))
+                for paragraph in paragraphs
+            )
+            if "tip" in CALLOUT_SOURCE_PATTERNS
+            else 0
         ),
         "example_callouts": sum(1 for _, _, role in callout_ranges if role == "example"),
     }
+    if ACTIVE_SCHEMA_VERSION == 2:
+        role_callouts: dict[str, int] = {role: 0 for role in ROLE_STYLES}
+        occurrence_ids: dict[str, list[str]] = {role: [] for role in ROLE_STYLES}
+        for item in callout_ranges:
+            role_callouts[item[2]] += 1
+            occurrence_ids[item[2]].append(CALLOUT_RANGE_IDS[item])
+        report["role_callouts"] = role_callouts
+        report["structural_occurrence_ids"] = occurrence_ids
+    return report
 
 
 def main() -> None:

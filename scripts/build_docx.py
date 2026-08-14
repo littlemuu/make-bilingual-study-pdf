@@ -9,16 +9,74 @@ import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from docx import Document
 
 from docx_ast import transform
 import docx_style
-from profile import load_profile
+from common import read_json, sha256_file
+from profile import load_profile, load_work_profile
 
 
 def run(command: list[str]) -> None:
     subprocess.run(command, check=True)
+
+
+def parse_expected_roles(values: list[str]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for value in values:
+        role, separator, count_text = value.partition("=")
+        if not separator or not role or not count_text.isdigit():
+            raise ValueError("--expected-role must use ROLE=COUNT with a nonnegative integer")
+        if role in result:
+            raise ValueError(f"duplicate --expected-role: {role}")
+        result[role] = int(count_text)
+    return result
+
+
+def load_v2_context(
+    work_dir: Path, profile_reference: str | Path | None, source: Path
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Path]:
+    work_dir = work_dir.expanduser().resolve()
+    required = {
+        "profile": work_dir / "profile.json",
+        "ir": work_dir / "document-ir.json",
+        "build": work_dir / "output" / "build-manifest.json",
+    }
+    missing = [str(path) for path in required.values() if not path.is_file()]
+    if missing:
+        raise ValueError(f"schema V2 DOCX build is missing frozen artifacts: {missing}")
+    profile = load_work_profile(work_dir, profile_reference)
+    ir = read_json(required["ir"])
+    build = read_json(required["build"])
+    if ir.get("schema_version") != 2:
+        raise ValueError("schema V2 DOCX build requires document IR schema_version 2")
+    if ir.get("profile", {}).get("id") != profile["id"]:
+        raise ValueError("document IR Profile id does not match frozen Profile")
+    if build.get("profile_id") != profile["id"]:
+        raise ValueError("build manifest Profile id does not match frozen Profile")
+    checks = {
+        "profile_file_sha256": sha256_file(required["profile"]),
+        "document_ir_sha256": sha256_file(required["ir"]),
+    }
+    for field, actual in checks.items():
+        if build.get(field) != actual:
+            raise ValueError(f"build manifest {field} does not match frozen artifact")
+    markdown_name = build.get("markdown")
+    if not isinstance(markdown_name, str) or not markdown_name:
+        raise ValueError("build manifest markdown path is missing")
+    frozen_markdown = (work_dir / "output" / markdown_name).resolve()
+    if frozen_markdown != source or not frozen_markdown.is_file():
+        raise ValueError("input Markdown is not the frozen build-manifest Markdown")
+    if build.get("markdown_sha256") != sha256_file(frozen_markdown):
+        raise ValueError("frozen Markdown hash does not match build manifest")
+    ir_inventory = ir.get("inventories", {}).get("role_inventory")
+    if not isinstance(ir_inventory, dict) or build.get("role_inventory") != ir_inventory:
+        raise ValueError("build manifest role inventory does not match document IR")
+    build_dir = work_dir / "output" / "docx-build"
+    build_dir.mkdir(parents=True, exist_ok=True)
+    return profile, ir, build, build_dir
 
 
 def main() -> None:
@@ -33,12 +91,15 @@ def main() -> None:
     parser.add_argument("output_docx", type=Path)
     parser.add_argument("--resource-path", type=Path)
     parser.add_argument("--reference-doc", type=Path)
-    parser.add_argument(
-        "--profile",
-        default="assignment-en-zh",
-        help="built-in profile id or path to profile JSON",
-    )
+    parser.add_argument("--profile", help="built-in profile id or path to profile JSON")
     parser.add_argument("--expected-problems", type=int)
+    parser.add_argument(
+        "--expected-role",
+        action="append",
+        default=[],
+        metavar="ROLE=COUNT",
+        help="repeatable schema V2 assertion against the frozen IR role inventory",
+    )
     parser.add_argument("--title")
     parser.add_argument("--header-label")
     parser.add_argument("--footer-label")
@@ -51,9 +112,16 @@ def main() -> None:
     source = args.input_markdown.resolve()
     output = args.output_docx.resolve()
     try:
-        profile = load_profile(args.profile)
+        if args.work_dir and (args.work_dir.expanduser().resolve() / "profile.json").is_file():
+            requested_profile = load_work_profile(args.work_dir, args.profile)
+        else:
+            requested_profile = load_profile(args.profile)
+        expected_role_flags = parse_expected_roles(args.expected_role)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    profile = requested_profile
+    if profile.get("schema_version") == 1 and expected_role_flags:
+        raise SystemExit("--expected-role is available only for schema V2 Profiles")
     defaults = profile["render"]["docx"]
     args.title = args.title or defaults["title"]
     args.header_label = args.header_label or defaults["header_label"]
@@ -67,7 +135,18 @@ def main() -> None:
         raise SystemExit("pandoc is required to build the DOCX")
 
     temp_context = None
-    if args.work_dir:
+    ir: dict[str, Any] | None = None
+    build_manifest: dict[str, Any] | None = None
+    if requested_profile.get("schema_version") == 2:
+        if args.work_dir is None:
+            raise SystemExit("schema V2 DOCX build requires --work-dir")
+        try:
+            profile, ir, build_manifest, work = load_v2_context(
+                args.work_dir, args.profile, source
+            )
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+    elif args.work_dir:
         work = args.work_dir.resolve()
         work.mkdir(parents=True, exist_ok=True)
     else:
@@ -79,12 +158,43 @@ def main() -> None:
 
     run(["pandoc", str(source), "--from", "markdown", "--to", "json", "--output", str(ast_path)])
     ast = json.loads(ast_path.read_text(encoding="utf-8"))
-    grouped = transform(ast, profile)
+    try:
+        grouped = transform(
+            ast,
+            profile,
+            semantic_groups=(ir or {}).get("semantic_groups") if ir is not None else None,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     problem_count = int(grouped.get("meta", {}).get("v2-problem-group-count", {}).get("c", "0"))
-    if args.expected_problems is not None and problem_count != args.expected_problems:
+    if profile["schema_version"] == 1 and args.expected_problems is not None and problem_count != args.expected_problems:
         raise SystemExit(
             f"Problem grouping count {problem_count} does not match expected {args.expected_problems}"
         )
+    role_counts: dict[str, int] = {}
+    complete_role_counts: dict[str, int] = {}
+    if profile["schema_version"] == 2:
+        inventory = ir["inventories"]["role_inventory"]
+        role_counts = {role: item["occurrence_count"] for role, item in inventory.items()}
+        complete_role_counts = {
+            role: item["membership_counts"].get("complete", 0)
+            for role, item in inventory.items()
+        }
+        unknown = sorted(set(expected_role_flags) - set(role_counts))
+        if unknown:
+            raise SystemExit(f"--expected-role names unknown Profile roles: {unknown}")
+        mismatches = {
+            role: {"expected": count, "frozen": role_counts[role]}
+            for role, count in expected_role_flags.items()
+            if role_counts[role] != count
+        }
+        if mismatches:
+            raise SystemExit(f"role count assertions disagree with frozen IR: {mismatches}")
+        if args.expected_problems is not None and role_counts.get("problem", 0) != args.expected_problems:
+            raise SystemExit(
+                "Problem count alias disagrees with frozen IR: "
+                f"{args.expected_problems} != {role_counts.get('problem', 0)}"
+            )
     grouped_path.write_text(json.dumps(grouped, ensure_ascii=False) + "\n", encoding="utf-8")
 
     resource_path = (args.resource_path or source.parent).resolve()
@@ -121,14 +231,17 @@ def main() -> None:
     with zipfile.ZipFile(output) as archive:
         document_xml = archive.read("word/document.xml")
     marker_count = document_xml.count(b"V2-PROBLEM-CALLOUT")
+    generic_marker_count = document_xml.count(b"V23-CALLOUT")
     if marker_count:
         raise SystemExit(f"internal Problem markers remain in DOCX: {marker_count}")
-    if style_report["problem_callouts"] != problem_count:
+    if generic_marker_count:
+        raise SystemExit(f"internal generic callout markers remain in DOCX: {generic_marker_count}")
+    if profile["schema_version"] == 1 and style_report["problem_callouts"] != problem_count:
         raise SystemExit(
             "styled Problem callout count does not match transformed Problem count: "
             f"{style_report['problem_callouts']} != {problem_count}"
         )
-    if (
+    if profile["schema_version"] == 1 and (
         style_report["problem_numbering_origins_explicit"]
         != style_report["problem_numbered_paragraphs"]
     ):
@@ -137,11 +250,21 @@ def main() -> None:
             f"{style_report['problem_numbering_origins_explicit']} != "
             f"{style_report['problem_numbered_paragraphs']}"
         )
-    if style_report["problem_legacy_horizontal_rules"]:
+    if profile["schema_version"] == 1 and style_report["problem_legacy_horizontal_rules"]:
         raise SystemExit(
             "legacy VML horizontal rules remain in Problem callouts: "
             f"{style_report['problem_legacy_horizontal_rules']}"
         )
+
+    if profile["schema_version"] == 2:
+        styled = style_report.get("role_callouts", {})
+        mismatches = {
+            role: {"expected_complete": expected, "styled": styled.get(role, 0)}
+            for role, expected in complete_role_counts.items()
+            if styled.get(role, 0) != expected
+        }
+        if mismatches:
+            raise SystemExit(f"styled structural callout counts changed: {mismatches}")
 
     report = {
         "status": "passed",
@@ -150,7 +273,17 @@ def main() -> None:
         "problem_groups": problem_count,
         **style_report,
         "internal_problem_markers": marker_count,
+        "internal_generic_markers": generic_marker_count,
     }
+    if profile["schema_version"] == 2:
+        report.update(
+            {
+                "role_counts": role_counts,
+                "complete_structural_role_counts": complete_role_counts,
+                "document_ir_sha256": build_manifest["document_ir_sha256"],
+                "build_manifest_sha256": sha256_file(args.work_dir.resolve() / "output" / "build-manifest.json"),
+            }
+        )
     print(json.dumps(report, ensure_ascii=False))
     if temp_context is not None:
         temp_context.cleanup()

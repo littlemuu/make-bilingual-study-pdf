@@ -1,6 +1,6 @@
 ---
 name: make-bilingual-study-pdf
-description: Convert a native-text English academic PDF—especially assignment handouts, lecture notes, and papers—into complete English-first Simplified-Chinese bilingual Markdown, an editable DOCX study edition, optional XeLaTeX source, compiled PDF, and an auditable QA report. Use when correctness, formula/code/link preservation, resumable translation, and proof against silent omissions matter more than reproducing the source page layout pixel-for-pixel. Also use to diagnose why an attempted bilingual conversion is incomplete. Scanned or substantially mixed-image PDFs require a different backend.
+description: Convert an English academic PDF—especially assignment handouts, lecture notes, and papers—into complete English-first Simplified-Chinese bilingual Markdown, an editable DOCX study edition, optional XeLaTeX source, compiled PDF, and an auditable QA report. Supports native-text PDF extraction and frozen MinerU 3.x pipeline legacy output. Use when correctness, formula/code/link preservation, resumable translation, and proof against silent omissions matter more than reproducing the source layout pixel-for-pixel. Scanned pages require explicit manual source review and cannot automatically complete QA.
 ---
 
 # Make Bilingual Study PDF
@@ -17,10 +17,12 @@ an opaque generated name.
 
 ## Profile and IR
 
-V2.2 uses a versioned Profile plus a unified document IR. The supported default is
-`profiles/assignment-en-zh.json`; it preserves the current English-assignment to
-Simplified-Chinese behavior. Read [profile-ir.md](references/profile-ir.md) before
-adding a document type, language, parser, renderer, or QA policy.
+V2.3 uses a versioned Profile plus a unified document IR. The supported Profiles are
+`assignment-en-zh`, `academic-paper-en-zh`, and `lecture-notes-en-zh`. The assignment
+Profile retains its schema V1 bytes and behavior; the paper and lecture Profiles use
+schema V2 role inventories and the frozen MinerU importer. Read
+[profile-ir.md](references/profile-ir.md) before adding a document type, language,
+parser, renderer, or QA policy.
 
 Bind the Profile into `WORK_DIR/profile.json` and generate `document-ir.json`. Treat
 both files as frozen source artifacts. The native PDF adapter records semantic labels
@@ -33,6 +35,8 @@ Use the Profile-aware entry point for new jobs and recovery:
 python3 "$SKILL_DIR/scripts/pipeline.py" validate-profile assignment-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" source SOURCE.pdf \
   --work-dir "$WORK_DIR" --profile assignment-en-zh
+python3 "$SKILL_DIR/scripts/pipeline.py" import-mineru SOURCE.pdf MINERU_OUTPUT_DIR \
+  --work-dir "$WORK_DIR" --profile academic-paper-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" status "$WORK_DIR"
 ```
 
@@ -41,15 +45,18 @@ and visual-review checkpoints. Its status output names the next safe resumable a
 
 ## Scope gate
 
-Accept only an English, native-text PDF whose goal is English-first Simplified Chinese.
+Accept only an English PDF whose goal is English-first Simplified Chinese. Use the
+native adapter for native text. The MinerU adapter accepts only pre-generated stable
+3.x `pipeline` legacy `content_list.json` + `middle.json` output whose exported
+`origin.pdf` hashes exactly to the supplied source; it never installs or runs MinerU.
 Keep the source PDF immutable. Work in a dedicated conversion directory outside a
 coursework/code repository so repository instructions do not accidentally govern the
 document workflow.
 
-Refuse or stop with an explicit limitation report when the PDF is encrypted, scanned,
-has usable text on fewer than 70% of pages, needs OCR, or requires pixel-perfect layout.
-Do not silently switch to OCR. Tables, equations, and diagrams may be preserved as
-high-resolution source crops with translated captions in V1.
+Refuse or stop with an explicit limitation report when the PDF is encrypted or requires
+pixel-perfect layout. Scanned/garbled pages imported through MinerU must stop at
+`manual_source_review_required`; parser JSON is not an independent completeness oracle.
+Do not silently switch to OCR or record a passed source/QA report for such pages.
 
 When a document fails this scope gate, read
 [backend-options.md](references/backend-options.md) and explain the smallest suitable
@@ -70,12 +77,24 @@ file and `WORK_DIR` mean a new dedicated directory for this one document.
 
 ### 1. Extract and prove the source inventory
 
-Run:
+For the native adapter, run:
 
 ```bash
 python3 "$SKILL_DIR/scripts/extract_pdf.py" SOURCE.pdf --work-dir "$WORK_DIR"
 python3 "$SKILL_DIR/scripts/audit_source.py" "$WORK_DIR"
 ```
+
+For an implemented schema V2 Profile, import an already-frozen MinerU output instead:
+
+```bash
+python3 "$SKILL_DIR/scripts/pipeline.py" import-mineru SOURCE.pdf MINERU_OUTPUT_DIR \
+  --work-dir "$WORK_DIR" --profile academic-paper-en-zh
+```
+
+The importer freezes the origin/content/middle files and every referenced asset into
+the work directory, records hashes and one disposition per content item, then runs the
+same independent Poppler source audit. Unknown versions, backends, types, malformed
+geometry, unsafe paths, corrupt assets, or unproved source binding fail closed.
 
 The extractor uses PyMuPDF for coordinates, font runs, links, and crops, then Poppler
 as an independent text oracle and renderer. It creates stable block IDs and hashes,
@@ -146,27 +165,18 @@ rebuild.
 
 ### 4a. Build the V2 editable DOCX study edition
 
-Use the audited Markdown as the only content input. The V2 AST pass recognizes each
-`Problem (...)` block quote, gathers the complete English task first, inserts one
-language separator, then gathers the complete Chinese task. Nested lists, code, and
-formula blocks remain inside the same callout. Headings and ordinary prose remain
-English-first paragraph pairs.
+Use the audited Markdown as the only content input. Schema V2 reads semantic roles and
+memberships from the frozen IR. A structurally proved container gathers its complete
+English members first, inserts one separator, then gathers its complete Chinese members.
+An `anchor-only` role styles only its anchor and never absorbs neighboring paragraphs.
+Headings and ordinary prose remain English-first paragraph pairs.
 
 Run:
 
 ```bash
-fc-match "Noto Sans S Chinese"
-python3 "$SKILL_DIR/scripts/build_docx.py" \
-  "$WORK_DIR/output/NAME.md" "$WORK_DIR/output/NAME.docx" \
-  --profile "$WORK_DIR/profile.json" \
-  --resource-path "$WORK_DIR/output" --expected-problems EXPECTED_COUNT \
-  --title "DOCUMENT TITLE — English-Chinese Bilingual Study Edition"
-python3 "$SKILL_DIR/scripts/audit_docx.py" "$WORK_DIR/output/NAME.docx" \
-  --profile "$WORK_DIR/profile.json" \
-  --expected-problems EXPECTED_COUNT --expected-examples EXPECTED_EXAMPLES \
-  --expected-tips EXPECTED_TIPS --expected-links EXPECTED_LINKS \
-  --minimum-images EXPECTED_MINIMUM_IMAGES \
-  --output "$WORK_DIR/output/docx-audit.json"
+fc-match "Noto Sans CJK SC"
+python3 "$SKILL_DIR/scripts/pipeline.py" docx "$WORK_DIR" \
+  --markdown "$WORK_DIR/output/NAME.md" --minimum-images EXPECTED_MINIMUM_IMAGES
 ```
 
 `fc-match` must resolve the requested family exactly, not silently fall back to a Latin
@@ -220,9 +230,10 @@ PDF matches it exactly:
 ```bash
 python3 "$SKILL_DIR/scripts/compile_docx_pdf.py" \
   "$WORK_DIR/output/NAME.docx" "$WORK_DIR/output/NAME.pdf" \
+  --work-dir "$WORK_DIR" \
   --render-dir "$WORK_DIR/output/pdf-renders" \
   --audit-output "$WORK_DIR/output/compile-audit.json" \
-  --expected-problems EXPECTED_COUNT --cjk-font "Noto Sans S Chinese"
+  --cjk-font "Noto Sans CJK SC"
 ```
 
 This conversion gate requires A4 pages, embedded PDF fonts, extractable Chinese, every

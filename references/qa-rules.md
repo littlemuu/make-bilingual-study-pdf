@@ -18,6 +18,13 @@ Pass only when:
 - every protected font span points to the exact stored source substring;
 - every visual and link reference resolves.
 
+For `mineru-import`, also require exact source/origin hash binding, stable supported
+version/backend evidence, strict page/bbox/pointer validation, complete decode and hash
+verification for every frozen asset, and exactly one disposition for every content
+item. Native-text pages still use Poppler as the independent oracle. A scan/garbled
+page without an independent oracle makes the overall status
+`manual_source_review_required`, never `passed`.
+
 Reject a stale IR even when `blocks.jsonl` remains readable. Reject inferred complete
 semantic membership when the adapter records only an anchor.
 
@@ -54,7 +61,8 @@ Pass only when:
 - every source block has exactly one explicit disposition;
 - every emitted block has one valid source-hash marker;
 - every copied visual asset exists with its recorded hash;
-- every source Problem ID and external URI remains accounted for.
+- every Profile role occurrence, source-only/visual-once item, and external URI remains
+  accounted for.
 
 Manual edits to generated Markdown or `.tex` invalidate the output gate. Make changes
 upstream and rebuild.
@@ -64,6 +72,12 @@ upstream and rebuild.
 ### V2 DOCX structure gate
 
 Before rendering a DOCX-profile PDF, pass only when:
+
+- the frozen Profile, document IR, build manifest, Markdown, and their hashes agree;
+- every declared role, including allowed-zero roles, has the frozen occurrence count;
+- every source-only node occurs once and every visual-once node owns one embedded asset;
+- every `complete` structural container has all English members first, exactly one
+  separator, then all Chinese members, while `anchor-only` groups remain unexpanded;
 
 - the expected unique Problem ID count matches the source inventory;
 - every Problem is represented by one AST callout with a complete English half, one
@@ -127,6 +141,12 @@ content continuity remain clear.
 
 Bind the review to the compiled PDF SHA-256. Recompilation invalidates an older visual
 review even when the filename is unchanged.
+
+The compile report must contain nonempty, hash-bound contact sheets whose page ranges
+cover every output page exactly once. `record_visual_review.py` rejects empty notes,
+missing/changed contact sheets, partial page coverage, or a PDF hash mismatch. CI may
+test this gate and may reach `automated_status: passed`, but it must not write a human
+`visual-review.json: passed` on its own.
 
 ## Completion language
 

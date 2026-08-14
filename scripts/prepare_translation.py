@@ -15,7 +15,76 @@ from common import (
     write_jsonl,
 )
 from translation_utils import glossary_term_present, protect_source, validate_glossary
-from profile import canonical_profile_sha256, load_work_profile
+from profile import canonical_profile_sha256, load_work_profile, profile_contract
+
+
+def semantic_policy(
+    node: dict[str, Any] | None,
+    block: dict[str, Any],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    """Resolve a node's semantic policy while retaining the V1 block fallback."""
+    role_policies = {
+        item["role"]: item for item in contract.get("roles", [])
+    }
+    semantic = node.get("semantic") if isinstance(node, dict) else None
+    semantic = semantic if isinstance(semantic, dict) else {}
+    role_value = node.get("semantic_role") if isinstance(node, dict) else None
+    if isinstance(role_value, dict):
+        role_value = role_value.get("role")
+    anchor = node.get("semantic_anchor") if isinstance(node, dict) else None
+    role = semantic.get("role") or role_value
+    if role is None and isinstance(anchor, dict):
+        role = anchor.get("role")
+    role_policy = role_policies.get(role, {})
+    auxiliary_output = contract.get("auxiliary_dispositions", {}).get(role)
+    output = (
+        semantic.get("output")
+        or (node.get("output_disposition") if isinstance(node, dict) else None)
+        or role_policy.get("output")
+        or auxiliary_output
+    )
+    style = semantic.get("style") or role_policy.get("style")
+    if contract["source_schema_version"] == 1:
+        output = output or ("bilingual" if block.get("translatable") else "source-only")
+    elif (
+        role not in role_policies
+        and role not in contract.get("auxiliary_dispositions", {})
+    ) or output is None or (role in role_policies and style is None):
+        raise ValueError(f"node {block.get('id')} has no registered semantic policy")
+    if auxiliary_output is not None and output != auxiliary_output:
+        raise ValueError(
+            f"node {block.get('id')} auxiliary policy disagrees with its Profile"
+        )
+    return {"role": role, "style": style, "output": output}
+
+
+def ir_nodes_by_id(
+    work_dir: Path, blocks: list[dict[str, Any]], contract: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    # Schema V1 freezes document-ir.json as an opaque build input.  Legacy
+    # fixtures intentionally use a minimal object here, so parsing semantic
+    # nodes would tighten the old contract and break reproducibility.
+    if contract["source_schema_version"] == 1:
+        return {}
+    path = work_dir / "document-ir.json"
+    if not path.is_file():
+        raise ValueError("schema V2 translation requires document-ir.json")
+    ir = read_json(path)
+    nodes = ir.get("nodes")
+    if not isinstance(nodes, list):
+        raise ValueError("document IR nodes must be an array")
+    result: dict[str, dict[str, Any]] = {}
+    for node in nodes:
+        node_id = node.get("id") if isinstance(node, dict) else None
+        if not isinstance(node_id, str) or not node_id or node_id in result:
+            raise ValueError(f"invalid or duplicate document IR node id: {node_id!r}")
+        result[node_id] = node
+    if contract["source_schema_version"] == 2:
+        block_ids = [block.get("id") for block in blocks]
+        if list(result) != block_ids:
+            raise ValueError("document IR node order does not exactly match source blocks")
+    return result
 
 
 def short_context(blocks: list[dict[str, Any]], index: int, direction: int) -> str:
@@ -116,35 +185,52 @@ def main() -> None:
 
     manifest = read_json(work_dir / "manifest.json")
     blocks = read_jsonl(work_dir / "blocks.jsonl")
+    contract = profile_contract(profile)
+    try:
+        nodes_by_id = ir_nodes_by_id(work_dir, blocks, contract)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     blocks_by_id = {block["id"]: block for block in blocks}
     requests: list[dict[str, Any]] = []
+    translation_role_counts: dict[str, int] = {}
     for index, block in enumerate(blocks):
-        if not block.get("translatable"):
+        try:
+            policy = semantic_policy(nodes_by_id.get(block["id"]), block, contract)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        node = nodes_by_id.get(block["id"], {})
+        translatable = bool(node.get("translatable", block.get("translatable")))
+        if policy["output"] != "bilingual" or not translatable:
             continue
         source_for_translation, protected = protect_source(block)
         source_for_translation = repair_pdf_linebreaks(source_for_translation)
         context_before = short_context(blocks, index, -1)
         if block.get("caption_parent") in blocks_by_id:
             context_before = blocks_by_id[block["caption_parent"]]["source"]
-        requests.append(
-            {
-                "schema_version": 1,
-                "id": block["id"],
-                "page": block["page"],
-                "kind": block["kind"],
-                "source_sha256": block["source_sha256"],
-                "source": block["source"],
-                "source_for_translation": source_for_translation,
-                "protected_tokens": protected,
-                "glossary_terms": [
-                    term
-                    for term in glossary_terms
-                    if glossary_term_present(block["source"], term)
-                ],
-                "context_before": context_before,
-                "context_after": short_context(blocks, index, 1),
-            }
-        )
+        request = {
+            "schema_version": 1,
+            "id": block["id"],
+            "page": block["page"],
+            "kind": block["kind"],
+            "source_sha256": block["source_sha256"],
+            "source": block["source"],
+            "source_for_translation": source_for_translation,
+            "protected_tokens": protected,
+            "glossary_terms": [
+                term
+                for term in glossary_terms
+                if glossary_term_present(block["source"], term)
+            ],
+            "context_before": context_before,
+            "context_after": short_context(blocks, index, 1),
+        }
+        if contract["source_schema_version"] == 2:
+            request["semantic_role"] = policy["role"]
+            request["output_disposition"] = policy["output"]
+            translation_role_counts[policy["role"]] = (
+                translation_role_counts.get(policy["role"], 0) + 1
+            )
+        requests.append(request)
 
     chunks = chunk_requests(requests, args.max_source_chars)
     batch_summaries = []
@@ -190,6 +276,9 @@ def main() -> None:
         "max_source_characters_per_batch": args.max_source_chars,
         "batches": batch_summaries,
     }
+    if contract["source_schema_version"] == 2:
+        plan["semantic_contract_version"] = contract["contract_version"]
+        plan["translation_role_counts"] = translation_role_counts
     write_json(plan_path, plan)
     print(
         json.dumps(

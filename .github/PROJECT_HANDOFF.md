@@ -1,8 +1,40 @@
-# make-bilingual-study-pdf 项目交接：V2.2 基线与 V2.3 施工计划
+# make-bilingual-study-pdf 项目交接：V2.3 实施与验收
 
 > 更新时间：2026-08-14  
-> 当前公开基线：`main@104d5be48222825e59eb961a0c3d07d4a7606115`  
-> 下一目标：V2.3 — MinerU Adapter + `academic-paper-en-zh` / `lecture-notes-en-zh` Profiles
+> 当前开发分支：`agent/v2.3`
+>
+> 依赖基线：`agent/add-reproducible-dev-baseline@e8c74f3`（PR #1，尚未合入 `main`）
+>
+> 验收记录：`.github/V2.3_ACCEPTANCE.md`
+
+## 0. 当前实施状态
+
+V2.3 的代码、公开合成夹具与本地自动测试已经实现；当前分支仍需完成远端
+Ubuntu/LibreOffice 前向、逐页人工视觉复核、最终 QA 和 GitHub 反向读取，才可
+按第 12 节的定义宣布发布验收完成。PR #1 未合并，因此 V2.3 PR 应暂以
+`agent/add-reproducible-dev-baseline` 为 base，不能声称这些变更已经进入 `main`。
+
+已落地的主要能力：
+
+- 可选 `mineru-import` 适配器只消费用户提供的 MinerU stable 3.x `pipeline`
+  legacy 输出；不安装、不执行 MinerU，对 `vlm`、`hybrid`、`office`、预发布版、
+  4.x、缺失 origin 绑定和路径/资产逃逸全部 fail closed。
+- `academic-paper-en-zh` 与 `lecture-notes-en-zh` 两个 schema V2 Profile 已加入；
+  角色、样式、输出处置与 QA inventory 通用化，`assignment-en-zh` 文件字节及
+  canonical hash 保持不变。
+- IR、翻译计划、Markdown、DOCX、PDF 与最终 QA 均绑定 Profile、adapter
+  evidence、输入及资产哈希；显式结构证据才能形成 `complete` 容器，否则保持
+  `anchor-only`。
+- 扫描/严重乱码页只能进入 `manual_source_review_required`，不得由 MinerU
+  输出自行证明 source audit passed；人工 review 必须绑定 comparison、非空
+  contact sheets、逐页覆盖和最终 PDF 哈希。
+- 提交了原创、可重生成的 MinerU 3.4.4 pipeline 合成夹具及故障注入测试；
+  本地快速矩阵为旧基线 19 项加 V2.3 34 个场景。完整命令和待完成证据以
+  `.github/V2.3_ACCEPTANCE.md` 为准。
+
+以下章节保留 V2.2 基线与 V2.3 冻结设计，供后续审计设计偏差；若描述与已经
+落地的 schema/CLI 冲突，以代码、Profile、测试和验收记录共同形成的当前契约
+为准。
 
 本文是施工交接上下文。实现前请先阅读仓库中的 `SKILL.md`、
 `references/profile-ir.md`、`references/qa-rules.md` 和

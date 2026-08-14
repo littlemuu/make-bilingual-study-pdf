@@ -1,0 +1,281 @@
+{
+  "schema_version": 2,
+  "id": "academic-paper-en-zh",
+  "label": "English academic paper to Simplified Chinese",
+  "input": {
+    "adapter": "mineru-import",
+    "source_language": "en",
+    "minimum_native_text_page_ratio": 0.7,
+    "minimum_text_characters_per_page": 100
+  },
+  "translation": {
+    "target_language": "zh-CN",
+    "target_text_pattern": "[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff]",
+    "reading_order": "source-then-target",
+    "policy": "English source first; faithful Simplified Chinese; preserve citations, formulas, code, identifiers, links, and placeholders exactly."
+  },
+  "semantics": {
+    "roles": [
+      {
+        "role": "title",
+        "selectors": [
+          {"adapter_role": "title"}
+        ],
+        "style": "document-title",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "author-affiliation",
+        "selectors": [
+          {"adapter_role": "author"},
+          {"adapter_role": "affiliation"}
+        ],
+        "style": "author-affiliation",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "abstract",
+        "selectors": [
+          {"adapter_role": "abstract"},
+          {
+            "node_types": ["heading", "text"],
+            "source_pattern": "^Abstract(?:\\s*[:.]|$)",
+            "target_pattern": "^摘要(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "abstract",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "section",
+        "selectors": [
+          {"adapter_role": "section"},
+          {"node_types": ["heading"], "text_levels": [1]}
+        ],
+        "style": "section-heading",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "subsection",
+        "selectors": [
+          {"adapter_role": "subsection"},
+          {"node_types": ["heading"], "text_levels": [2, 3, 4, 5, 6]}
+        ],
+        "style": "section-heading",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "paragraph",
+        "selectors": [
+          {"adapter_role": "paragraph"},
+          {"node_types": ["text", "prose"]}
+        ],
+        "style": "body",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "figure",
+        "selectors": [
+          {"adapter_role": "figure"},
+          {"node_types": ["image"]}
+        ],
+        "style": "visual",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "chart",
+        "selectors": [
+          {"adapter_role": "chart"},
+          {"node_types": ["chart"]}
+        ],
+        "style": "visual",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "figure-caption",
+        "selectors": [
+          {"adapter_role": "figure_caption"},
+          {"adapter_role": "image_caption"},
+          {"adapter_role": "chart_caption"},
+          {"adapter_role": "image_footnote"},
+          {"adapter_role": "chart_footnote"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "table",
+        "selectors": [
+          {"adapter_role": "table"},
+          {"node_types": ["table"]}
+        ],
+        "style": "table",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "table-visual",
+        "selectors": [
+          {"adapter_role": "table_visual"}
+        ],
+        "style": "table",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "table-caption",
+        "selectors": [
+          {"adapter_role": "table_caption"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "table-footnote",
+        "selectors": [
+          {"adapter_role": "table_footnote"}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "equation",
+        "selectors": [
+          {"adapter_role": "equation"},
+          {"node_types": ["equation", "math", "math_with_text"]}
+        ],
+        "style": "equation",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "equation-visual",
+        "selectors": [
+          {"adapter_role": "equation_visual"}
+        ],
+        "style": "equation",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "code-algorithm",
+        "selectors": [
+          {"adapter_role": "code"},
+          {"adapter_role": "algorithm"},
+          {"node_types": ["code", "algorithm"]}
+        ],
+        "style": "code",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "code-caption",
+        "selectors": [
+          {"adapter_role": "code_caption"},
+          {"adapter_role": "algorithm_caption"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "code-footnote",
+        "selectors": [
+          {"adapter_role": "code_footnote"},
+          {"adapter_role": "algorithm_footnote"}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "references",
+        "selectors": [
+          {"adapter_role": "reference"},
+          {"adapter_role": "reference_entry"},
+          {"node_types": ["list"], "sub_types": ["reference", "references"]},
+          {
+            "node_types": ["heading"],
+            "source_pattern": "^(?:References|Bibliography)(?:\\s*[:.]|$)",
+            "target_pattern": "^(?:参考文献|文献目录)(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "reference",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "page-footnote",
+        "selectors": [
+          {"adapter_role": "footnote"},
+          {"adapter_role": "page_footnote"},
+          {"node_types": ["footnote"]}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      }
+    ],
+    "auxiliary_dispositions": {
+      "page-header": "artifact-omitted",
+      "page-footer": "artifact-omitted",
+      "page-number": "artifact-omitted",
+      "marginalia": "artifact-omitted"
+    }
+  },
+  "render": {
+    "page_size": "A4",
+    "docx": {
+      "latin_font": "Noto Sans",
+      "cjk_font": "Noto Sans CJK SC",
+      "code_font": "DejaVu Sans Mono",
+      "title": "English-Chinese Academic Paper Study Edition",
+      "header_label": "Academic paper study edition",
+      "footer_label": "英中双语论文学习版"
+    }
+  },
+  "qa": {
+    "role_inventory": {
+      "title": {"minimum": 1, "maximum": 1},
+      "author-affiliation": {"minimum": 0, "maximum": null},
+      "abstract": {"minimum": 1, "maximum": 1},
+      "section": {"minimum": 1, "maximum": null},
+      "subsection": {"minimum": 0, "maximum": null},
+      "paragraph": {"minimum": 1, "maximum": null},
+      "figure": {"minimum": 0, "maximum": null},
+      "chart": {"minimum": 0, "maximum": null},
+      "figure-caption": {"minimum": 0, "maximum": null},
+      "table": {"minimum": 0, "maximum": null},
+      "table-visual": {"minimum": 0, "maximum": null},
+      "table-caption": {"minimum": 0, "maximum": null},
+      "table-footnote": {"minimum": 0, "maximum": null},
+      "equation": {"minimum": 0, "maximum": null},
+      "equation-visual": {"minimum": 0, "maximum": null},
+      "code-algorithm": {"minimum": 0, "maximum": null},
+      "code-caption": {"minimum": 0, "maximum": null},
+      "code-footnote": {"minimum": 0, "maximum": null},
+      "references": {"minimum": 1, "maximum": null},
+      "page-footnote": {"minimum": 0, "maximum": null}
+    },
+    "constraints": [
+      "academic-paper-order-v1",
+      "heading-hierarchy-v1",
+      "visual-relations-v1"
+    ],
+    "minimum_global_fivegram_coverage": 0.95,
+    "warn_page_below": 0.75,
+    "require_external_uri_inventory": true,
+    "require_exact_target_font": true
+  }
+}

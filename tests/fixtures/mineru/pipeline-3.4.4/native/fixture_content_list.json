@@ -1,0 +1,175 @@
+[
+  {
+    "id": "header-1",
+    "type": "header",
+    "text": "Synthetic Study Journal — contract fixture",
+    "bbox": [50, 10, 950, 30],
+    "page_idx": 0
+  },
+  {
+    "id": "title-1",
+    "type": "text",
+    "text": "Deterministic Evidence for Small Study Documents",
+    "text_level": 1,
+    "bbox": [50, 40, 950, 80],
+    "page_idx": 0
+  },
+  {
+    "id": "author-1",
+    "type": "text",
+    "text": "Ada Example — Department of Reproducible Learning",
+    "bbox": [50, 90, 950, 120],
+    "page_idx": 0
+  },
+  {
+    "id": "abstract-heading",
+    "type": "text",
+    "text": "Abstract",
+    "text_level": 1,
+    "bbox": [50, 130, 950, 160],
+    "page_idx": 0
+  },
+  {
+    "id": "abstract-body",
+    "type": "text",
+    "text": "This original synthetic abstract tests deterministic import, complete evidence, stable ordering, and explicit handling of every record.",
+    "bbox": [50, 170, 950, 220],
+    "page_idx": 0
+  },
+  {
+    "id": "section-1",
+    "type": "text",
+    "text": "1 Evidence Model",
+    "text_level": 1,
+    "bbox": [50, 230, 950, 260],
+    "page_idx": 0
+  },
+  {
+    "id": "paragraph-1",
+    "type": "text",
+    "text": "Each frozen record has one disposition, one stable source pointer, and enough synthetic prose for an independent native-text oracle to classify this page safely.",
+    "bbox": [50, 270, 950, 320],
+    "page_idx": 0
+  },
+  {
+    "id": "definition-1",
+    "type": "text",
+    "text": "Definition 1. A stable record has exactly one source pointer.",
+    "bbox": [50, 325, 950, 345],
+    "page_idx": 0
+  },
+  {
+    "id": "theorem-1",
+    "type": "text",
+    "text": "Theorem 1. Frozen inputs produce deterministic identities.",
+    "bbox": [50, 350, 950, 370],
+    "page_idx": 0
+  },
+  {
+    "id": "proof-1",
+    "type": "text",
+    "text": "Proof. The identifier seed uses only frozen hashes and pointers.",
+    "bbox": [50, 375, 950, 395],
+    "page_idx": 0
+  },
+  {
+    "id": "example-1",
+    "type": "text",
+    "text": "Example 1. Repeating an import yields the same ordered IR.",
+    "bbox": [50, 400, 950, 420],
+    "page_idx": 0
+  },
+  {
+    "id": "equation-1",
+    "type": "equation",
+    "text": "E = m c^2",
+    "text_format": "latex",
+    "bbox": [50, 330, 450, 370],
+    "page_idx": 0
+  },
+  {
+    "id": "image-1",
+    "type": "image",
+    "img_path": "images/diagram.png",
+    "image_caption": ["Figure 1. A synthetic evidence flow."],
+    "image_footnote": ["All values are illustrative."],
+    "bbox": [50, 380, 450, 500],
+    "page_idx": 0
+  },
+  {
+    "id": "chart-1",
+    "type": "chart",
+    "img_path": "images/diagram.png",
+    "chart_caption": ["Chart 1. Deterministic counts."],
+    "chart_footnote": ["The chart reuses the original synthetic asset."],
+    "bbox": [500, 380, 950, 500],
+    "page_idx": 0
+  },
+  {
+    "id": "table-1",
+    "type": "table",
+    "table_body": "<table><tr><th>Gate</th><th>Count</th></tr><tr><td>explicit</td><td>1</td></tr></table>",
+    "table_caption": ["Table 1. Synthetic gate inventory."],
+    "table_footnote": ["HTML is preserved as structured source."],
+    "bbox": [50, 510, 950, 590],
+    "page_idx": 0
+  },
+  {
+    "id": "code-1",
+    "type": "code",
+    "sub_type": "code",
+    "code_body": "def stable(value):\n    return value",
+    "code_caption": ["Listing 1. Stable identity."],
+    "code_footnote": ["The code body must appear once."],
+    "bbox": [50, 600, 450, 690],
+    "page_idx": 0
+  },
+  {
+    "id": "algorithm-1",
+    "type": "code",
+    "sub_type": "algorithm",
+    "code_body": "1: read frozen records\n2: emit one disposition",
+    "code_caption": ["Algorithm 1. Explicit accounting."],
+    "bbox": [500, 600, 950, 690],
+    "page_idx": 0
+  },
+  {
+    "id": "references-1",
+    "type": "list",
+    "sub_type": "ref_text",
+    "list_items": [
+      "[1] A. Example. Synthetic Evidence Notes, 2026.",
+      "[2] B. Example. Deterministic Fixtures, 2026."
+    ],
+    "bbox": [50, 700, 950, 770],
+    "page_idx": 0
+  },
+  {
+    "id": "footnote-1",
+    "type": "page_footnote",
+    "text": "Correspondence: fixture@example.invalid",
+    "bbox": [50, 900, 950, 925],
+    "page_idx": 0
+  },
+  {
+    "id": "footer-1",
+    "type": "footer",
+    "text": "Original synthetic fixture — not a published paper",
+    "bbox": [50, 935, 950, 955],
+    "page_idx": 0
+  },
+  {
+    "id": "page-number-1",
+    "type": "page_number",
+    "text": "1",
+    "bbox": [475, 965, 525, 990],
+    "page_idx": 0
+  },
+  {
+    "id": "aside-1",
+    "type": "aside_text",
+    "text": "Synthetic margin note",
+    "bbox": [5, 300, 40, 700],
+    "page_idx": 0
+  }
+]

@@ -3,20 +3,351 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import zipfile
 from pathlib import Path
+from typing import Any
 
 from lxml import etree
-from profile import load_profile, semantic_group, target_text_pattern
+from common import read_json, sha256_file
+from profile import load_profile, load_work_profile, profile_contract, semantic_group, target_text_pattern
 
 
 W_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+GENERIC_MARKERS = ("V23-CALLOUT-BEGIN", "V23-CALLOUT-END")
+STYLE_COLORS = {
+    "abstract": "4D7C8A",
+    "definition": "2F7D5B",
+    "theorem": "365E9D",
+    "proof": "667085",
+    "example": "708890",
+    "note": "4D7C8A",
+    "warning": "B54708",
+    "tip": "4D7C8A",
+    "exercise": "7A5AF8",
+}
+
+
+def parse_expected_roles(values: list[str]) -> dict[str, int]:
+    result: dict[str, int] = {}
+    for value in values:
+        role, separator, count_text = value.partition("=")
+        if not separator or not role or not count_text.isdigit():
+            raise ValueError("--expected-role must use ROLE=COUNT with a nonnegative integer")
+        if role in result:
+            raise ValueError(f"duplicate --expected-role: {role}")
+        result[role] = int(count_text)
+    return result
+
+
+def normalized_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def occurrence_count(haystack: str, needle: str) -> int:
+    needle = normalized_text(needle)
+    return normalized_text(haystack).count(needle) if needle else 0
+
+
+def searchable_sources(node: dict[str, Any]) -> list[str]:
+    source = node.get("source", {}).get("text", "")
+    candidates = [source]
+    if node.get("type") == "table" and "<" in source:
+        candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
+    if node.get("type") == "list":
+        candidates.append(source.lstrip("- "))
+    return [item for item in candidates if item]
+
+
+def source_occurrence_count(haystack: str, node: dict[str, Any]) -> int:
+    return max(
+        (occurrence_count(haystack, needle) for needle in searchable_sources(node)),
+        default=0,
+    )
+
+
+def load_v2_context(
+    work_dir: Path, profile_reference: str | Path | None
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], Path, Path]:
+    work_dir = work_dir.expanduser().resolve()
+    profile_path = work_dir / "profile.json"
+    ir_path = work_dir / "document-ir.json"
+    build_path = work_dir / "output" / "build-manifest.json"
+    missing = [str(path) for path in (profile_path, ir_path, build_path) if not path.is_file()]
+    if missing:
+        raise ValueError(f"schema V2 DOCX audit is missing frozen artifacts: {missing}")
+    profile = load_work_profile(work_dir, profile_reference)
+    ir = read_json(ir_path)
+    build = read_json(build_path)
+    if ir.get("schema_version") != 2:
+        raise ValueError("schema V2 DOCX audit requires document IR schema_version 2")
+    if build.get("profile_id") != profile["id"] or ir.get("profile", {}).get("id") != profile["id"]:
+        raise ValueError("frozen Profile ids disagree")
+    if build.get("profile_file_sha256") != sha256_file(profile_path):
+        raise ValueError("build manifest does not bind the frozen Profile file")
+    if build.get("document_ir_sha256") != sha256_file(ir_path):
+        raise ValueError("build manifest does not bind the frozen document IR")
+    if build.get("role_inventory") != ir.get("inventories", {}).get("role_inventory"):
+        raise ValueError("build manifest role inventory does not match document IR")
+    return profile, ir, build, ir_path, build_path
+
+
+def write_report(report: dict[str, Any], output: Path | None) -> None:
+    rendered = json.dumps(report, ensure_ascii=False, indent=2) + "\n"
+    if output:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(rendered, encoding="utf-8")
+    print(rendered, end="")
+
+
+def audit_v2(args, profile: dict[str, Any]) -> None:
+    try:
+        profile, ir, build, ir_path, build_path = load_v2_context(
+            args.work_dir, args.profile
+        )
+        expected_flags = parse_expected_roles(args.expected_role)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    contract = profile_contract(profile)
+    role_specs = {item["role"]: item for item in contract["roles"]}
+    inventory = ir["inventories"]["role_inventory"]
+    frozen_role_counts = {
+        role: item["occurrence_count"] for role, item in inventory.items()
+    }
+    unknown = sorted(set(expected_flags) - set(frozen_role_counts))
+    if unknown:
+        raise SystemExit(f"--expected-role names unknown Profile roles: {unknown}")
+
+    with zipfile.ZipFile(args.docx) as archive:
+        document_xml = archive.read("word/document.xml")
+        relationships_xml = archive.read("word/_rels/document.xml.rels")
+        root = etree.fromstring(document_xml)
+        relationships = etree.fromstring(relationships_xml)
+        text = "\n".join(root.xpath("//w:t/text()", namespaces=W_NS))
+        external_links = sorted(
+            item.get("Target") for item in relationships if item.get("TargetMode") == "External"
+        )
+        images = [
+            name for name in archive.namelist()
+            if name.startswith("word/media/") and not name.endswith("/")
+        ]
+
+    paragraphs: list[dict[str, Any]] = []
+    for node in root.xpath("/w:document/w:body/w:p", namespaces=W_NS):
+        paragraph_text = "".join(node.xpath(".//w:t/text()", namespaces=W_NS))
+        left = node.xpath("string(./w:pPr/w:pBdr/w:left/@w:color)", namespaces=W_NS)
+        right = node.xpath("string(./w:pPr/w:pBdr/w:right/@w:color)", namespaces=W_NS)
+        top = node.xpath("string(./w:pPr/w:pBdr/w:top/@w:color)", namespaces=W_NS)
+        top_size = node.xpath("string(./w:pPr/w:pBdr/w:top/@w:sz)", namespaces=W_NS)
+        bottom = node.xpath("string(./w:pPr/w:pBdr/w:bottom/@w:color)", namespaces=W_NS)
+        paragraphs.append(
+            {
+                "node": node,
+                "text": paragraph_text,
+                "left": left,
+                "right": right,
+                "top": top,
+                "top_size": top_size,
+                "bottom": bottom,
+                "indent": (
+                    node.xpath("string(./w:pPr/w:ind/@w:left)", namespaces=W_NS),
+                    node.xpath("string(./w:pPr/w:ind/@w:right)", namespaces=W_NS),
+                ),
+            }
+        )
+
+    expected_callout_colors = {
+        STYLE_COLORS[spec["style"]]
+        for spec in role_specs.values()
+        if spec["grouping"] == "structural-container"
+    }
+    ranges: list[dict[str, Any]] = []
+    index = 0
+    while index < len(paragraphs):
+        item = paragraphs[index]
+        color = item["left"] if item["left"] == item["right"] else ""
+        if color not in expected_callout_colors:
+            index += 1
+            continue
+        end = index
+        while end + 1 < len(paragraphs):
+            candidate = paragraphs[end + 1]
+            if candidate["left"] != color or candidate["right"] != color:
+                break
+            end += 1
+            if candidate["bottom"] == color:
+                break
+        ranges.append(
+            {
+                "start": index,
+                "end": end,
+                "color": color,
+                "paragraphs": paragraphs[index : end + 1],
+                "text": "\n".join(value["text"] for value in paragraphs[index : end + 1]),
+            }
+        )
+        index = end + 1
+
+    nodes = {node["id"]: node for node in ir.get("nodes", [])}
+    complete_groups = [
+        group for group in ir.get("semantic_groups", [])
+        if group.get("membership") == "complete"
+        and role_specs[group["role"]]["grouping"] == "structural-container"
+    ]
+    anchor_only_groups = [
+        group for group in ir.get("semantic_groups", [])
+        if group.get("membership") == "anchor-only"
+    ]
+    target_re = target_text_pattern(profile)
+    container_checks: dict[str, bool] = {}
+    matched_range_indexes: set[int] = set()
+    for group in complete_groups:
+        group_id = group["id"]
+        role = group["role"]
+        style = role_specs[role]["style"]
+        anchor_text = nodes[group["anchor_node_id"]]["source"]["text"]
+        matches = [
+            range_index for range_index, item in enumerate(ranges)
+            if occurrence_count(item["text"], anchor_text) > 0
+        ]
+        valid = len(matches) == 1
+        if valid:
+            range_index = matches[0]
+            matched_range_indexes.add(range_index)
+            item = ranges[range_index]
+            members = item["paragraphs"]
+            dividers = [
+                member_index for member_index, member in enumerate(members)
+                if not member["text"].strip()
+                and member["top"] == item["color"]
+                and member["top_size"] == "8"
+            ]
+            expected_color = STYLE_COLORS[style]
+            valid = (
+                item["color"] == expected_color
+                and len({member["indent"] for member in members}) == 1
+                and len(dividers) == 1
+                and 0 < dividers[0] < len(members) - 1
+                and members[0]["top"] == expected_color
+                and members[-1]["bottom"] == expected_color
+            )
+            if valid:
+                divider = dividers[0]
+                before = "\n".join(member["text"] for member in members[:divider])
+                after = "\n".join(member["text"] for member in members[divider + 1 :])
+                cursor = -1
+                for member_id in group["member_node_ids"]:
+                    source_text = normalized_text(nodes[member_id]["source"]["text"])
+                    position = normalized_text(before).find(source_text, cursor + 1)
+                    if source_text and position < 0:
+                        valid = False
+                        break
+                    cursor = max(cursor, position)
+                valid = valid and bool(target_re.search(after))
+        container_checks[group_id] = valid
+
+    anchor_only_unboxed: dict[str, bool] = {}
+    for group in anchor_only_groups:
+        source_text = nodes[group["anchor_node_id"]]["source"]["text"]
+        anchor_only_unboxed[group["id"]] = not any(
+            occurrence_count(item["text"], source_text) for item in ranges
+        )
+
+    occurrence_evidence: dict[str, dict[str, int]] = {}
+    for role in frozen_role_counts:
+        role_groups = [group for group in ir.get("semantic_groups", []) if group["role"] == role]
+        textual = 0
+        visual = 0
+        for group in role_groups:
+            node = nodes[group["anchor_node_id"]]
+            if source_occurrence_count(text, node) > 0:
+                textual += 1
+            elif node["semantic"]["output"] == "visual-once":
+                visual += 1
+        occurrence_evidence[role] = {"textual": textual, "visual": visual}
+
+    source_only_counts = {
+        node_id: source_occurrence_count(text, node)
+        for node_id, node in nodes.items()
+        if node.get("semantic", {}).get("output") == "source-only"
+        and node.get("source", {}).get("text")
+    }
+    visual_occurrences = sum(
+        item["visual"] for item in occurrence_evidence.values()
+    )
+    expected_links = sorted(build.get("external_uris", []))
+    expected_assets = len(build.get("assets", []))
+    role_assertions = {
+        role: frozen_role_counts[role] == expected
+        for role, expected in expected_flags.items()
+    }
+    if args.expected_problems is not None:
+        role_assertions["problem"] = frozen_role_counts.get("problem", 0) == args.expected_problems
+    if args.expected_examples is not None:
+        role_assertions["example"] = frozen_role_counts.get("example", 0) == args.expected_examples
+    if args.expected_tips is not None:
+        role_assertions["tip"] = frozen_role_counts.get("tip", 0) == args.expected_tips
+
+    checks = {
+        "docx_opens": True,
+        "frozen_role_inventory_matches": all(role_assertions.values()),
+        "every_role_occurrence_is_evidenced": all(
+            evidence["textual"] + evidence["visual"] == frozen_role_counts[role]
+            for role, evidence in occurrence_evidence.items()
+        ),
+        "source_only_nodes_appear_once": all(count == 1 for count in source_only_counts.values()),
+        "complete_containers_are_structurally_stable": len(ranges) == len(complete_groups)
+        and len(matched_range_indexes) == len(complete_groups)
+        and all(container_checks.values()),
+        "anchor_only_groups_are_not_expanded": all(anchor_only_unboxed.values()),
+        "no_internal_problem_markers": "V2-PROBLEM-CALLOUT" not in text,
+        "no_internal_generic_markers": not any(marker in text for marker in GENERIC_MARKERS),
+        "chinese_present": bool(target_re.search(text)),
+        "external_links_match": external_links == expected_links,
+        "visual_occurrences_are_embedded": len(images) >= max(visual_occurrences, expected_assets),
+        "minimum_images_met": len(images) >= args.minimum_images,
+    }
+    if args.expected_links is not None:
+        checks["external_link_count_matches"] = len(external_links) == args.expected_links
+    problem_groups = [group for group in ir.get("semantic_groups", []) if group["role"] == "problem"]
+    problem_ids = [group.get("identifier") for group in problem_groups]
+    report = {
+        "status": "passed" if all(checks.values()) else "failed",
+        "profile": profile["id"],
+        "docx": str(args.docx.resolve()),
+        "docx_sha256": sha256_file(args.docx.resolve()),
+        "document_ir_sha256": sha256_file(ir_path),
+        "build_manifest_sha256": sha256_file(build_path),
+        "role_counts": frozen_role_counts,
+        "role_occurrence_evidence": occurrence_evidence,
+        "container_checks": container_checks,
+        "anchor_only_unboxed": anchor_only_unboxed,
+        "source_only_occurrence_counts": source_only_counts,
+        "problem_count": frozen_role_counts.get("problem", 0),
+        "problem_ids": problem_ids,
+        "problem_range_count": sum(group["role"] == "problem" for group in complete_groups),
+        "example_count": frozen_role_counts.get("example", 0),
+        "low_resource_tip_count": frozen_role_counts.get("tip", 0),
+        "external_link_count": len(external_links),
+        "external_links": external_links,
+        "image_count": len(images),
+        "chinese_character_count": len(target_re.findall(text)),
+        "checks": checks,
+        "failures": [name for name, value in checks.items() if not value],
+    }
+    write_report(report, args.output)
+    if report["status"] != "passed":
+        raise SystemExit(1)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("docx", type=Path)
-    parser.add_argument("--profile", default="assignment-en-zh")
+    parser.add_argument("--profile")
+    parser.add_argument("--work-dir", type=Path)
+    parser.add_argument("--expected-role", action="append", default=[], metavar="ROLE=COUNT")
     parser.add_argument("--expected-problems", type=int)
     parser.add_argument("--expected-examples", type=int)
     parser.add_argument("--expected-tips", type=int)
@@ -25,9 +356,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     try:
-        profile = load_profile(args.profile)
+        if args.work_dir and (args.work_dir.expanduser().resolve() / "profile.json").is_file():
+            profile = load_work_profile(args.work_dir, args.profile)
+        else:
+            profile = load_profile(args.profile)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
+    if profile.get("schema_version") == 2:
+        if args.work_dir is None:
+            raise SystemExit("schema V2 DOCX audit requires --work-dir")
+        audit_v2(args, profile)
+        return
+    if args.expected_role:
+        raise SystemExit("--expected-role is available only for schema V2 Profiles")
     target_re = target_text_pattern(profile)
     problem_re = re.compile(
         semantic_group(profile, "problem")["source_pattern"], re.I | re.M

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import re
 import shutil
@@ -17,7 +18,222 @@ from common import (
     sha256_file,
     write_json,
 )
-from profile import canonical_profile_sha256, load_work_profile
+from profile import (
+    canonical_profile_sha256,
+    load_work_profile,
+    profile_contract,
+)
+
+
+GENERIC_OUTPUT_DISPOSITIONS = frozenset(
+    {"bilingual", "source-only", "visual-once", "artifact-omitted"}
+)
+
+
+def _legacy_output_policy(block: dict[str, Any]) -> str:
+    kind = block.get("kind")
+    if kind == "artifact":
+        return "artifact-omitted"
+    if kind in {"image", "math", "visual_content"}:
+        return "visual-once"
+    if kind == "code":
+        return "source-only"
+    return "bilingual" if block.get("translatable") else "source-only"
+
+
+def _semantic_policy(
+    node: dict[str, Any] | None,
+    block: dict[str, Any],
+    contract: dict[str, Any],
+) -> dict[str, Any]:
+    roles = {item["role"]: item for item in contract["roles"]}
+    semantic = node.get("semantic") if isinstance(node, dict) else None
+    semantic = semantic if isinstance(semantic, dict) else {}
+    role_value = node.get("semantic_role") if isinstance(node, dict) else None
+    if isinstance(role_value, dict):
+        role_value = role_value.get("role")
+    anchor = node.get("semantic_anchor") if isinstance(node, dict) else None
+    role = semantic.get("role") or role_value
+    if role is None and isinstance(anchor, dict):
+        role = anchor.get("role")
+    declared = roles.get(role, {})
+    auxiliary_output = contract.get("auxiliary_dispositions", {}).get(role)
+    style = semantic.get("style") or declared.get("style")
+    output = (
+        semantic.get("output")
+        or (node.get("output_disposition") if isinstance(node, dict) else None)
+        or declared.get("output")
+        or auxiliary_output
+    )
+    if contract["source_schema_version"] == 1:
+        output = output or _legacy_output_policy(block)
+    else:
+        if (
+            role not in roles
+            and role not in contract.get("auxiliary_dispositions", {})
+        ) or output is None or (role in roles and style is None):
+            raise ValueError(f"node {block.get('id')} has no registered semantic policy")
+        if role in roles and (
+            style != declared["style"] or output != declared["output"]
+        ):
+            raise ValueError(
+                f"node {block.get('id')} semantic policy disagrees with its Profile role"
+            )
+        if auxiliary_output is not None and output != auxiliary_output:
+            raise ValueError(
+                f"node {block.get('id')} auxiliary policy disagrees with its Profile"
+            )
+    if output not in GENERIC_OUTPUT_DISPOSITIONS:
+        raise ValueError(f"node {block.get('id')} has an unknown output disposition")
+    relations = node.get("relations", {}) if isinstance(node, dict) else {}
+    if not isinstance(relations, dict):
+        raise ValueError(f"node {block.get('id')} relations must be an object")
+    return {
+        "role": role,
+        "style": style,
+        "output": output,
+        "relations": relations,
+    }
+
+
+def load_semantic_model(
+    work_dir: Path,
+    blocks: list[dict[str, Any]],
+    profile: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, set[str]],
+    dict[str, dict[str, Any]],
+]:
+    """Load a strict V2 semantic model, with a non-mutating V1 compatibility view."""
+    contract = profile_contract(profile)
+    ir_path = work_dir / "document-ir.json"
+    if ir_path.is_file():
+        ir = read_json(ir_path)
+        raw_nodes = ir.get("nodes")
+        if not isinstance(raw_nodes, list):
+            raise ValueError("document IR nodes must be an array")
+    elif contract["source_schema_version"] == 1:
+        ir = {"nodes": [], "semantic_groups": [], "inventories": {}}
+        raw_nodes = []
+    else:
+        raise ValueError("schema V2 output requires document-ir.json")
+
+    nodes_by_id: dict[str, dict[str, Any]] = {}
+    for node in raw_nodes:
+        node_id = node.get("id") if isinstance(node, dict) else None
+        if not isinstance(node_id, str) or not node_id or node_id in nodes_by_id:
+            raise ValueError(f"invalid or duplicate document IR node id: {node_id!r}")
+        nodes_by_id[node_id] = node
+    block_ids = [block.get("id") for block in blocks]
+    if len(block_ids) != len(set(block_ids)):
+        raise ValueError("source blocks contain duplicate IDs")
+    if contract["source_schema_version"] == 2 and list(nodes_by_id) != block_ids:
+        raise ValueError("document IR node order does not exactly match source blocks")
+
+    groups_by_node: dict[str, set[str]] = defaultdict(set)
+    group_ids_by_role: dict[str, list[str]] = defaultdict(list)
+    for group in ir.get("semantic_groups", []):
+        if not isinstance(group, dict):
+            raise ValueError("document IR semantic groups must be objects")
+        group_id = group.get("id")
+        role = group.get("role")
+        members = group.get("member_node_ids")
+        if (
+            not isinstance(group_id, str)
+            or not group_id
+            or not isinstance(role, str)
+            or not isinstance(members, list)
+            or not members
+            or len(members) != len(set(members))
+        ):
+            raise ValueError(f"invalid semantic group: {group_id!r}")
+        unknown = sorted(set(members) - set(block_ids))
+        if unknown:
+            raise ValueError(f"semantic group {group_id} has unknown members: {unknown}")
+        group_ids_by_role[role].append(group_id)
+        for node_id in members:
+            groups_by_node[node_id].add(group_id)
+
+    semantics: dict[str, dict[str, Any]] = {}
+    for block in blocks:
+        semantics[block["id"]] = _semantic_policy(
+            nodes_by_id.get(block["id"]), block, contract
+        )
+
+    declared_inventory = contract["role_inventory"]
+    raw_inventory = ir.get("inventories", {}).get("role_inventory")
+    normalized_inventory: dict[str, dict[str, Any]] = {}
+    if contract["source_schema_version"] == 2:
+        if not isinstance(raw_inventory, dict) or set(raw_inventory) != set(
+            declared_inventory
+        ):
+            raise ValueError(
+                "document IR role_inventory must exactly cover Profile roles"
+            )
+        for role, declared in declared_inventory.items():
+            item = raw_inventory.get(role)
+            required = {
+                "occurrence_count",
+                "node_count",
+                "occurrence_ids",
+                "membership_counts",
+                "minimum",
+                "maximum",
+                "style",
+                "output",
+            }
+            if not isinstance(item, dict) or not required <= set(item):
+                raise ValueError(f"document IR role_inventory.{role} is incomplete")
+            if (
+                item["minimum"] != declared["minimum"]
+                or item["maximum"] != declared["maximum"]
+                or item["style"] != declared["style"]
+                or item["output"] != declared["output"]
+            ):
+                raise ValueError(
+                    f"document IR role_inventory.{role} disagrees with the Profile"
+                )
+            if (
+                not isinstance(item["occurrence_count"], int)
+                or isinstance(item["occurrence_count"], bool)
+                or item["occurrence_count"] < 0
+                or not isinstance(item["node_count"], int)
+                or isinstance(item["node_count"], bool)
+                or item["node_count"] < 0
+                or not isinstance(item["occurrence_ids"], list)
+                or len(item["occurrence_ids"]) != len(set(item["occurrence_ids"]))
+                or len(item["occurrence_ids"]) != item["occurrence_count"]
+                or not isinstance(item["membership_counts"], dict)
+            ):
+                raise ValueError(f"document IR role_inventory.{role} has invalid counts")
+            normalized_inventory[role] = copy.deepcopy(item)
+    else:
+        role_counts = ir.get("inventories", {}).get("semantic_role_counts", {})
+        for role, declared in declared_inventory.items():
+            occurrence_ids = list(group_ids_by_role.get(role, []))
+            occurrence_count = int(role_counts.get(role, len(occurrence_ids)))
+            normalized_inventory[role] = {
+                **declared,
+                "occurrence_count": occurrence_count,
+                "node_count": sum(
+                    semantic.get("role") == role for semantic in semantics.values()
+                ),
+                "occurrence_ids": occurrence_ids,
+                "membership_counts": {
+                    "anchor-only": occurrence_count,
+                    "complete": 0,
+                },
+            }
+    return (
+        contract,
+        nodes_by_id,
+        semantics,
+        groups_by_node,
+        normalized_inventory,
+    )
 
 
 LATEX_REPLACEMENTS = {
@@ -130,7 +346,10 @@ def heading_level(source: str) -> int:
 
 
 def should_group_paragraphs(
-    previous: dict[str, Any], current: dict[str, Any]
+    previous: dict[str, Any],
+    current: dict[str, Any],
+    semantics: dict[str, dict[str, Any]] | None = None,
+    groups_by_node: dict[str, set[str]] | None = None,
 ) -> bool:
     if previous["page"] != current["page"]:
         return False
@@ -142,6 +361,23 @@ def should_group_paragraphs(
         return False
     if previous.get("caption_parent") or current.get("caption_parent"):
         return False
+    if semantics is not None:
+        previous_semantic = semantics.get(previous["id"])
+        current_semantic = semantics.get(current["id"])
+        if previous_semantic is None or current_semantic is None:
+            return False
+        if (
+            previous_semantic.get("role") != current_semantic.get("role")
+            or previous_semantic.get("output") != "bilingual"
+            or current_semantic.get("output") != "bilingual"
+            or previous_semantic.get("relations")
+            != current_semantic.get("relations")
+        ):
+            return False
+        if groups_by_node is not None and groups_by_node.get(
+            previous["id"], set()
+        ) != groups_by_node.get(current["id"], set()):
+            return False
     previous_box = previous["bbox"]
     current_box = current["bbox"]
     vertical_gap = current_box[1] - previous_box[3]
@@ -282,6 +518,40 @@ def make_translation_only_latex(block: dict[str, Any], translation: str) -> str:
     )
 
 
+def make_source_only_markdown(block: dict[str, Any]) -> str:
+    marker = response_marker(block, "source-only")
+    source = block["source"]
+    kind = block["kind"]
+    if kind == "code":
+        return f"{marker}\n```text\n{source}\n```"
+    if kind == "heading":
+        return f"{marker}\n{'#' * heading_level(source)} {markdown_escape(source)}"
+    if kind in {"caption", "caption_continuation"}:
+        return f"{marker}\n*{markdown_escape(source)}*"
+    return f"{marker}\n{markdown_escape(source)}"
+
+
+def make_source_only_latex(block: dict[str, Any]) -> str:
+    anchor = f"\\SegmentAnchor{{{latex_escape(block['id'])}}}"
+    source = prose_text(block["source"])
+    kind = block["kind"]
+    if kind == "code":
+        return (
+            f"{anchor}\n"
+            "\\begin{Verbatim}[fontsize=\\small,breaklines=true,breakanywhere=true]\n"
+            + block["source"]
+            + "\n\\end{Verbatim}"
+        )
+    if kind == "heading":
+        return f"{anchor}\n\\{latex_heading_command(source)}{{{latex_escape(source)}}}"
+    if kind in {"caption", "caption_continuation"}:
+        return (
+            f"{anchor}\n\\begin{{center}}\\small\\itshape\n"
+            f"{latex_escape(source)}\n\\end{{center}}"
+        )
+    return f"{anchor}\n{latex_escape(source)}"
+
+
 def copy_visuals(
     work_dir: Path, output_dir: Path, visuals: list[dict[str, Any]]
 ) -> tuple[dict[str, str], list[dict[str, str]]]:
@@ -330,10 +600,40 @@ def main() -> None:
 
     manifest = read_json(work_dir / "manifest.json")
     blocks = read_jsonl(work_dir / "blocks.jsonl")
+    try:
+        profile = load_work_profile(work_dir)
+        (
+            semantic_contract,
+            ir_nodes_by_id,
+            node_semantics,
+            groups_by_node,
+            semantic_role_inventory,
+        ) = load_semantic_model(work_dir, blocks, profile)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    generic_semantics = semantic_contract["source_schema_version"] == 2
     translations_list = read_jsonl(merged_path)
     translations = {entry["id"]: entry["translation"] for entry in translations_list}
     if len(translations) != len(translations_list):
         raise SystemExit("merged translations contain duplicate IDs")
+    if generic_semantics:
+        expected_translation_ids = {
+            block["id"]
+            for block in blocks
+            if node_semantics[block["id"]]["output"] == "bilingual"
+            and bool(
+                ir_nodes_by_id[block["id"]].get(
+                    "translatable", block.get("translatable")
+                )
+            )
+        }
+        if set(translations) != expected_translation_ids:
+            missing = sorted(expected_translation_ids - set(translations))
+            extra = sorted(set(translations) - expected_translation_ids)
+            raise SystemExit(
+                "audited translations do not match bilingual translatable nodes: "
+                f"missing={missing}, extra={extra}"
+            )
 
     default_stem = Path(manifest["source_pdf"]).stem + "_bilingual"
     basename = args.basename or default_stem
@@ -357,11 +657,15 @@ def main() -> None:
     visuals_by_anchor: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for visual in manifest.get("visuals", []):
         visuals_by_anchor[visual["anchor_id"]].append(visual)
-    continuation_ids = {
-        continuation
-        for visual in manifest.get("visuals", [])
-        for continuation in visual.get("caption_continuation_ids", [])
-    }
+    continuation_ids = (
+        set()
+        if generic_semantics
+        else {
+            continuation
+            for visual in manifest.get("visuals", [])
+            for continuation in visual.get("caption_continuation_ids", [])
+        }
+    )
     paragraph_followers: dict[str, list[str]] = {}
     follower_ids: set[str] = set()
     index = 0
@@ -370,7 +674,10 @@ def main() -> None:
         group = [leader]
         cursor = index + 1
         while cursor < len(blocks) and should_group_paragraphs(
-            group[-1], blocks[cursor]
+            group[-1],
+            blocks[cursor],
+            node_semantics if generic_semantics else None,
+            groups_by_node if generic_semantics else None,
         ):
             candidate = blocks[cursor]
             if (
@@ -407,6 +714,92 @@ def main() -> None:
                 f'\n<a id="source-page-{current_page}"></a>\n<!-- source-page: {current_page} -->'
             )
             latex_parts.append(f"\\SourcePage{{{current_page}}}")
+
+        if generic_semantics:
+            policy = node_semantics[block_id]["output"]
+            anchored_visuals = visuals_by_anchor.get(block_id, [])
+            if policy == "artifact-omitted":
+                dispositions[block_id] = policy
+                continue
+            if policy == "visual-once":
+                if len(anchored_visuals) != 1:
+                    raise SystemExit(
+                        f"visual-once node {block_id} must own exactly one visual; "
+                        f"found {len(anchored_visuals)}"
+                    )
+                visual = anchored_visuals[0]
+                relative = visual_paths[visual["id"]]
+                markdown_parts.append(
+                    response_marker(block, "visual")
+                    + "\n"
+                    + visual_markdown(relative, f"Source visual from page {block['page']}")
+                )
+                latex_parts.append(
+                    f"\\SegmentAnchor{{{latex_escape(block_id)}}}\n"
+                    f"{visual_latex(relative)}"
+                )
+                dispositions[block_id] = policy
+                continue
+            if policy == "source-only":
+                if anchored_visuals:
+                    raise SystemExit(
+                        f"source-only node {block_id} unexpectedly owns a visual; "
+                        "model the visual as a visual-once node"
+                    )
+                markdown_parts.append(make_source_only_markdown(block))
+                latex_parts.append(make_source_only_latex(block))
+                dispositions[block_id] = policy
+                continue
+            if policy != "bilingual":
+                raise SystemExit(f"unknown output disposition for {block_id}: {policy}")
+            if not bool(
+                ir_nodes_by_id[block_id].get(
+                    "translatable", block.get("translatable")
+                )
+            ):
+                raise SystemExit(
+                    f"bilingual node {block_id} is not eligible for translation"
+                )
+            if anchored_visuals:
+                raise SystemExit(
+                    f"bilingual node {block_id} unexpectedly owns a visual; "
+                    "split its caption from the visual node"
+                )
+            if block_id in follower_ids:
+                dispositions[block_id] = policy
+                continue
+            if block_id not in translations:
+                raise SystemExit(f"missing audited translation for {block_id}")
+            source_override = None
+            translation = translations[block_id]
+            paragraph_group = [
+                blocks_by_id[item] for item in paragraph_followers.get(block_id, [])
+            ]
+            if paragraph_group:
+                source_override = " ".join(
+                    [block["source"]] + [item["source"] for item in paragraph_group]
+                )
+                translation = " ".join(
+                    [translation]
+                    + [translations[item["id"]] for item in paragraph_group]
+                )
+                for follower in paragraph_group:
+                    markdown_parts.append(response_marker(follower, "grouped"))
+                    latex_parts.append(
+                        f"\\SegmentAnchor{{{latex_escape(follower['id'])}}}"
+                    )
+            markdown_parts.append(
+                make_bilingual_markdown(
+                    block, translation, source_override=source_override
+                )
+            )
+            latex_parts.append(
+                make_bilingual_latex(
+                    block, translation, source_override=source_override
+                )
+            )
+            dispositions[block_id] = policy
+            continue
 
         if block["kind"] == "artifact":
             dispositions[block_id] = "artifact_omitted"
@@ -563,12 +956,24 @@ def main() -> None:
         set(problem_ids("\n".join(block["source"] for block in blocks)))
     )
     expected_problem_ids = sorted(manifest.get("problem_ids", []))
-    if output_problem_ids != expected_problem_ids:
+    if not generic_semantics and output_problem_ids != expected_problem_ids:
         raise SystemExit("Problem ID inventory changed before output generation")
     if emitted_external_uris != external_uris:
         raise SystemExit("not every external URI was emitted")
 
-    profile = load_work_profile(work_dir)
+    semantic_dispositions = {
+        block["id"]: node_semantics[block["id"]]["output"] for block in blocks
+    }
+    manifest_node_semantics = {
+        block["id"]: {
+            "role": node_semantics[block["id"]]["role"],
+            "style": node_semantics[block["id"]]["style"],
+            "output": node_semantics[block["id"]]["output"],
+            "group_ids": sorted(groups_by_node.get(block["id"], set())),
+            "relations": node_semantics[block["id"]]["relations"],
+        }
+        for block in blocks
+    }
     build_manifest = {
         "schema_version": 1,
         "profile_id": manifest.get("profile", {}).get("id"),
@@ -593,6 +998,11 @@ def main() -> None:
         "block_count": len(blocks),
         "disposition_counts": dict(Counter(dispositions.values())),
         "dispositions": dispositions,
+        "semantic_contract_version": semantic_contract["contract_version"],
+        "semantic_disposition_counts": dict(Counter(semantic_dispositions.values())),
+        "semantic_dispositions": semantic_dispositions,
+        "node_semantics": manifest_node_semantics,
+        "role_inventory": semantic_role_inventory,
         "problem_ids": expected_problem_ids,
         "external_uris": sorted(external_uris),
     }

@@ -7,8 +7,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from adapters import get_adapter
 from common import read_json, read_jsonl, sha256_file
-from profile import canonical_profile_sha256, load_profile, load_work_profile
+from profile import (
+    canonical_profile_sha256,
+    load_profile,
+    load_work_profile,
+    profile_contract,
+)
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -82,6 +88,7 @@ def report_status(work_dir: Path) -> dict:
     artifacts = {
         "profile": work_dir / "profile.json",
         "manifest": work_dir / "manifest.json",
+        "adapter_evidence": work_dir / "adapter-evidence.json",
         "document_ir": work_dir / "document-ir.json",
         "source_audit": work_dir / "source-audit.json",
         "glossary": work_dir / "translation" / "glossary.json",
@@ -113,6 +120,10 @@ def report_status(work_dir: Path) -> dict:
                     "profile_file_sha256": artifacts["profile"],
                     "document_ir_sha256": artifacts["document_ir"],
                 }
+                if artifacts["adapter_evidence"].is_file():
+                    bound_inputs["adapter_evidence_sha256"] = artifacts[
+                        "adapter_evidence"
+                    ]
                 for field, input_path in bound_inputs.items():
                     expected = report.get(field)
                     if input_path.is_file() and (
@@ -134,12 +145,37 @@ def report_status(work_dir: Path) -> dict:
         except ValueError:
             profile_id = "invalid"
 
+    manifest: dict = {}
+    if artifacts["manifest"].is_file():
+        try:
+            manifest = read_json(artifacts["manifest"])
+        except (ValueError, OSError):
+            manifest = {}
+    adapter = manifest.get("adapter") or {}
+    adapter_id = adapter.get("id") or (
+        load_work_profile(work_dir)["input"]["adapter"]
+        if artifacts["profile"].is_file() and profile_id != "invalid"
+        else None
+    )
+
     if not exists["manifest"]:
-        next_action = "run `pipeline.py source SOURCE.pdf --work-dir WORK_DIR`"
+        next_action = (
+            "run `pipeline.py source SOURCE.pdf --work-dir WORK_DIR` for the native adapter, "
+            "or `pipeline.py import-mineru SOURCE.pdf MINERU_OUTPUT_DIR --work-dir WORK_DIR "
+            "--profile PROFILE` for a frozen MinerU output"
+        )
     elif not exists["profile"] or not exists["document_ir"]:
         next_action = "run `pipeline.py ir WORK_DIR` to bind the default profile and create the IR"
     elif not exists["source_audit"]:
         next_action = "run `pipeline.py source-audit WORK_DIR`"
+    elif status("source_audit") in {
+        "needs_manual_review",
+        "manual_source_review_required",
+    }:
+        next_action = (
+            "complete the independent per-page source review; translation preparation and "
+            "final QA remain blocked while source evidence needs manual review"
+        )
     elif status("source_audit") != "passed":
         next_action = "repair extraction, then rerun `pipeline.py source-audit WORK_DIR`"
     elif not exists["glossary"]:
@@ -168,6 +204,13 @@ def report_status(work_dir: Path) -> dict:
     return {
         "work_dir": str(work_dir),
         "profile": profile_id,
+        "adapter": {
+            "id": adapter_id,
+            "backend": adapter.get("backend"),
+            "version": adapter.get("version"),
+            "evidence": adapter.get("evidence"),
+            "evidence_sha256": adapter.get("evidence_sha256"),
+        },
         "artifacts": exists,
         "gate_statuses": {
             name: status(name)
@@ -188,7 +231,15 @@ def report_status(work_dir: Path) -> dict:
 
 def role_counts(work_dir: Path) -> dict[str, int]:
     ir = read_json(work_dir / "document-ir.json")
-    return ir.get("inventories", {}).get("semantic_role_counts", {})
+    inventories = ir.get("inventories", {})
+    generic = inventories.get("role_inventory")
+    if isinstance(generic, dict):
+        return {
+            role: int(item.get("occurrence_count", 0))
+            for role, item in generic.items()
+            if isinstance(item, dict)
+        }
+    return inventories.get("semantic_role_counts", {})
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -208,6 +259,14 @@ def build_parser() -> argparse.ArgumentParser:
     source.add_argument("--work-dir", type=Path, required=True)
     source.add_argument("--profile", default="assignment-en-zh")
     source.add_argument("--render-dpi", type=int, default=120)
+
+    import_mineru = subparsers.add_parser("import-mineru")
+    import_mineru.add_argument("pdf", type=Path)
+    import_mineru.add_argument("mineru_output_dir", type=Path)
+    import_mineru.add_argument("--work-dir", type=Path, required=True)
+    import_mineru.add_argument("--profile", required=True)
+    import_mineru.add_argument("--render-dpi", type=int, default=120)
+    import_mineru.add_argument("--force", action="store_true")
 
     source_audit = subparsers.add_parser("source-audit")
     source_audit.add_argument("work_dir", type=Path)
@@ -264,7 +323,7 @@ def main() -> None:
                     "adapter": profile["input"]["adapter"],
                     "target_language": profile["translation"]["target_language"],
                     "semantic_roles": [
-                        group["role"] for group in profile["semantics"]["groups"]
+                        role["role"] for role in profile_contract(profile)["roles"]
                     ],
                 },
                 ensure_ascii=False,
@@ -278,8 +337,10 @@ def main() -> None:
         return
 
     if args.command == "source":
+        profile = load_profile(args.profile)
+        script = get_adapter(profile["input"]["adapter"]).script_for("source")
         run_script(
-            "extract_pdf.py",
+            script,
             str(args.pdf),
             "--work-dir",
             str(args.work_dir),
@@ -288,6 +349,27 @@ def main() -> None:
             "--render-dpi",
             str(args.render_dpi),
         )
+        run_script("audit_source.py", str(args.work_dir))
+        run_script("init_glossary.py", str(args.work_dir))
+        print(json.dumps(report_status(args.work_dir), ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "import-mineru":
+        profile = load_profile(args.profile)
+        script = get_adapter(profile["input"]["adapter"]).script_for("import")
+        command = [
+            str(args.pdf),
+            str(args.mineru_output_dir),
+            "--work-dir",
+            str(args.work_dir),
+            "--profile",
+            args.profile,
+            "--render-dpi",
+            str(args.render_dpi),
+        ]
+        if args.force:
+            command.append("--force")
+        run_script(script, *command)
         run_script("audit_source.py", str(args.work_dir))
         run_script("init_glossary.py", str(args.work_dir))
         print(json.dumps(report_status(args.work_dir), ensure_ascii=False, indent=2))
@@ -317,7 +399,7 @@ def main() -> None:
         run_script("build_outputs.py", *command)
         run_script("audit_outputs.py", str(work_dir))
     elif args.command == "docx":
-        load_work_profile(work_dir)
+        profile = load_work_profile(work_dir)
         markdown = args.markdown.expanduser().resolve()
         stem = args.basename or markdown.stem
         output = work_dir / "output" / f"{stem}.docx"
@@ -329,52 +411,78 @@ def main() -> None:
             str((args.resource_path or markdown.parent).resolve()),
             "--profile",
             str(work_dir / "profile.json"),
-            "--expected-problems",
-            str(counts.get("problem", 0)),
         ]
+        if profile.get("schema_version") == 2:
+            if args.build_dir:
+                raise SystemExit(
+                    "--build-dir is not supported for schema V2; its deterministic "
+                    "intermediates are stored under WORK_DIR/output/docx-build"
+                )
+            command.extend(["--work-dir", str(work_dir)])
+            for role, count in counts.items():
+                command.extend(["--expected-role", f"{role}={count}"])
+        else:
+            command.extend(
+                ["--expected-problems", str(counts.get("problem", 0))]
+            )
         if args.title:
             command.extend(["--title", args.title])
-        if args.build_dir:
+        if args.build_dir and profile.get("schema_version") != 2:
             command.extend(["--work-dir", str(args.build_dir)])
         run_script("build_docx.py", *command)
-        run_script(
-            "audit_docx.py",
+        audit_command = [
             str(output),
             "--profile",
             str(work_dir / "profile.json"),
-            "--expected-problems",
-            str(counts.get("problem", 0)),
-            "--expected-examples",
-            str(counts.get("example", 0)),
-            "--expected-tips",
-            str(counts.get("tip", 0)),
             "--expected-links",
             str(len(read_json(work_dir / "manifest.json").get("external_uris", []))),
             "--minimum-images",
             str(args.minimum_images),
             "--output",
             str(work_dir / "output" / "docx-audit.json"),
-        )
+        ]
+        if profile.get("schema_version") == 2:
+            audit_command.extend(["--work-dir", str(work_dir)])
+            for role, count in counts.items():
+                audit_command.extend(["--expected-role", f"{role}={count}"])
+        else:
+            audit_command.extend(
+                [
+                    "--expected-problems",
+                    str(counts.get("problem", 0)),
+                    "--expected-examples",
+                    str(counts.get("example", 0)),
+                    "--expected-tips",
+                    str(counts.get("tip", 0)),
+                ]
+            )
+        run_script("audit_docx.py", *audit_command)
     elif args.command == "compile-docx":
         profile = load_work_profile(work_dir)
         build = read_json(work_dir / "output" / "build-manifest.json")
         stem = args.basename or Path(build["markdown"]).stem
         counts = role_counts(work_dir)
-        run_script(
-            "compile_docx_pdf.py",
+        command = [
             str(work_dir / "output" / f"{stem}.docx"),
             str(work_dir / "output" / f"{stem}.pdf"),
             "--render-dir",
             str(work_dir / "output" / "pdf-renders"),
             "--audit-output",
             str(work_dir / "output" / "compile-audit.json"),
-            "--expected-problems",
-            str(counts.get("problem", 0)),
             "--cjk-font",
             profile["render"]["docx"]["cjk_font"],
             "--dpi",
             str(args.dpi),
-        )
+        ]
+        if profile.get("schema_version") == 2:
+            command.extend(["--work-dir", str(work_dir)])
+            for role, count in counts.items():
+                command.extend(["--expected-role", f"{role}={count}"])
+        else:
+            command.extend(
+                ["--expected-problems", str(counts.get("problem", 0))]
+            )
+        run_script("compile_docx_pdf.py", *command)
     elif args.command == "finalize":
         run_script("finalize_qa.py", str(work_dir))
     print(json.dumps(report_status(work_dir), ensure_ascii=False, indent=2))

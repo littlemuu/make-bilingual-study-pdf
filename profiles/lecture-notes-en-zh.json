@@ -1,0 +1,392 @@
+{
+  "schema_version": 2,
+  "id": "lecture-notes-en-zh",
+  "label": "English lecture notes to Simplified Chinese",
+  "input": {
+    "adapter": "mineru-import",
+    "source_language": "en",
+    "minimum_native_text_page_ratio": 0.7,
+    "minimum_text_characters_per_page": 100
+  },
+  "translation": {
+    "target_language": "zh-CN",
+    "target_text_pattern": "[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff]",
+    "reading_order": "source-then-target",
+    "policy": "English source first; faithful Simplified Chinese; preserve theorem labels, formulas, code, identifiers, links, and placeholders exactly."
+  },
+  "semantics": {
+    "roles": [
+      {
+        "role": "title",
+        "selectors": [
+          {"adapter_role": "title"}
+        ],
+        "style": "document-title",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "section",
+        "selectors": [
+          {"adapter_role": "section"},
+          {"node_types": ["heading"], "text_levels": [1]}
+        ],
+        "style": "section-heading",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "subsection",
+        "selectors": [
+          {"adapter_role": "subsection"},
+          {"node_types": ["heading"], "text_levels": [2, 3, 4, 5, 6]}
+        ],
+        "style": "section-heading",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "definition",
+        "selectors": [
+          {"adapter_role": "definition"},
+          {
+            "source_pattern": "^Definition(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^定义(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "definition",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "theorem",
+        "selectors": [
+          {"adapter_role": "theorem"},
+          {
+            "source_pattern": "^Theorem(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^定理(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "theorem",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "lemma",
+        "selectors": [
+          {"adapter_role": "lemma"},
+          {
+            "source_pattern": "^Lemma(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^引理(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "theorem",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "proposition",
+        "selectors": [
+          {"adapter_role": "proposition"},
+          {
+            "source_pattern": "^Proposition(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^命题(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "theorem",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "corollary",
+        "selectors": [
+          {"adapter_role": "corollary"},
+          {
+            "source_pattern": "^Corollary(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^推论(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "theorem",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "proof",
+        "selectors": [
+          {"adapter_role": "proof"},
+          {
+            "source_pattern": "^Proof(?:\\s*[:.]|$)",
+            "target_pattern": "^证明(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "proof",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "example",
+        "selectors": [
+          {"adapter_role": "example"},
+          {
+            "source_pattern": "^Example(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^示例(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "example",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "note",
+        "selectors": [
+          {"adapter_role": "note"},
+          {
+            "source_pattern": "^Note(?:\\s*[:.]|$)",
+            "target_pattern": "^注(?:意)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "note",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "warning",
+        "selectors": [
+          {"adapter_role": "warning"},
+          {
+            "source_pattern": "^(?:Warning|Caution)(?:\\s*[:.]|$)",
+            "target_pattern": "^(?:警告|注意)(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "warning",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "tip",
+        "selectors": [
+          {"adapter_role": "tip"},
+          {
+            "source_pattern": "^(?:Tip|Low-Resource Tip)(?:\\s*[:.]|$)",
+            "target_pattern": "^(?:提示|低资源提示)(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "tip",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "exercise",
+        "selectors": [
+          {"adapter_role": "exercise"},
+          {
+            "source_pattern": "^(?:Exercise|Problem)(?:\\s+\\d+(?:\\.\\d+)*)?(?:\\s*[:.]|$)",
+            "target_pattern": "^(?:练习|问题)(?:\\s*\\d+(?:\\.\\d+)*)?(?:\\s*[:：。]|$)"
+          }
+        ],
+        "style": "exercise",
+        "grouping": "structural-container",
+        "output": "bilingual"
+      },
+      {
+        "role": "paragraph",
+        "selectors": [
+          {"adapter_role": "paragraph"},
+          {"node_types": ["text", "prose"]}
+        ],
+        "style": "body",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "equation",
+        "selectors": [
+          {"adapter_role": "equation"},
+          {"node_types": ["equation", "math", "math_with_text"]}
+        ],
+        "style": "equation",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "equation-visual",
+        "selectors": [
+          {"adapter_role": "equation_visual"}
+        ],
+        "style": "equation",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "figure",
+        "selectors": [
+          {"adapter_role": "figure"},
+          {"node_types": ["image", "chart"]}
+        ],
+        "style": "visual",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "figure-caption",
+        "selectors": [
+          {"adapter_role": "figure_caption"},
+          {"adapter_role": "image_caption"},
+          {"adapter_role": "chart_caption"},
+          {"adapter_role": "image_footnote"},
+          {"adapter_role": "chart_footnote"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "table",
+        "selectors": [
+          {"adapter_role": "table"},
+          {"node_types": ["table"]}
+        ],
+        "style": "table",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "table-visual",
+        "selectors": [
+          {"adapter_role": "table_visual"}
+        ],
+        "style": "table",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "table-caption",
+        "selectors": [
+          {"adapter_role": "table_caption"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "table-footnote",
+        "selectors": [
+          {"adapter_role": "table_footnote"}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "code",
+        "selectors": [
+          {"adapter_role": "code"},
+          {"node_types": ["code"]}
+        ],
+        "style": "code",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "code-caption",
+        "selectors": [
+          {"adapter_role": "code_caption"},
+          {"adapter_role": "algorithm_caption"}
+        ],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "code-footnote",
+        "selectors": [
+          {"adapter_role": "code_footnote"},
+          {"adapter_role": "algorithm_footnote"}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "references",
+        "selectors": [
+          {"adapter_role": "reference"},
+          {"adapter_role": "reference_entry"},
+          {"node_types": ["list"], "sub_types": ["reference", "references"]}
+        ],
+        "style": "reference",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "page-footnote",
+        "selectors": [
+          {"adapter_role": "footnote"},
+          {"adapter_role": "page_footnote"},
+          {"node_types": ["footnote"]}
+        ],
+        "style": "footnote",
+        "grouping": "none",
+        "output": "bilingual"
+      }
+    ],
+    "auxiliary_dispositions": {
+      "page-header": "artifact-omitted",
+      "page-footer": "artifact-omitted",
+      "page-number": "artifact-omitted",
+      "marginalia": "artifact-omitted"
+    }
+  },
+  "render": {
+    "page_size": "A4",
+    "docx": {
+      "latin_font": "Noto Sans",
+      "cjk_font": "Noto Sans CJK SC",
+      "code_font": "DejaVu Sans Mono",
+      "title": "English-Chinese Lecture Notes Study Edition",
+      "header_label": "Lecture notes study edition",
+      "footer_label": "英中双语讲义学习版"
+    }
+  },
+  "qa": {
+    "role_inventory": {
+      "title": {"minimum": 1, "maximum": 1},
+      "section": {"minimum": 1, "maximum": null},
+      "subsection": {"minimum": 0, "maximum": null},
+      "definition": {"minimum": 0, "maximum": null},
+      "theorem": {"minimum": 0, "maximum": null},
+      "lemma": {"minimum": 0, "maximum": null},
+      "proposition": {"minimum": 0, "maximum": null},
+      "corollary": {"minimum": 0, "maximum": null},
+      "proof": {"minimum": 0, "maximum": null},
+      "example": {"minimum": 0, "maximum": null},
+      "note": {"minimum": 0, "maximum": null},
+      "warning": {"minimum": 0, "maximum": null},
+      "tip": {"minimum": 0, "maximum": null},
+      "exercise": {"minimum": 0, "maximum": null},
+      "paragraph": {"minimum": 1, "maximum": null},
+      "equation": {"minimum": 0, "maximum": null},
+      "equation-visual": {"minimum": 0, "maximum": null},
+      "figure": {"minimum": 0, "maximum": null},
+      "figure-caption": {"minimum": 0, "maximum": null},
+      "table": {"minimum": 0, "maximum": null},
+      "table-visual": {"minimum": 0, "maximum": null},
+      "table-caption": {"minimum": 0, "maximum": null},
+      "table-footnote": {"minimum": 0, "maximum": null},
+      "code": {"minimum": 0, "maximum": null},
+      "code-caption": {"minimum": 0, "maximum": null},
+      "code-footnote": {"minimum": 0, "maximum": null},
+      "references": {"minimum": 0, "maximum": null},
+      "page-footnote": {"minimum": 0, "maximum": null}
+    },
+    "constraints": [
+      "heading-hierarchy-v1",
+      "lecture-proof-order-v1",
+      "visual-relations-v1"
+    ],
+    "minimum_global_fivegram_coverage": 0.95,
+    "warn_page_below": 0.75,
+    "require_external_uri_inventory": true,
+    "require_exact_target_font": true
+  }
+}

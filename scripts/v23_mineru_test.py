@@ -1,0 +1,571 @@
+#!/usr/bin/env python3
+"""Public, model-free contract tests for the V2.3 MinerU import adapter."""
+from __future__ import annotations
+
+import copy
+import contextlib
+import io
+import json
+import math
+import runpy
+import shutil
+import subprocess
+import sys
+import tempfile
+import unittest
+from collections import Counter
+from pathlib import Path
+from unittest import mock
+
+import pymupdf as fitz
+
+from adapters.base import AdapterError
+from adapters.mineru import (
+    SUPPORTED_BACKEND,
+    VERIFIED_VERSION,
+    canonical_json_sha256,
+    discover_inputs,
+    import_mineru,
+    load_strict_json,
+    normalize_content,
+    resolve_asset,
+    validate_assets,
+    validate_content_bbox,
+    validate_middle,
+)
+from common import sha256_file, sha256_text
+from profile import load_profile
+
+
+REPOSITORY = Path(__file__).resolve().parent.parent
+FIXTURE_ROOT = (
+    REPOSITORY / "tests" / "fixtures" / "mineru" / "pipeline-3.4.4"
+)
+ORIGINAL_WHICH = shutil.which
+
+
+def find_poppler_executable(name: str) -> str:
+    candidates = [ORIGINAL_WHICH(name)]
+    for program_files in (
+        Path(r"C:\Program Files"),
+        Path(r"C:\Program Files (x86)"),
+    ):
+        candidates.append(str(program_files / "Calibre2" / "app" / "bin" / f"{name}.exe"))
+    candidates.append(ORIGINAL_WHICH(f"{name}.exe"))
+    seen: set[str] = set()
+    for value in candidates:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        path = Path(value)
+        if not path.is_file():
+            continue
+        try:
+            probe = subprocess.run(
+                [str(path), "-v"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if probe.returncode == 0:
+            return str(path)
+    raise RuntimeError(f"no working {name} executable is available")
+
+
+class MinerUContractTests(unittest.TestCase):
+    maxDiff = None
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.fixture_manifest = json.loads(
+            (FIXTURE_ROOT / "fixture-manifest.json").read_text(encoding="utf-8")
+        )
+        cls.profile = load_profile("academic-paper-en-zh")
+        cls.poppler = {
+            name: find_poppler_executable(name)
+            for name in ("pdftoppm", "pdftotext")
+        }
+
+    def load_case(self, name: str) -> dict:
+        expected = self.fixture_manifest["cases"][name]
+        output_dir = FIXTURE_ROOT / expected["output_dir"]
+        source = FIXTURE_ROOT / expected["source"]
+        inputs = discover_inputs(source, output_dir)
+        content = load_strict_json(inputs["content"])
+        middle = load_strict_json(inputs["middle"])
+        with fitz.open(source) as document:
+            page_count = document.page_count
+        backend, version, pages, middle_assets = validate_middle(middle, page_count)
+        blocks, visuals, dispositions, content_assets = normalize_content(
+            content,
+            source_sha256=sha256_file(source),
+            backend=backend,
+            version=version,
+            page_count=page_count,
+            middle_pages=pages,
+            profile=self.profile,
+        )
+        asset_paths = middle_assets | content_assets
+        assets = validate_assets(output_dir, asset_paths)
+        normalized = {
+            "blocks": blocks,
+            "visuals": visuals,
+            "dispositions": dispositions,
+            "asset_paths": sorted(asset_paths),
+        }
+        return {
+            "expected": expected,
+            "output_dir": output_dir,
+            "source": source,
+            "inputs": inputs,
+            "content": content,
+            "middle": middle,
+            "backend": backend,
+            "version": version,
+            "pages": pages,
+            "blocks": blocks,
+            "visuals": visuals,
+            "dispositions": dispositions,
+            "assets": assets,
+            "normalized": normalized,
+        }
+
+    def normalize_mutation(
+        self,
+        content: object,
+        *,
+        middle: object | None = None,
+        version: str | None = None,
+    ) -> tuple[list[dict], list[dict], list[dict], set[str]]:
+        native = self.load_case("native")
+        if middle is None:
+            pages = native["pages"]
+            backend = native["backend"]
+            active_version = version or native["version"]
+        else:
+            backend, active_version, pages, _assets = validate_middle(middle, 1)
+            if version is not None:
+                active_version = version
+        return normalize_content(
+            content,
+            source_sha256=sha256_file(native["source"]),
+            backend=backend,
+            version=active_version,
+            page_count=1,
+            middle_pages=pages,
+            profile=self.profile,
+        )
+
+    def guarded_import(
+        self, source: Path, output_dir: Path, work_dir: Path
+    ) -> dict:
+        original_run = subprocess.run
+
+        def reject_mineru(command, *args, **kwargs):
+            executable = command[0] if isinstance(command, (list, tuple)) else command
+            executable_name = Path(str(executable)).name.casefold()
+            if executable_name.startswith("mineru"):
+                self.fail(f"the importer attempted to execute MinerU: {command!r}")
+            return original_run(command, *args, **kwargs)
+
+        def frozen_which(name: str):
+            return self.poppler.get(name) or ORIGINAL_WHICH(name)
+
+        with mock.patch("adapters.mineru.shutil.which", side_effect=frozen_which), mock.patch(
+            "adapters.mineru.subprocess.run", side_effect=reject_mineru
+        ):
+            return import_mineru(
+                source,
+                output_dir,
+                work_dir,
+                "academic-paper-en-zh",
+                render_dpi=72,
+            )
+
+    def test_fixture_hashes_and_origin_binding(self) -> None:
+        for relative, expected_hash in self.fixture_manifest["files"].items():
+            path = FIXTURE_ROOT / relative
+            self.assertTrue(path.is_file(), relative)
+            self.assertEqual(sha256_file(path), expected_hash, relative)
+        generator = self.fixture_manifest["generator"]
+        generator_path = REPOSITORY / generator["path"]
+        self.assertEqual(sha256_file(generator_path), generator["sha256"])
+        for name in ("native", "scan"):
+            case = self.load_case(name)
+            self.assertEqual(
+                sha256_file(case["source"]),
+                sha256_file(case["inputs"]["origin"]),
+            )
+        self.assertEqual(
+            self.fixture_manifest["mineru_contract"]["version"], VERIFIED_VERSION
+        )
+        self.assertEqual(
+            self.fixture_manifest["mineru_contract"]["backend"], SUPPORTED_BACKEND
+        )
+
+    def test_input_discovery_fails_closed(self) -> None:
+        native = self.load_case("native")
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-discovery-") as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            shutil.copytree(native["output_dir"], output)
+            source = root / "source.pdf"
+            shutil.copyfile(native["source"], source)
+
+            middle = output / "fixture_middle.json"
+            middle.unlink()
+            with self.assertRaises(AdapterError):
+                discover_inputs(source, output)
+            shutil.copyfile(native["inputs"]["middle"], middle)
+
+            content = output / "fixture_content_list.json"
+            content.unlink()
+            with self.assertRaises(AdapterError):
+                discover_inputs(source, output)
+            shutil.copyfile(native["inputs"]["content"], content)
+
+            extra = output / "ambiguous_content_list.json"
+            shutil.copyfile(content, extra)
+            with self.assertRaises(AdapterError):
+                discover_inputs(source, output)
+            extra.unlink()
+
+            shutil.copyfile(FIXTURE_ROOT / "scan-source.pdf", output / "fixture_origin.pdf")
+            with self.assertRaises(AdapterError):
+                discover_inputs(source, output)
+
+    def test_normalization_is_deterministic(self) -> None:
+        first = self.load_case("native")
+        second = self.load_case("native")
+        self.assertEqual(first["normalized"], second["normalized"])
+        self.assertEqual(
+            canonical_json_sha256(first["normalized"]),
+            first["expected"]["normalized_contract_sha256"],
+        )
+        ids = [block["id"] for block in first["blocks"]]
+        self.assertEqual(len(ids), len(set(ids)))
+        for block in first["blocks"]:
+            self.assertEqual(block["source_sha256"], sha256_text(block["source"]))
+
+    def test_types_pointers_dispositions_and_coordinates(self) -> None:
+        case = self.load_case("native")
+        expected = case["expected"]
+        self.assertEqual(len(case["content"]), expected["content_items"])
+        self.assertEqual(len(case["blocks"]), expected["normalized_blocks"])
+        self.assertEqual(len(case["visuals"]), expected["visual_requests"])
+        self.assertEqual(len(case["assets"]), expected["validated_assets"])
+        self.assertEqual(
+            dict(Counter(item["disposition"] for item in case["dispositions"])),
+            expected["disposition_counts"],
+        )
+        self.assertEqual(
+            dict(Counter(item["middle_match"] for item in case["dispositions"])),
+            expected["middle_match_counts"],
+        )
+        self.assertEqual(
+            sorted({item["raw_type"] for item in case["dispositions"]}),
+            expected["raw_types"],
+        )
+        self.assertEqual(
+            [item["pointer"] for item in case["dispositions"]],
+            [f"/{index}" for index in range(len(case["content"]))],
+        )
+        for index, disposition in enumerate(case["dispositions"]):
+            self.assertEqual(disposition["middle_match"], "exact")
+            self.assertEqual(len(disposition["middle_pointers"]), 1)
+            self.assertTrue(
+                disposition["middle_pointers"][0].startswith(
+                    "/pdf_info/0/para_blocks/"
+                )
+            )
+            self.assertTrue(disposition["node_ids"] or disposition["visual_ids"])
+            self.assertEqual(
+                disposition["item_sha256"],
+                canonical_json_sha256(case["content"][index]),
+            )
+        artifact_types = {
+            item["raw_type"]
+            for item in case["dispositions"]
+            if item["disposition"] == "artifact_omitted"
+        }
+        self.assertEqual(
+            artifact_types, {"header", "footer", "page_number", "aside_text"}
+        )
+        self.assertEqual(
+            {
+                item["raw_sub_type"]
+                for item in case["dispositions"]
+                if item["raw_type"] == "code"
+            },
+            {"code", "algorithm"},
+        )
+        for content_item, middle_item in zip(
+            case["content"], case["pages"][0]["blocks"]
+        ):
+            self.assertEqual(middle_item["raw_bbox"], content_item["bbox"])
+            self.assertEqual(middle_item["normalized_bbox"], content_item["bbox"])
+        for block in case["blocks"]:
+            evidence = block["evidence"]
+            self.assertEqual(evidence["adapter"], "mineru-import")
+            self.assertEqual(evidence["middle_match"], "exact")
+            self.assertEqual(
+                evidence["bbox_coordinate_system"], "mineru-normalized-1000"
+            )
+
+    def test_backend_version_page_and_bbox_fail_closed(self) -> None:
+        middle = self.load_case("native")["middle"]
+        for backend in (None, "vlm", "office"):
+            mutated = copy.deepcopy(middle)
+            mutated["_backend"] = backend
+            with self.subTest(backend=backend), self.assertRaises(AdapterError):
+                validate_middle(mutated, 1)
+        for version in (None, "3.4", "3.4.4-alpha", "2.5.4", "4.0.0"):
+            mutated = copy.deepcopy(middle)
+            mutated["_version_name"] = version
+            with self.subTest(version=version), self.assertRaises(AdapterError):
+                validate_middle(mutated, 1)
+        compatible = copy.deepcopy(middle)
+        compatible["_version_name"] = "3.9.9"
+        self.assertEqual(validate_middle(compatible, 1)[1], "3.9.9")
+
+        for bbox in (
+            None,
+            [0, 0, 10],
+            [0.0, 0, 10, 10],
+            [True, 0, 10, 10],
+            [-1, 0, 10, 10],
+            [0, 0, 1001, 10],
+            [10, 0, 10, 10],
+            [0, 10, 10, 10],
+        ):
+            with self.subTest(bbox=bbox), self.assertRaises(AdapterError):
+                validate_content_bbox(bbox, "/fixture")
+
+        content = self.load_case("native")["content"]
+        for page_idx in (-1, 1, 0.5, True):
+            mutated = copy.deepcopy(content)
+            mutated[0]["page_idx"] = page_idx
+            with self.subTest(page_idx=page_idx), self.assertRaises(AdapterError):
+                self.normalize_mutation(mutated)
+
+        for page_size in ([0, 1000], [1000], [math.inf, 1000], [True, 1000]):
+            mutated = copy.deepcopy(middle)
+            mutated["pdf_info"][0]["page_size"] = page_size
+            with self.subTest(page_size=page_size), self.assertRaises(AdapterError):
+                validate_middle(mutated, 1)
+
+    def test_strict_json_rejects_corruption(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-json-") as temporary:
+            root = Path(temporary)
+            cases = {
+                "broken.json": b'{"unterminated":',
+                "bom.json": b"\xef\xbb\xbf{}",
+                "duplicate.json": b'{"same": 1, "same": 2}',
+                "nan.json": b'{"value": NaN}',
+                "utf8.json": b'\xff',
+            }
+            for name, payload in cases.items():
+                path = root / name
+                path.write_bytes(payload)
+                with self.subTest(name=name), self.assertRaises(AdapterError):
+                    load_strict_json(path)
+            with self.assertRaises(AdapterError):
+                load_strict_json(root / "missing.json")
+
+    def test_unknown_types_subtypes_and_duplicate_ids_fail_closed(self) -> None:
+        content = self.load_case("native")["content"]
+        unknown_type = copy.deepcopy(content)
+        unknown_type[0]["type"] = "unknown-layout-object"
+        with self.assertRaises(AdapterError):
+            self.normalize_mutation(unknown_type)
+
+        for raw_type, bad_subtype in (
+            ("code", "pseudocode"),
+            ("list", "text"),
+            ("text", "paragraph"),
+            ("equation", "display"),
+            ("table", "grid"),
+        ):
+            mutated = copy.deepcopy(content)
+            item = next(entry for entry in mutated if entry["type"] == raw_type)
+            item["sub_type"] = bad_subtype
+            with self.subTest(raw_type=raw_type), self.assertRaises(AdapterError):
+                self.normalize_mutation(mutated)
+
+        opaque_visual = copy.deepcopy(content)
+        image_item = next(entry for entry in opaque_visual if entry["type"] == "image")
+        image_item["sub_type"] = "synthetic-opaque-visual-kind"
+        _blocks, _visuals, dispositions, _assets = self.normalize_mutation(opaque_visual)
+        image_disposition = next(
+            item for item in dispositions if item["raw_type"] == "image"
+        )
+        self.assertEqual(
+            image_disposition["raw_sub_type"], "synthetic-opaque-visual-kind"
+        )
+
+        duplicate_id = copy.deepcopy(content)
+        duplicate_id[1]["id"] = duplicate_id[0]["id"]
+        with self.assertRaises(AdapterError):
+            self.normalize_mutation(duplicate_id)
+
+        reversed_pages = copy.deepcopy(content[:2])
+        reversed_pages[0]["page_idx"] = 1
+        reversed_pages[1]["page_idx"] = 0
+        native = self.load_case("native")
+        with self.assertRaises(AdapterError):
+            normalize_content(
+                reversed_pages,
+                source_sha256=sha256_file(native["source"]),
+                backend=native["backend"],
+                version=native["version"],
+                page_count=2,
+                middle_pages=[native["pages"][0], native["pages"][0]],
+                profile=self.profile,
+            )
+
+    def test_asset_paths_fail_closed(self) -> None:
+        output_dir = self.load_case("native")["output_dir"]
+        relative, resolved = resolve_asset(output_dir, "images/diagram.png")
+        self.assertEqual(relative, "images/diagram.png")
+        self.assertTrue(resolved.is_file())
+        unsafe = (
+            "",
+            "/tmp/diagram.png",
+            "../diagram.png",
+            "images/../diagram.png",
+            "C:/Windows/diagram.png",
+            r"C:\Windows\diagram.png",
+            r"images\diagram.png",
+        )
+        for value in unsafe:
+            with self.subTest(value=value), self.assertRaises(AdapterError):
+                resolve_asset(output_dir, value)
+
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-symlink-") as temporary:
+            root = Path(temporary)
+            outside = root / "outside.png"
+            shutil.copyfile(output_dir / "images" / "diagram.png", outside)
+            fixture_dir = root / "fixture"
+            fixture_dir.mkdir()
+            link = fixture_dir / "escape.png"
+            try:
+                link.symlink_to(outside)
+            except OSError:
+                return
+            with self.assertRaises(AdapterError):
+                resolve_asset(fixture_dir, "escape.png")
+
+    def test_asset_decode_hash_and_corruption_fail_closed(self) -> None:
+        case = self.load_case("native")
+        self.assertEqual(len(case["assets"]), 1)
+        asset = case["assets"][0]
+        self.assertEqual(asset["relative_path"], "images/diagram.png")
+        self.assertEqual(asset["mime"], "image/png")
+        self.assertGreater(asset["width"], 0)
+        self.assertGreater(asset["height"], 0)
+        self.assertEqual(
+            asset["sha256"],
+            self.fixture_manifest["files"]["native/images/diagram.png"],
+        )
+
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-assets-") as temporary:
+            output = Path(temporary)
+            images = output / "images"
+            images.mkdir()
+            payload = (case["output_dir"] / "images" / "diagram.png").read_bytes()
+            (images / "truncated.png").write_bytes(payload[: len(payload) // 2])
+            with self.assertRaises(AdapterError):
+                validate_assets(output, {"images/truncated.png"})
+            with self.assertRaises(AdapterError):
+                validate_assets(output, {"images/missing.png"})
+
+    def test_full_import_is_deterministic_without_running_mineru(self) -> None:
+        case = self.load_case("native")
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-import-") as temporary:
+            root = Path(temporary)
+            first = self.guarded_import(
+                case["source"], case["output_dir"], root / "first"
+            )
+            second = self.guarded_import(
+                case["source"], case["output_dir"], root / "second"
+            )
+            self.assertEqual(first["status"], case["expected"]["expected_import_status"])
+            self.assertEqual(second["status"], first["status"])
+            first_ir = (root / "first" / "document-ir.json").read_bytes()
+            second_ir = (root / "second" / "document-ir.json").read_bytes()
+            self.assertEqual(first_ir, second_ir)
+            self.assertEqual(sha256_text(first_ir.decode("utf-8")), sha256_text(second_ir.decode("utf-8")))
+            evidence = json.loads(
+                (root / "first" / "adapter-evidence.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(evidence["mineru"]["version"], VERIFIED_VERSION)
+            self.assertEqual(evidence["mineru"]["backend"], SUPPORTED_BACKEND)
+            self.assertEqual(len(evidence["items"]), case["expected"]["content_items"])
+            self.assertFalse(evidence["manual_source_review_required"])
+            expected_inputs = {
+                (
+                    role,
+                    Path(path).relative_to(case["output_dir"]).as_posix(),
+                    sha256_file(path),
+                )
+                for role, path in (
+                    ("origin", case["inputs"]["origin"]),
+                    ("content", case["inputs"]["content"]),
+                    ("middle", case["inputs"]["middle"]),
+                )
+            }
+            actual_inputs = {
+                (item["role"], item["relative_path"], item["sha256"])
+                for item in evidence["inputs"]
+            }
+            self.assertEqual(actual_inputs, expected_inputs)
+            self.assertEqual(
+                {item["sha256"] for item in evidence["assets"]},
+                {item["sha256"] for item in case["assets"]},
+            )
+            previous_argv = sys.argv
+            try:
+                sys.argv = ["audit_source.py", str(root / "first")]
+                with contextlib.redirect_stdout(io.StringIO()):
+                    runpy.run_path(
+                        str(REPOSITORY / "scripts" / "audit_source.py"),
+                        run_name="__main__",
+                    )
+            finally:
+                sys.argv = previous_argv
+            source_audit = json.loads(
+                (root / "first" / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(source_audit["status"], "passed")
+            self.assertGreaterEqual(source_audit["global_fivegram_coverage"], 0.95)
+
+    def test_scanned_source_cannot_be_reported_passed(self) -> None:
+        case = self.load_case("scan")
+        self.assertEqual(
+            canonical_json_sha256(case["normalized"]),
+            case["expected"]["normalized_contract_sha256"],
+        )
+        with tempfile.TemporaryDirectory(prefix="v23-mineru-scan-") as temporary:
+            work_dir = Path(temporary) / "work"
+            result = self.guarded_import(case["source"], case["output_dir"], work_dir)
+            self.assertEqual(
+                result["status"], case["expected"]["expected_import_status"]
+            )
+            self.assertNotEqual(result["status"], "passed")
+            self.assertEqual(result["manual_review_pages"], [1])
+            evidence = json.loads(
+                (work_dir / "adapter-evidence.json").read_text(encoding="utf-8")
+            )
+            self.assertTrue(evidence["manual_source_review_required"])
+            self.assertEqual(evidence["manual_review_pages"], [1])
+            self.assertEqual(
+                evidence["pages"][0]["status"], "manual_source_review_required"
+            )
+            self.assertFalse((work_dir / "source-audit.json").exists())
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

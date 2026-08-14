@@ -47,6 +47,20 @@ def main() -> None:
             "page_count"
         ):
             failures.append("visual review does not cover every compiled page")
+        contact_sheets = reports["compile"].get("contact_sheets")
+        if not isinstance(contact_sheets, list) or not contact_sheets:
+            failures.append("compile gate has no contact-sheet evidence")
+        else:
+            expected_contacts = [item.get("path") for item in contact_sheets]
+            if reports["visual"].get("contact_sheets_inspected") != expected_contacts:
+                failures.append("visual review did not inspect every compiled contact sheet")
+            expected_hashes = {
+                item.get("path"): item.get("sha256") for item in contact_sheets
+            }
+            if reports["visual"].get("contact_sheets_sha256") != expected_hashes:
+                failures.append("visual review contact-sheet hashes do not match compile QA")
+        if not str(reports["visual"].get("notes", "")).strip():
+            failures.append("visual review has no concrete inspection notes")
 
     deliverables = {}
     if not failures:
