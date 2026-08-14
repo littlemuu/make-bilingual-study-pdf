@@ -274,9 +274,22 @@ def style_math(paragraph) -> None:
 
 
 def style_table(table) -> None:
-    table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
     table.autofit = True
+    table_properties = table._tbl.tblPr
+    borders = table_properties.find(qn("w:tblBorders"))
+    if borders is None:
+        borders = OxmlElement("w:tblBorders")
+        table_properties.append(borders)
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        border = borders.find(qn(f"w:{edge}"))
+        if border is None:
+            border = OxmlElement(f"w:{edge}")
+            borders.append(border)
+        border.set(qn("w:val"), "single")
+        border.set(qn("w:sz"), "6")
+        border.set(qn("w:space"), "0")
+        border.set(qn("w:color"), "9FB3BD")
     for row_index, row in enumerate(table.rows):
         if row_index == 0:
             tr_pr = row._tr.get_or_add_trPr()

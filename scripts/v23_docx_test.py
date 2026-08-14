@@ -218,6 +218,9 @@ def test_shared_style_roles() -> None:
     assert table.cell(0, 0)._tc.xpath("./w:tcPr/w:shd/@w:fill") == [
         docx_style.ACCENT_LIGHT
     ]
+    assert table._tbl.xpath("./w:tblPr/w:tblBorders/w:insideV/@w:val") == [
+        "single"
+    ]
     assert all(GENERIC_BEGIN not in item.text and GENERIC_END not in item.text for item in document.paragraphs)
 
 
