@@ -9,10 +9,12 @@
 
 ## 0. 当前实施状态
 
-V2.3 的代码、公开合成夹具与本地自动测试已经实现；当前分支仍需完成远端
-Ubuntu/LibreOffice 前向、逐页人工视觉复核、最终 QA 和 GitHub 反向读取，才可
-按第 12 节的定义宣布发布验收完成。PR #1 未合并，因此 V2.3 PR 应暂以
+V2.3 的代码、公开合成夹具、本地自动测试、Ubuntu/LibreOffice 双 Profile 前向、
+逐页人工视觉复核与最终 QA 已完成；公开验收的精确运行号和产物哈希记录在
+`.github/V2.3_ACCEPTANCE.md`。PR #1 未合并，因此 V2.3 PR 仍以
 `agent/add-reproducible-dev-baseline` 为 base，不能声称这些变更已经进入 `main`。
+私有复杂论文/讲义与 CS336 90 页基线在本工作区不可用，验收记录明确保留该限制，
+未用公开合成测试冒充私有回归。
 
 已落地的主要能力：
 
@@ -29,7 +31,7 @@ Ubuntu/LibreOffice 前向、逐页人工视觉复核、最终 QA 和 GitHub 反�
   输出自行证明 source audit passed；人工 review 必须绑定 comparison、非空
   contact sheets、逐页覆盖和最终 PDF 哈希。
 - 提交了原创、可重生成的 MinerU 3.4.4 pipeline 合成夹具及故障注入测试；
-  本地快速矩阵为旧基线 19 项加 V2.3 34 个场景。完整命令和待完成证据以
+  本地快速矩阵为旧基线 19 项加 V2.3 36 个场景。完整命令和验收证据以
   `.github/V2.3_ACCEPTANCE.md` 为准。
 
 以下章节保留 V2.2 基线与 V2.3 冻结设计，供后续审计设计偏差；若描述与已经
