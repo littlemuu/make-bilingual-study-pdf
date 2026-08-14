@@ -9,12 +9,14 @@
 
 ## 0. 当前实施状态
 
-V2.3 初版的代码、公开合成夹具、Ubuntu/LibreOffice 双 Profile 前向、逐页人工
-视觉复核与最终 QA 曾完成，但 PR #2 审查随后发现三项 P1 契约缺口：双字段表格
-丢失结构正文、混合扫描页绕过人工源审查、DOCX 审计未绑定 PDF 编译和最终 QA。
-三项返修及其负向回归已在本地通过；分支须重放到 `main@e69fd57`，并用新的
-Ubuntu/LibreOffice 产物和人工视觉复核替换旧验收哈希后，才能再次宣称完成。
-旧运行证据保留在 `.github/V2.3_ACCEPTANCE.md`，但已明确标为 superseded。
+PR #2 审查发现的三项 P1 契约缺口已经返修：双字段表格不再丢失结构正文，混合
+扫描页不能绕过人工源审查，DOCX 审计已绑定 PDF 编译与最终 QA。分支已重放到
+`main@e69fd57`；最终代码 `0b70dc7` 的本地矩阵与 GitHub Actions
+[31796660686](https://github.com/littlemuu/make-bilingual-study-pdf/actions/runs/31796660686)
+双任务均通过。两个 Profile 的六页最终渲染已逐页人工复核，下载产物中的
+source/translation/output/DOCX/compile/visual gate 全部通过，`status` 均为
+`next_action: complete`。PR #2 仍保持 Draft，等待审阅者复核三个未解决线程。
+旧运行证据保留在 `.github/V2.3_ACCEPTANCE.md`，并明确标为 superseded。
 私有复杂论文/讲义与 CS336 90 页基线在本工作区不可用，验收记录明确保留该限制，
 未用公开合成测试冒充私有回归。
 
