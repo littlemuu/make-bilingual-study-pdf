@@ -56,6 +56,10 @@ binds the human-facing install and installed-verification commands in the root
 `README.md` to the current Skill `VERSION`; the installed Skill does not carry or
 depend on that repository documentation.
 
+The EOL checker inventories the complete Skill tree before changing any bytes. Both
+check and `--fix` modes reject symbolic links, hard-linked files, Windows reparse
+points, and non-regular entries without reading or rewriting their targets.
+
 ## Validate Skill metadata
 
 Baseline and Release check out `openai/skills` at the exact commit
@@ -88,6 +92,7 @@ repository root:
 .venv/bin/python -m pip check
 .venv/bin/python skills/make-bilingual-study-pdf/scripts/release_check.py
 .venv/bin/python tools/repository_release_check.py
+.venv/bin/python tests/check_skill_eol_test.py
 .venv/bin/python tests/release_check_test.py
 .venv/bin/python tests/repository_release_check_test.py
 .venv/bin/python skills/make-bilingual-study-pdf/scripts/self_test.py
@@ -144,8 +149,10 @@ All four installed directories must:
   and all three Profile validations in a new venv outside the installed Skill.
 
 The GitHub Actions `Baseline` workflow runs the quick baseline, installer parity, and
-both schema V2 automated forward chains for pull requests and pushes to `main`. It does
-not use tag pushes as a release gate.
+both schema V2 automated forward chains for pull requests and pushes to `main`. A
+separate Windows 2025 job runs the EOL, installed-release, and repository-release
+filesystem suites so junction/reparse-point regressions are exercised on Windows. The
+workflow does not use tag pushes as a release gate.
 
 ## Default-branch release path
 

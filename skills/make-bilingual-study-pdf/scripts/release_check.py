@@ -33,11 +33,13 @@ PROFILE_CONTRACTS = {
 }
 WINDOWS_RESERVED_STEMS = {
     "con",
+    "conin$",
+    "conout$",
     "prn",
     "aux",
     "nul",
-    *(f"com{index}" for index in range(1, 10)),
-    *(f"lpt{index}" for index in range(1, 10)),
+    *(f"com{index}" for index in range(0, 10)),
+    *(f"lpt{index}" for index in range(0, 10)),
     "com¹",
     "com²",
     "com³",
@@ -47,6 +49,20 @@ WINDOWS_RESERVED_STEMS = {
 }
 WINDOWS_FORBIDDEN_CHARACTERS = set('<>:"|?*')
 WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        value[key] = item
+    return value
+
+
+def json_loads_strict(payload: str) -> Any:
+    """Parse JSON without importing payload modules or accepting duplicate keys."""
+    return json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
 
 
 def is_reparse_point(status: os.stat_result) -> bool:
@@ -275,7 +291,9 @@ def valid_manifest_path(value: object) -> bool:
 def load_manifest(failures: list[str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     path = ROOT / MANIFEST_NAME
     try:
-        manifest = json.loads(read_regular_bytes(path, MANIFEST_NAME).decode("utf-8"))
+        manifest = json_loads_strict(
+            read_regular_bytes(path, MANIFEST_NAME).decode("utf-8")
+        )
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         failures.append(f"cannot read {MANIFEST_NAME}: {exc}")
         return {}, []
@@ -295,7 +313,9 @@ def load_manifest(failures: list[str]) -> tuple[dict[str, Any], list[dict[str, A
             f"{MANIFEST_NAME} top-level keys mismatch: expected {sorted(expected_keys)!r}, "
             f"got {sorted(manifest)!r}"
         )
-    if manifest.get("schema_version") != 1:
+    if type(manifest.get("schema_version")) is not int or manifest.get(
+        "schema_version"
+    ) != 1:
         failures.append(f"{MANIFEST_NAME} schema_version must be 1")
     if manifest.get("skill") != SKILL_NAME:
         failures.append(f"{MANIFEST_NAME} skill must be {SKILL_NAME!r}")
@@ -530,8 +550,8 @@ def validate_profiles(failures: list[str]) -> dict[str, dict[str, object]]:
     for profile_id, (schema_version, adapter) in PROFILE_CONTRACTS.items():
         relative = f"profiles/{profile_id}.json"
         try:
-            profile = json.loads(read_regular_utf8(relative, failures))
-        except json.JSONDecodeError as exc:
+            profile = json_loads_strict(read_regular_utf8(relative, failures))
+        except (json.JSONDecodeError, ValueError) as exc:
             failures.append(f"cannot read {relative}: {exc}")
             continue
         if not isinstance(profile, dict):
@@ -541,9 +561,12 @@ def validate_profiles(failures: list[str]) -> dict[str, dict[str, object]]:
         if not isinstance(profile_input, dict):
             failures.append(f"{relative} input must be a JSON object")
             profile_input = {}
+        actual_schema_version = profile.get("schema_version")
+        if type(actual_schema_version) is not int:
+            failures.append(f"{relative} schema_version must be an integer")
         actual = {
             "id": profile.get("id"),
-            "schema_version": profile.get("schema_version"),
+            "schema_version": actual_schema_version,
             "adapter": profile_input.get("adapter"),
         }
         observed[profile_id] = actual

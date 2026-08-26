@@ -328,7 +328,7 @@ def validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(profile, dict):
         raise ValueError("profile must be a JSON object")
     schema_version = profile.get("schema_version")
-    if schema_version not in {1, 2}:
+    if type(schema_version) is not int or schema_version not in {1, 2}:
         raise ValueError("unsupported profile schema_version")
     _validate_common(profile, schema_version=schema_version)
     if schema_version == 1:

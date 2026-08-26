@@ -97,6 +97,7 @@ jobs:
             --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
           python tests/skill_validator_test.py \
             --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
+          python tests/check_skill_eol_test.py
           python tests/release_check_test.py
           python tests/repository_release_check_test.py
           python "$SKILL_PATH/scripts/self_test.py"
@@ -109,6 +110,36 @@ jobs:
           python "$SKILL_PATH/scripts/pipeline.py" validate-profile assignment-en-zh
           python "$SKILL_PATH/scripts/pipeline.py" validate-profile academic-paper-en-zh
           python "$SKILL_PATH/scripts/pipeline.py" validate-profile lecture-notes-en-zh
+
+  windows-filesystem:
+    runs-on: windows-2025
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+
+      - name: Run Windows EOL filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/check_skill_eol_test.py
+
+      - name: Run Windows installed-release filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/release_check_test.py
+
+      - name: Run Windows repository-release filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/repository_release_check_test.py
 
   installer-parity:
     runs-on: ubuntu-24.04

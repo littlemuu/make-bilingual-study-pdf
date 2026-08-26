@@ -19,11 +19,13 @@ MANIFEST_NAME = "release-manifest.json"
 SKILL_NAME = "make-bilingual-study-pdf"
 WINDOWS_RESERVED_STEMS = {
     "con",
+    "conin$",
+    "conout$",
     "prn",
     "aux",
     "nul",
-    *(f"com{index}" for index in range(1, 10)),
-    *(f"lpt{index}" for index in range(1, 10)),
+    *(f"com{index}" for index in range(0, 10)),
+    *(f"lpt{index}" for index in range(0, 10)),
     "com¹",
     "com²",
     "com³",

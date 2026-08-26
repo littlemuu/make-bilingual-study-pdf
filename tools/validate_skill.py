@@ -17,6 +17,9 @@ from yaml.constructor import ConstructorError
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
 SKILL_NAME = "make-bilingual-study-pdf"
+SKILL_INVOCATION_RE = re.compile(
+    r"(?<![\w$-])\$[A-Za-z0-9][A-Za-z0-9_-]*(?![\w-])"
+)
 OPENAI_YAML = Path("agents") / "openai.yaml"
 INTERFACE_FIELDS = {
     "display_name",
@@ -241,8 +244,14 @@ def check_openai_yaml(skill_root: Path) -> tuple[bool, str]:
     short_description = interface["short_description"]
     if not 25 <= len(short_description) <= 64:
         return False, "openai.yaml interface.short_description must be 25-64 characters"
-    if f"${SKILL_NAME}" not in interface["default_prompt"]:
-        return False, f"openai.yaml interface.default_prompt must contain ${SKILL_NAME}"
+    invocation_tokens = SKILL_INVOCATION_RE.findall(interface["default_prompt"])
+    expected_invocation = f"${SKILL_NAME}"
+    if invocation_tokens != [expected_invocation]:
+        return False, (
+            "openai.yaml interface.default_prompt must contain exactly one "
+            f"Skill invocation token {expected_invocation!r}; found "
+            f"{invocation_tokens!r}"
+        )
     for field in ("icon_small", "icon_large"):
         valid, message = validate_icon_path(
             skill_root, interface[field], f"openai.yaml interface.{field}"

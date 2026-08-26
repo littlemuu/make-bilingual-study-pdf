@@ -140,6 +140,23 @@ class SkillValidatorTest(unittest.TestCase):
             "missing skill token": original.replace(
                 "$make-bilingual-study-pdf", "make-bilingual-study-pdf", 1
             ),
+            "skill token with suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf-evil", 1
+            ),
+            "skill token with Unicode suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf恶", 1
+            ),
+            "embedded skill token": original.replace(
+                "$make-bilingual-study-pdf", "prefix$make-bilingual-study-pdf", 1
+            ),
+            "double-dollar skill token": original.replace(
+                "$make-bilingual-study-pdf", "$$make-bilingual-study-pdf", 1
+            ),
+            "duplicate skill token": original.replace(
+                "$make-bilingual-study-pdf",
+                "$make-bilingual-study-pdf and $make-bilingual-study-pdf",
+                1,
+            ),
             "non-string display name": original.replace(
                 'display_name: "双语学习 PDF"', "display_name: true", 1
             ),

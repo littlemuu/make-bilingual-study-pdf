@@ -105,8 +105,22 @@ def write_jsonl(path: Path, values: Iterable[dict[str, Any]]) -> None:
             stream.write("\n")
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON object key: {key!r}")
+        value[key] = item
+    return value
+
+
+def json_loads_strict(payload: str) -> Any:
+    """Parse JSON while rejecting duplicate object keys at every depth."""
+    return json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
+
+
 def read_json(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json_loads_strict(path.read_text(encoding="utf-8"))
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -115,7 +129,7 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
         if not raw.strip():
             continue
         try:
-            values.append(json.loads(raw))
-        except json.JSONDecodeError as exc:
+            values.append(json_loads_strict(raw))
+        except (json.JSONDecodeError, ValueError) as exc:
             raise ValueError(f"invalid JSONL at {path}:{line_number}: {exc}") from exc
     return values

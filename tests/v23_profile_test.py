@@ -10,6 +10,7 @@ import copy
 import hashlib
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Callable
 
@@ -149,6 +150,35 @@ def main() -> None:
         "unsupported profile schema_version",
         mutate=lambda value: value.__setitem__("schema_version", 3),
     )
+    for invalid_schema_version in (2.0, True):
+        expect_value_error(
+            academic,
+            "unsupported profile schema_version",
+            mutate=lambda value, invalid=invalid_schema_version: value.__setitem__(
+                "schema_version", invalid
+            ),
+        )
+
+    academic_text = (PROFILE_DIR / "academic-paper-en-zh.json").read_text(
+        encoding="utf-8"
+    )
+    duplicate_schema = academic_text.replace(
+        '  "schema_version": 2,',
+        '  "schema_version": 2,\n  "schema_version": 2,',
+        1,
+    )
+    with tempfile.TemporaryDirectory(prefix="profile-json-test-") as temp_dir:
+        duplicate_path = Path(temp_dir) / "duplicate-profile.json"
+        duplicate_path.write_text(
+            duplicate_schema, encoding="utf-8", newline="\n"
+        )
+        try:
+            load_profile(duplicate_path)
+        except ValueError as exc:
+            assert "duplicate JSON object key: 'schema_version'" in str(exc), str(exc)
+        else:
+            raise AssertionError("duplicate Profile JSON key unexpectedly passed")
+    results.append("Profile JSON rejects duplicate keys and non-integer schema versions")
     expect_value_error(
         academic,
         "unsupported input adapter",

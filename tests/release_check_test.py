@@ -17,10 +17,13 @@ from typing import Callable
 REPOSITORY = Path(__file__).resolve().parents[1]
 SKILL_ROOT = REPOSITORY / "skills" / "make-bilingual-study-pdf"
 SCRIPTS = SKILL_ROOT / "scripts"
+TOOLS = REPOSITORY / "tools"
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(TOOLS))
 
-from release_check import SEMVER_RE  # noqa: E402
+from build_release_manifest import valid_payload_path  # noqa: E402
+from release_check import SEMVER_RE, valid_manifest_path  # noqa: E402
 
 
 class ReleaseCheckTests(unittest.TestCase):
@@ -206,6 +209,13 @@ class ReleaseCheckTests(unittest.TestCase):
         original = json.loads(manifest_path.read_text(encoding="utf-8"))
         invalid_names = (
             "CON.txt",
+            "CONIN$",
+            "conin$.txt",
+            "CoNoUt$.LoG",
+            "COM0",
+            "com0.txt",
+            "LPT0",
+            "lPt0.bin",
             "COM¹.txt",
             "COM².txt",
             "COM³.txt",
@@ -232,11 +242,61 @@ class ReleaseCheckTests(unittest.TestCase):
                 self.assertNotEqual(process.returncode, 0)
                 self.assert_failed_with(report, "has invalid path")
 
-    def test_manifest_builder_rejects_superscript_windows_device_name(self) -> None:
-        (self.root / "COM¹.txt").write_text("reserved\n", encoding="utf-8")
-        process = self.run_generator()
-        self.assertNotEqual(process.returncode, 0)
-        self.assertIn("payload path is not portable", process.stdout + process.stderr)
+    def test_windows_device_name_rules_cover_case_and_extensions(self) -> None:
+        invalid_names = (
+            "CONIN$",
+            "conin$.txt",
+            "CoNoUt$.LoG",
+            "COM0",
+            "com0.txt",
+            "LPT0",
+            "lPt0.bin",
+        )
+        valid_names = (
+            "coninput.txt",
+            "conoutput.txt",
+            "com10.txt",
+            "lpt10.txt",
+        )
+        for invalid_name in invalid_names:
+            with self.subTest(path=invalid_name):
+                self.assertFalse(valid_payload_path(invalid_name))
+                self.assertFalse(valid_manifest_path(invalid_name))
+        for valid_name in valid_names:
+            with self.subTest(path=valid_name):
+                self.assertTrue(valid_payload_path(valid_name))
+                self.assertTrue(valid_manifest_path(valid_name))
+
+    def test_manifest_builder_rejects_windows_device_names(self) -> None:
+        invalid_names = (
+            "CONIN$",
+            "conin$.txt",
+            "CoNoUt$.LoG",
+            "COM0",
+            "com0.txt",
+            "LPT0",
+            "lPt0.bin",
+            "COM¹.txt",
+        )
+        for invalid_name in invalid_names:
+            with self.subTest(path=invalid_name):
+                self.assertFalse(valid_payload_path(invalid_name))
+                path = self.root / invalid_name
+                try:
+                    path.write_text("reserved\n", encoding="utf-8")
+                except OSError:
+                    # Win32 may reject DOS device names before the builder sees them.
+                    self.assertEqual(os.name, "nt")
+                    continue
+                try:
+                    process = self.run_generator()
+                    self.assertNotEqual(process.returncode, 0)
+                    self.assertIn(
+                        "payload path is not portable",
+                        process.stdout + process.stderr,
+                    )
+                finally:
+                    path.unlink()
 
     def test_skill_frontmatter_rejects_malformed_non_string_and_duplicates(self) -> None:
         path = self.root / "SKILL.md"
@@ -441,6 +501,36 @@ class ReleaseCheckTests(unittest.TestCase):
         process, report = self.run_check()
         self.assertNotEqual(process.returncode, 0)
         self.assert_failed_with(report, "symbolic links are not allowed")
+
+    def test_profiles_reject_duplicate_keys_and_non_integer_schema_versions(self) -> None:
+        profile_path = self.root / "profiles" / "assignment-en-zh.json"
+        original = profile_path.read_text(encoding="utf-8")
+        cases = {
+            "duplicate schema_version": (
+                original.replace(
+                    '  "schema_version": 1,',
+                    '  "schema_version": 1,\n  "schema_version": 1,',
+                    1,
+                ),
+                "duplicate JSON object key: 'schema_version'",
+            ),
+            "floating-point schema_version": (
+                original.replace('  "schema_version": 1,', '  "schema_version": 1.0,', 1),
+                "schema_version must be an integer",
+            ),
+            "boolean schema_version": (
+                original.replace('  "schema_version": 1,', '  "schema_version": true,', 1),
+                "schema_version must be an integer",
+            ),
+        }
+        for label, (content, expected_failure) in cases.items():
+            with self.subTest(case=label):
+                profile_path.write_text(content, encoding="utf-8", newline="\n")
+                self.regenerate()
+                process, report = self.run_check()
+                self.assertNotEqual(process.returncode, 0, process.stderr)
+                self.assert_failed_with(report, expected_failure)
+                profile_path.write_text(original, encoding="utf-8", newline="\n")
 
     def test_malformed_profiles_fail_without_crashing(self) -> None:
         profile_path = self.root / "profiles" / "assignment-en-zh.json"
