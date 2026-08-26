@@ -88,9 +88,11 @@ jobs:
           python tools/check_skill_eol.py
           python tools/build_release_manifest.py --check
           python "$SKILL_PATH/scripts/release_check.py" --expected-version "$VERSION" --tag "$TAG"
-          echo "candidate_sha=$CANDIDATE_SHA" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          {
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Require successful main Baseline for the exact SHA
         env:
