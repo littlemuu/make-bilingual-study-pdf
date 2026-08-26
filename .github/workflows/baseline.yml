@@ -200,7 +200,7 @@ jobs:
             echo "default auto installation unexpectedly produced a Git trace" >&2
             exit 1
           fi
-          GITHUB_TOKEN="$INVALID_GITHUB_TOKEN" GH_TOKEN= GIT_TRACE2_EVENT="$FALLBACK_GIT_TRACE" \
+          GITHUB_TOKEN="$INVALID_GITHUB_TOKEN" GH_TOKEN='' GIT_TRACE2_EVENT="$FALLBACK_GIT_TRACE" \
             python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_GIT_REF" --dest "$FALLBACK_DEST"
           if [[ ! -s "$FALLBACK_GIT_TRACE" ]]; then
             echo "authentication-triggered auto fallback produced no Git trace" >&2
