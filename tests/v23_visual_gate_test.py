@@ -7,13 +7,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 from PIL import Image
 
 from common import read_json, sha256_file, write_json
 from pipeline import report_status
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = SCRIPTS
 
 
 def run_review(work_dir: Path) -> subprocess.CompletedProcess[str]:

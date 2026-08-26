@@ -9,8 +9,13 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Callable
+
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
 
 from profile import (
     PROFILE_DIR,

@@ -9,6 +9,10 @@ import sys
 import tempfile
 from pathlib import Path
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 
@@ -20,7 +24,7 @@ from docx_ast import GENERIC_BEGIN, GENERIC_END, PROBLEM_BEGIN, PROBLEM_END, tra
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = SCRIPTS
 
 
 def paragraph(text: str) -> dict:

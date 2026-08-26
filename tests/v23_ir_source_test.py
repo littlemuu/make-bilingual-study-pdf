@@ -9,6 +9,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 import pymupdf as fitz
 from PIL import Image
 
@@ -24,7 +28,7 @@ from document_ir import (
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = SCRIPTS
 
 
 def canonical_item_sha256(value: object) -> str:

@@ -17,6 +17,10 @@ from collections import Counter
 from pathlib import Path
 from unittest import mock
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 import pymupdf as fitz
 
 from adapters.base import AdapterError
@@ -41,7 +45,6 @@ from build_outputs import source_only_markdown_body
 from profile import load_profile
 
 
-REPOSITORY = Path(__file__).resolve().parent.parent
 FIXTURE_ROOT = (
     REPOSITORY / "tests" / "fixtures" / "mineru" / "pipeline-3.4.4"
 )
@@ -809,7 +812,7 @@ class MinerUContractTests(unittest.TestCase):
                 sys.argv = ["audit_source.py", str(root / "first")]
                 with contextlib.redirect_stdout(io.StringIO()):
                     runpy.run_path(
-                        str(REPOSITORY / "scripts" / "audit_source.py"),
+                        str(SCRIPTS / "audit_source.py"),
                         run_name="__main__",
                     )
             finally:
@@ -879,7 +882,7 @@ class MinerUContractTests(unittest.TestCase):
             self.assertEqual(manifest["native_text_page_ratio"], 0.75)
 
             completed = subprocess.run(
-                [sys.executable, str(REPOSITORY / "scripts" / "audit_source.py"), str(work_dir)],
+                [sys.executable, str(SCRIPTS / "audit_source.py"), str(work_dir)],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -931,7 +934,7 @@ class MinerUContractTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(REPOSITORY / "scripts" / "audit_source.py"),
+                    str(SCRIPTS / "audit_source.py"),
                     str(work_dir),
                 ],
                 check=False,
@@ -992,7 +995,7 @@ class MinerUContractTests(unittest.TestCase):
                 completed = subprocess.run(
                     [
                         sys.executable,
-                        str(REPOSITORY / "scripts" / "audit_source.py"),
+                        str(SCRIPTS / "audit_source.py"),
                         str(work_dir),
                     ],
                     check=False,
@@ -1056,7 +1059,7 @@ class MinerUContractTests(unittest.TestCase):
             completed = subprocess.run(
                 [
                     sys.executable,
-                    str(REPOSITORY / "scripts" / "audit_source.py"),
+                        str(SCRIPTS / "audit_source.py"),
                     str(work_dir),
                 ],
                 check=False,

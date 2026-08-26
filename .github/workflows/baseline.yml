@@ -5,13 +5,40 @@ on:
   push:
     branches:
       - main
-    tags:
-      - v*
 
 permissions:
   contents: read
 
+env:
+  SKILL_PATH: skills/make-bilingual-study-pdf
+
 jobs:
+  workflow-lint:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run pinned actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/actionlint.tar.gz"
+          BIN_DIR="$RUNNER_TEMP/actionlint-bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$ARCHIVE"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$ARCHIVE" | sha256sum --check
+          mkdir -p "$BIN_DIR"
+          tar -xzf "$ARCHIVE" -C "$BIN_DIR"
+          "$BIN_DIR/actionlint" -color
+
   self-test:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -19,6 +46,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -27,7 +56,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
-            requirements.txt
+            skills/make-bilingual-study-pdf/requirements.txt
 
       - name: Install Poppler
         run: |
@@ -47,18 +76,91 @@ jobs:
 
       - name: Run deterministic baseline
         run: |
-          python scripts/release_check.py
-          python scripts/release_check_test.py
-          python scripts/self_test.py
-          python scripts/v23_profile_test.py
-          python scripts/v23_mineru_test.py
-          python scripts/v23_ir_source_test.py
-          python scripts/v23_output_test.py
-          python scripts/v23_docx_test.py
-          python scripts/v23_visual_gate_test.py
-          python scripts/pipeline.py validate-profile assignment-en-zh
-          python scripts/pipeline.py validate-profile academic-paper-en-zh
-          python scripts/pipeline.py validate-profile lecture-notes-en-zh
+          python tools/check_skill_eol.py
+          python tools/build_release_manifest.py --check
+          python "$SKILL_PATH/scripts/release_check.py"
+          python tests/release_check_test.py
+          python "$SKILL_PATH/scripts/self_test.py"
+          python tests/v23_profile_test.py
+          python tests/v23_mineru_test.py
+          python tests/v23_ir_source_test.py
+          python tests/v23_output_test.py
+          python tests/v23_docx_test.py
+          python tests/v23_visual_gate_test.py
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile assignment-en-zh
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile academic-paper-en-zh
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile lecture-notes-en-zh
+
+  installer-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: self-test
+    env:
+      INSTALL_REPO: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+      INSTALL_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+
+    steps:
+      - name: Check out exact event head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Check out pinned OpenAI skill installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 1131cea7b17214e5a96300a5a72c94642346ef34
+          path: .ci/openai-skills
+          sparse-checkout: skills/.system/skill-installer
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+
+      - name: Install through both real installer paths
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          GIT_DEST="$RUNNER_TEMP/skill-git"
+          INSTALLER=.ci/openai-skills/skills/.system/skill-installer/scripts/install-skill-from-github.py
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_REF" --method download --dest "$DOWNLOAD_DEST"
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_REF" --method git --dest "$GIT_DEST"
+
+      - name: Verify exact installed payloads
+        run: |
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          GIT_DEST="$RUNNER_TEMP/skill-git"
+          DOWNLOAD_SKILL="$DOWNLOAD_DEST/make-bilingual-study-pdf"
+          GIT_SKILL="$GIT_DEST/make-bilingual-study-pdf"
+          python "$DOWNLOAD_SKILL/scripts/release_check.py"
+          python "$GIT_SKILL/scripts/release_check.py"
+          python tests/compare_install_trees.py "$SKILL_PATH" "$DOWNLOAD_SKILL"
+          python tests/compare_install_trees.py "$DOWNLOAD_SKILL" "$GIT_SKILL"
+
+      - name: Verify a clean installed environment
+        run: |
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          CLEAN_VENV="$RUNNER_TEMP/skill-clean-venv"
+          DOWNLOAD_SKILL="$DOWNLOAD_DEST/make-bilingual-study-pdf"
+          python -m venv "$CLEAN_VENV"
+          "$CLEAN_VENV/bin/python" -m pip install --disable-pip-version-check -r "$DOWNLOAD_SKILL/requirements.txt"
+          "$CLEAN_VENV/bin/python" -m pip check
+          "$CLEAN_VENV/bin/python" "$DOWNLOAD_SKILL/scripts/self_test.py"
+          "$CLEAN_VENV/bin/python" "$DOWNLOAD_SKILL/scripts/pipeline.py" validate-profile assignment-en-zh
+          "$CLEAN_VENV/bin/python" "$DOWNLOAD_SKILL/scripts/pipeline.py" validate-profile academic-paper-en-zh
+          "$CLEAN_VENV/bin/python" "$DOWNLOAD_SKILL/scripts/pipeline.py" validate-profile lecture-notes-en-zh
 
   automated-forward:
     runs-on: ubuntu-24.04
@@ -68,6 +170,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -76,7 +180,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
-            requirements.txt
+            skills/make-bilingual-study-pdf/requirements.txt
 
       - name: Install document toolchain
         run: |
@@ -105,7 +209,7 @@ jobs:
           fc-match --format '%{family}\n%{file}\n' 'Noto Sans CJK SC'
 
       - name: Run both V2.3 automated forward chains
-        run: python scripts/v23_e2e_test.py artifacts/v23-e2e
+        run: python tests/v23_e2e_test.py artifacts/v23-e2e
 
       - name: Upload forward-test evidence
         if: always()

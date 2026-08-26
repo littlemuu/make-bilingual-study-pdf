@@ -8,13 +8,14 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+ROOT = REPOSITORY
+SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
 from build_outputs import should_group_paragraphs, source_only_markdown_body
 from common import read_json, read_jsonl, sha256_file, sha256_text, write_json, write_jsonl
 from profile import canonical_profile_sha256, load_profile, profile_contract
-
-
-ROOT = Path(__file__).resolve().parent.parent
-SCRIPTS = ROOT / "scripts"
 
 
 def run_script(name: str, work_dir: Path, *args: str, succeeds: bool = True) -> subprocess.CompletedProcess[str]:

@@ -15,12 +15,14 @@ import sys
 from pathlib import Path
 from typing import Any
 
+REPOSITORY = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
+sys.path.insert(0, str(SCRIPT_DIR))
+
 from common import read_json, read_jsonl, sha256_file, write_json, write_jsonl
 from pipeline import report_status
 
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-REPOSITORY = SCRIPT_DIR.parent
 FIXTURE_ROOT = REPOSITORY / "tests" / "fixtures" / "mineru" / "pipeline-3.4.4"
 PROFILES = ("academic-paper-en-zh", "lecture-notes-en-zh")
 

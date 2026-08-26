@@ -1,5 +1,11 @@
 # make-bilingual-study-pdf 项目交接：V2.3 实施与验收
 
+> 2026-08-26 发布包装续记：Draft PR #3 正在修复安装与发布门禁，暂未 Ready、
+> 合并、打 tag 或创建 Release。唯一可安装源码已迁移到
+> `skills/make-bilingual-study-pdf/`；仓库测试位于 `tests/`，开发与受控发布说明
+> 位于 `docs/development.md`。下文保留的是 V2.3 实现与验收历史，其中旧的根目录
+> 命令仅用于解释当时证据，不再是当前安装或开发入口。
+
 > 更新时间：2026-08-14  
 > 当前发布分支：`main`
 >
@@ -58,7 +64,8 @@ SHA-256 为 `a909d7ab0a9eb621589f46030a8f2275a0899039aaf64c6bc742fb1ee908dce7`�
 落地的 schema/CLI 冲突，以代码、Profile、测试和验收记录共同形成的当前契约
 为准。
 
-本文是施工交接上下文。实现前请先阅读仓库中的 `SKILL.md`、
+本文是施工交接上下文。实现前请先阅读仓库中的
+`skills/make-bilingual-study-pdf/SKILL.md`、同一子树下的
 `references/profile-ir.md`、`references/qa-rules.md` 和
 `references/backend-options.md`。不要依赖此前对话才能理解本计划。
 
