@@ -1,4 +1,5 @@
 *.json text eol=lf
 *.md text eol=lf
+generate_fixtures.py text eol=lf
 *.pdf binary
 *.png binary

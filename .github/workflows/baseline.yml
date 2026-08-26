@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    tags:
+      - v*
 
 permissions:
   contents: read
@@ -45,6 +47,8 @@ jobs:
 
       - name: Run deterministic baseline
         run: |
+          python scripts/release_check.py
+          python scripts/release_check_test.py
           python scripts/self_test.py
           python scripts/v23_profile_test.py
           python scripts/v23_mineru_test.py

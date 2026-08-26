@@ -43,6 +43,8 @@ models are not development dependencies; tests consume only committed frozen fix
 
 ```bash
 .venv/bin/python -m pip check
+.venv/bin/python scripts/release_check.py
+.venv/bin/python scripts/release_check_test.py
 .venv/bin/python scripts/self_test.py
 .venv/bin/python scripts/v23_profile_test.py
 .venv/bin/python scripts/v23_mineru_test.py
@@ -57,13 +59,23 @@ models are not development dependencies; tests consume only committed frozen fix
 
 On Windows, replace `.venv/bin/python` with `.\.venv\Scripts\python.exe`.
 
-The expected result is 19 passing self-tests plus a passed validation report for the
-default `assignment-en-zh` Profile. A missing Python module or `pdftoppm` is an
-environment failure, not a product regression. Do not begin V2.3 implementation until
-both commands pass from a clean checkout.
+The expected result includes a passed release check, 19 passing legacy self-tests,
+the focused Profile, MinerU, IR/source, output, DOCX, and visual/freeze suites, plus a
+passed validation report for all three Profiles. A missing Python module or
+`pdftoppm` is an environment failure, not a product regression. Do not begin a V2.3
+change until the quick matrix passes from a clean checkout.
 
-GitHub Actions runs the same quick matrix on Ubuntu 24.04 for every pull request and
-every push to `main`. A separate `automated-forward` job runs both schema V2 Profiles
-through LibreOffice PDF conversion and uploads evidence. It intentionally stops before
-human visual approval and asserts that finalization is still blocked. Action revisions
-and Python packages are pinned; both jobs print the resolved toolchain into their logs.
+Before creating a release tag, simulate the tag binding locally. Replace the value
+only when `VERSION` is intentionally changed:
+
+```bash
+.venv/bin/python scripts/release_check.py --tag v2.3.0
+```
+
+GitHub Actions runs the same quick matrix on Ubuntu 24.04 for every pull request, every
+push to `main`, and every `v*` tag. On tag builds, `release_check.py` also requires the
+tag to equal `v` plus the exact contents of `VERSION`. A separate `automated-forward`
+job runs both schema V2 Profiles through LibreOffice PDF conversion and uploads evidence.
+It intentionally stops before human visual approval and asserts that finalization is
+still blocked. Action revisions and Python packages are pinned; both jobs print the
+resolved toolchain into their logs.
