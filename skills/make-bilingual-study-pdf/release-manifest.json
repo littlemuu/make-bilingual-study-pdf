@@ -3,17 +3,12 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "19dcf13e796ee025017f231af52f5e3dd13264bdcf00b315d113d480b931fb48",
+  "tree_sha256": "b3aa772157a3a87a2f5a6ae4ded294414e1d6181b396cb9513cb665f1a1e1b31",
   "files": [
     {
-      "path": "README.md",
-      "size": 6927,
-      "sha256": "894bdfddcfc3227c57d7bcadd21fcb15ca57dc98104bc4ece8535412105b8d21"
-    },
-    {
       "path": "SKILL.md",
-      "size": 13105,
-      "sha256": "e416f01e9fd1a9889732a7de0b12f41ab76682c3e1c9b830c577b8c6445eeb44"
+      "size": 13465,
+      "sha256": "378341843737809777bd4d627c71719f219a6c4728f5c75ca015a262e119ae69"
     },
     {
       "path": "VERSION",
@@ -22,8 +17,8 @@
     },
     {
       "path": "agents/openai.yaml",
-      "size": 474,
-      "sha256": "fffb48a98a17badfa292a607c22acf5acf4b5378b0cbc28843060a6534e72675"
+      "size": 500,
+      "sha256": "d5c65ffe4f89d3da89c3c77c7be17031de53680d842871f7e9833090c9a07c66"
     },
     {
       "path": "assets/bilingual-template.tex",
@@ -207,8 +202,8 @@
     },
     {
       "path": "scripts/release_check.py",
-      "size": 18388,
-      "sha256": "d8165035885441054cacf7871a62577d9d4e044c2da43823832616b8e37f3269"
+      "size": 23398,
+      "sha256": "3b67d2426d3026264ed283dfa95021620c52464f4824c20f84dd3e850951f408"
     },
     {
       "path": "scripts/self_test.py",

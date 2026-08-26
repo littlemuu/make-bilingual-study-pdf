@@ -7,18 +7,15 @@ import hashlib
 import json
 import os
 import re
-import shlex
+import stat
 import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(os.path.abspath(Path(__file__).parent.parent))
 MANIFEST_NAME = "release-manifest.json"
 SKILL_NAME = "make-bilingual-study-pdf"
-REPOSITORY = "littlemuu/make-bilingual-study-pdf"
-INSTALL_PATH = "skills/make-bilingual-study-pdf"
-
 NUMERIC_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 NON_NUMERIC_IDENTIFIER = r"(?:[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
 PRERELEASE_IDENTIFIER = rf"(?:{NUMERIC_IDENTIFIER}|{NON_NUMERIC_IDENTIFIER})"
@@ -41,16 +38,162 @@ WINDOWS_RESERVED_STEMS = {
     "nul",
     *(f"com{index}" for index in range(1, 10)),
     *(f"lpt{index}" for index in range(1, 10)),
+    "com¹",
+    "com²",
+    "com³",
+    "lpt¹",
+    "lpt²",
+    "lpt³",
 }
 WINDOWS_FORBIDDEN_CHARACTERS = set('<>:"|?*')
+WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
 
 
-def sha256_file(path: Path) -> str:
+def is_reparse_point(status: os.stat_result) -> bool:
+    return bool(
+        getattr(status, "st_file_attributes", 0) & WINDOWS_REPARSE_ATTRIBUTE
+        or getattr(status, "st_reparse_tag", 0)
+    )
+
+
+def unsafe_link_kind(status: os.stat_result) -> str | None:
+    if stat.S_ISLNK(status.st_mode):
+        return "symbolic links"
+    if is_reparse_point(status):
+        return "reparse points"
+    return None
+
+
+def reject_unsafe_status(
+    status: os.stat_result, label: str, *, require_directory: bool = False
+) -> None:
+    link_kind = unsafe_link_kind(status)
+    if link_kind:
+        raise ValueError(f"{link_kind} are not allowed in payload: {label}")
+    if require_directory:
+        if not stat.S_ISDIR(status.st_mode):
+            raise ValueError(f"payload root must be a regular directory: {label}")
+    elif not stat.S_ISREG(status.st_mode):
+        raise ValueError(
+            f"non-regular filesystem entries are not allowed in payload: {label}"
+        )
+
+
+def iter_safe_entries(
+    root: Path, failures: list[str]
+) -> list[tuple[Path, PurePosixPath, os.stat_result]]:
+    """Walk without following symlinks, junctions, or other reparse points."""
+    observed: list[tuple[Path, PurePosixPath, os.stat_result]] = []
+    try:
+        root_status = os.lstat(root)
+        reject_unsafe_status(root_status, str(root), require_directory=True)
+    except (OSError, ValueError) as exc:
+        failures.append(f"cannot inspect payload root: {exc}")
+        return observed
+
+    def visit(
+        directory: Path,
+        relative_directory: PurePosixPath,
+        expected_status: os.stat_result,
+    ) -> None:
+        try:
+            current_status = os.lstat(directory)
+            label = relative_directory.as_posix() or str(root)
+            reject_unsafe_status(current_status, label, require_directory=True)
+            if not metadata_matches(expected_status, current_status):
+                raise ValueError(f"payload directory changed while traversing: {label}")
+            with os.scandir(directory) as iterator:
+                entries = sorted(iterator, key=lambda entry: entry.name)
+        except (OSError, ValueError) as exc:
+            label = relative_directory.as_posix() or "."
+            failures.append(f"cannot scan payload directory {label}: {exc}")
+            return
+        for entry in entries:
+            relative = relative_directory / entry.name
+            path = directory / entry.name
+            try:
+                status = os.lstat(path)
+            except OSError as exc:
+                failures.append(f"cannot inspect payload entry {relative}: {exc}")
+                continue
+            observed.append((path, relative, status))
+            if unsafe_link_kind(status) is None and stat.S_ISDIR(status.st_mode):
+                visit(path, relative, status)
+
+    visit(root, PurePosixPath(), root_status)
+    return observed
+
+
+def ensure_safe_parent_chain(root: Path, path: Path) -> None:
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError(f"payload path escapes root: {path}") from exc
+    current = root
+    reject_unsafe_status(os.lstat(current), str(current), require_directory=True)
+    for part in relative.parts[:-1]:
+        current /= part
+        reject_unsafe_status(
+            os.lstat(current),
+            current.relative_to(root).as_posix(),
+            require_directory=True,
+        )
+
+
+def metadata_matches(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        os.path.samestat(left, right)
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+    )
+
+
+def open_regular_fd(path: Path, label: str) -> tuple[int, os.stat_result]:
+    ensure_safe_parent_chain(ROOT, path)
+    before = os.lstat(path)
+    reject_unsafe_status(before, label)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOINHERIT", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    fd = os.open(path, flags)
+    try:
+        opened = os.fstat(fd)
+        reject_unsafe_status(opened, label)
+        if not metadata_matches(before, opened):
+            raise ValueError(f"payload entry changed while opening: {label}")
+        return fd, opened
+    except Exception:
+        os.close(fd)
+        raise
+
+
+def read_regular_bytes(path: Path, label: str) -> bytes:
+    fd, opened = open_regular_fd(path, label)
+    with os.fdopen(fd, "rb") as handle:
+        payload = handle.read()
+        finished = os.fstat(handle.fileno())
+    if not metadata_matches(opened, finished) or len(payload) != finished.st_size:
+        raise ValueError(f"payload entry changed while reading: {label}")
+    return payload
+
+
+def hash_regular_file(path: Path, label: str) -> tuple[int, str]:
+    fd, opened = open_regular_fd(path, label)
     digest = hashlib.sha256()
-    with path.open("rb") as handle:
+    total = 0
+    with os.fdopen(fd, "rb") as handle:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
-    return digest.hexdigest()
+            total += len(chunk)
+        finished = os.fstat(handle.fileno())
+    if not metadata_matches(opened, finished) or total != finished.st_size:
+        raise ValueError(f"payload entry changed while hashing: {label}")
+    return finished.st_size, digest.hexdigest()
 
 
 def tree_sha256(records: list[dict[str, Any]]) -> str:
@@ -78,16 +221,21 @@ def collect_actual_files(
     actual: dict[str, Path] = {}
     casefolded: dict[str, str] = {}
     manifest_key = portable_path_key(MANIFEST_NAME)
-    for path in sorted(ROOT.rglob("*")):
-        relative = PurePosixPath(path.relative_to(ROOT).as_posix())
-        if path.is_symlink():
-            failures.append(f"symbolic links are not allowed in payload: {relative}")
+    for path, relative, status in iter_safe_entries(ROOT, failures):
+        link_kind = unsafe_link_kind(status)
+        if link_kind:
+            failures.append(f"{link_kind} are not allowed in payload: {relative}")
+            continue
+        if stat.S_ISDIR(status.st_mode):
+            continue
+        if not stat.S_ISREG(status.st_mode):
+            failures.append(
+                f"non-regular filesystem entries are not allowed in payload: {relative}"
+            )
             continue
         if relative.as_posix() == MANIFEST_NAME:
             continue
         if ignore_generated_cache and is_generated_cache(relative):
-            continue
-        if not path.is_file():
             continue
         name = relative.as_posix()
         folded = portable_path_key(name)
@@ -127,8 +275,8 @@ def valid_manifest_path(value: object) -> bool:
 def load_manifest(failures: list[str]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     path = ROOT / MANIFEST_NAME
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        manifest = json.loads(read_regular_bytes(path, MANIFEST_NAME).decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, json.JSONDecodeError) as exc:
         failures.append(f"cannot read {MANIFEST_NAME}: {exc}")
         return {}, []
     if not isinstance(manifest, dict):
@@ -227,13 +375,16 @@ def validate_payload(
     for name in sorted(expected_names & actual_names):
         path = actual[name]
         record = records[name]
-        size = path.stat().st_size
+        try:
+            size, digest = hash_regular_file(path, name)
+        except (OSError, ValueError) as exc:
+            failures.append(f"cannot verify payload file {name}: {exc}")
+            continue
         if size != record.get("size"):
             failures.append(
                 f"payload size mismatch for {name}: expected {record.get('size')}, got {size}"
             )
             continue
-        digest = sha256_file(path)
         if digest != record.get("sha256"):
             failures.append(
                 f"payload sha256 mismatch for {name}: expected {record.get('sha256')}, "
@@ -241,13 +392,17 @@ def validate_payload(
             )
 
 
-def read_release_version(failures: list[str]) -> str:
-    path = ROOT / "VERSION"
+def read_regular_utf8(relative: str, failures: list[str]) -> str:
+    path = ROOT / relative
     try:
-        raw = path.read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        failures.append(f"cannot read VERSION: {exc}")
+        return read_regular_bytes(path, relative).decode("utf-8")
+    except (OSError, UnicodeError, ValueError) as exc:
+        failures.append(f"cannot read {relative}: {exc}")
         return ""
+
+
+def read_release_version(failures: list[str]) -> str:
+    raw = read_regular_utf8("VERSION", failures)
     version = raw.strip()
     if raw not in {version, f"{version}\n", f"{version}\r\n"}:
         failures.append("VERSION must contain one UTF-8 semantic version line")
@@ -256,21 +411,109 @@ def read_release_version(failures: list[str]) -> str:
     return version
 
 
-def read_skill_name(failures: list[str]) -> str:
-    try:
-        text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        failures.append(f"cannot read SKILL.md: {exc}")
+def parse_string_scalar(raw: str, *, key: str, failures: list[str]) -> str:
+    value = raw.strip()
+    if not value:
+        failures.append(f"SKILL.md frontmatter {key} must be a non-empty string")
         return ""
-    match = re.match(r"^---\s*\r?\n(.*?)\r?\n---\s*\r?\n", text, flags=re.DOTALL)
+    if value.startswith(('"', "'")):
+        if value[0] == "'":
+            if len(value) < 2 or not value.endswith("'"):
+                failures.append(f"SKILL.md frontmatter {key} has an unterminated string")
+                return ""
+            inner = value[1:-1]
+            if "'" in inner.replace("''", ""):
+                failures.append(f"SKILL.md frontmatter {key} has an invalid string")
+                return ""
+            parsed = inner.replace("''", "'")
+        else:
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                failures.append(f"SKILL.md frontmatter {key} has an invalid string")
+                return ""
+        if not isinstance(parsed, str) or not parsed:
+            failures.append(f"SKILL.md frontmatter {key} must be a non-empty string")
+            return ""
+        return parsed
+    lowered = value.casefold()
+    non_string_tokens = {
+        "null",
+        "~",
+        "true",
+        "false",
+        "yes",
+        "no",
+        "on",
+        "off",
+        ".nan",
+        ".inf",
+        "+.inf",
+        "-.inf",
+    }
+    if (
+        lowered in non_string_tokens
+        or value in {"#", "?", ":", "-"}
+        or value.startswith("#")
+        or re.fullmatch(r"[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", value)
+        or value[0] in "[{&*!|>@`"
+        or value.startswith(("- ", "? ", ": "))
+        or re.search(r":\s", value)
+        or re.search(r"\s#", value)
+    ):
+        failures.append(f"SKILL.md frontmatter {key} must be a string scalar")
+        return ""
+    return value
+
+
+def read_skill_metadata(failures: list[str]) -> tuple[str, str]:
+    """Check required fields with a deliberately narrow, fail-closed YAML subset.
+
+    This standard-library check protects installed payloads. Repository CI separately
+    runs the pinned upstream Skill validator for complete contract validation.
+    """
+    failure_count = len(failures)
+    text = read_regular_utf8("SKILL.md", failures)
+    if text == "":
+        if len(failures) == failure_count:
+            failures.append("SKILL.md must not be empty")
+        return "", ""
+    match = re.match(
+        r"^---[ \t]*\r?\n(.*?)\r?\n---[ \t]*\r?\n",
+        text,
+        flags=re.DOTALL,
+    )
     if not match:
         failures.append("SKILL.md has no valid leading YAML frontmatter block")
-        return ""
-    name_match = re.search(r"(?m)^name:\s*([^#\r\n]+?)\s*$", match.group(1))
-    if not name_match:
-        failures.append("SKILL.md frontmatter has no name")
-        return ""
-    return name_match.group(1).strip(" '\"")
+        return "", ""
+    entries: dict[str, list[str]] = {"name": [], "description": []}
+    for line_number, line in enumerate(match.group(1).splitlines(), start=2):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        entry = re.fullmatch(r"([A-Za-z][A-Za-z0-9_-]*):(?:[ \t]*(.*))?", line)
+        if not entry:
+            failures.append(
+                "SKILL.md frontmatter uses syntax outside the release checker's "
+                f"supported flat string mapping on line {line_number}"
+            )
+            continue
+        key, raw = entry.group(1), entry.group(2) or ""
+        if key not in entries:
+            failures.append(f"SKILL.md frontmatter has unexpected key {key!r}")
+            continue
+        entries[key].append(raw)
+    parsed: dict[str, str] = {}
+    for key in ("name", "description"):
+        values = entries[key]
+        if not values:
+            failures.append(f"SKILL.md frontmatter has no {key}")
+            parsed[key] = ""
+        elif len(values) != 1:
+            failures.append(f"SKILL.md frontmatter contains duplicate {key} keys")
+            parsed[key] = ""
+        else:
+            parsed[key] = parse_string_scalar(values[0], key=key, failures=failures)
+    return parsed["name"], parsed["description"]
 
 
 def github_tag_from_environment() -> str | None:
@@ -282,117 +525,13 @@ def github_tag_from_environment() -> str | None:
     return None
 
 
-def read_text(relative: str, failures: list[str]) -> str:
-    try:
-        return (ROOT / relative).read_text(encoding="utf-8")
-    except (OSError, UnicodeError) as exc:
-        failures.append(f"cannot read {relative}: {exc}")
-        return ""
-
-
-def fenced_blocks(text: str) -> list[str]:
-    return re.findall(r"```[^\r\n]*\r?\n(.*?)\r?\n```", text, flags=re.DOTALL)
-
-
-def option_values(argv: list[str], option: str, failures: list[str]) -> list[str]:
-    values: list[str] = []
-    for index, token in enumerate(argv):
-        if token == option:
-            if index + 1 >= len(argv) or argv[index + 1].startswith("--"):
-                failures.append(f"README installer command has no value for {option}")
-            else:
-                values.append(argv[index + 1])
-        elif token.startswith(f"{option}="):
-            values.append(token.split("=", 1)[1])
-    return values
-
-
-def require_exact_option(
-    argv: list[str], option: str, expected: str, failures: list[str]
-) -> None:
-    values = option_values(argv, option, failures)
-    if values != [expected]:
-        failures.append(
-            f"README installer {option} must occur once with exact value {expected!r}; "
-            f"found {values!r}"
-        )
-
-
-def validate_readme(version: str, failures: list[str]) -> None:
-    text = read_text("README.md", failures)
-    install_blocks = [
-        block for block in fenced_blocks(text) if "install-skill-from-github.py" in block
-    ]
-    if len(install_blocks) != 1:
-        failures.append(
-            "README.md must contain exactly one fenced install-skill-from-github.py command"
-        )
-    else:
-        try:
-            argv = shlex.split(install_blocks[0], posix=True)
-        except ValueError as exc:
-            failures.append(f"cannot parse README installer command: {exc}")
-        else:
-            require_exact_option(argv, "--repo", REPOSITORY, failures)
-            require_exact_option(argv, "--path", INSTALL_PATH, failures)
-            require_exact_option(argv, "--ref", f"v{version}", failures)
-            if option_values(argv, "--name", failures):
-                failures.append("README installer command must derive the name from --path")
-            expected_argv = [
-                "python",
-                "<SKILL_INSTALLER_DIR>/scripts/install-skill-from-github.py",
-                "--repo",
-                REPOSITORY,
-                "--path",
-                INSTALL_PATH,
-                "--ref",
-                f"v{version}",
-            ]
-            if argv != expected_argv:
-                failures.append(
-                    "README installer command must contain only the documented exact argv"
-                )
-
-    verification_lines = [
-        line
-        for block in fenced_blocks(text)
-        for line in block.splitlines()
-        if "release_check.py" in line and "--expected-version" in line
-    ]
-    if len(verification_lines) != 1:
-        failures.append(
-            "README.md must contain exactly one fenced release_check.py verification command"
-        )
-    else:
-        try:
-            argv = shlex.split(verification_lines[0], posix=True)
-        except ValueError as exc:
-            failures.append(f"cannot parse README verification command: {exc}")
-        else:
-            values = option_values(argv, "--expected-version", failures)
-            if values != [version]:
-                failures.append(
-                    "README verification --expected-version must occur once with exact value "
-                    f"{version!r}; found {values!r}"
-                )
-            if argv != [
-                "python",
-                "scripts/release_check.py",
-                "--expected-version",
-                version,
-            ]:
-                failures.append(
-                    "README verification command must contain only the documented exact argv"
-                )
-
-
 def validate_profiles(failures: list[str]) -> dict[str, dict[str, object]]:
     observed: dict[str, dict[str, object]] = {}
     for profile_id, (schema_version, adapter) in PROFILE_CONTRACTS.items():
         relative = f"profiles/{profile_id}.json"
         try:
-            profile = json.loads((ROOT / relative).read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            profile = json.loads(read_regular_utf8(relative, failures))
+        except json.JSONDecodeError as exc:
             failures.append(f"cannot read {relative}: {exc}")
             continue
         if not isinstance(profile, dict):
@@ -454,10 +593,10 @@ def main() -> int:
             f"{MANIFEST_NAME} version must equal VERSION {version!r}; "
             f"got {manifest.get('version')!r}"
         )
-    if args.expected_version and version != args.expected_version:
+    if args.expected_version is not None and version != args.expected_version:
         failures.append(f"expected version {args.expected_version!r}, got {version!r}")
 
-    skill_name = read_skill_name(failures)
+    skill_name, _skill_description = read_skill_metadata(failures)
     if skill_name and skill_name != SKILL_NAME:
         failures.append(
             f"SKILL.md name mismatch: expected {SKILL_NAME!r}, got {skill_name!r}"
@@ -468,8 +607,6 @@ def main() -> int:
     if tag is not None and tag != expected_tag:
         failures.append(f"release tag mismatch: expected {expected_tag!r}, got {tag!r}")
 
-    if version:
-        validate_readme(version, failures)
     profiles = validate_profiles(failures)
     report = {
         "status": "failed" if failures else "passed",

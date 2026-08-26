@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -50,6 +51,7 @@ class ReleaseCheckTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
+            timeout=5,
         )
         report = json.loads(process.stdout)
         return process, report
@@ -61,6 +63,22 @@ class ReleaseCheckTests(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
+        )
+
+    def run_generator(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                sys.executable,
+                str(self.generator),
+                "--skill-root",
+                str(self.root),
+                *arguments,
+            ],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
 
     def assert_failed_with(self, report: dict, fragment: str) -> None:
@@ -107,6 +125,11 @@ class ReleaseCheckTests(unittest.TestCase):
         self.assertNotEqual(process.returncode, 0)
         self.assert_failed_with(report, "release tag mismatch")
 
+    def test_empty_expected_version_fails(self) -> None:
+        process, report = self.run_check("--expected-version", "")
+        self.assertNotEqual(process.returncode, 0)
+        self.assert_failed_with(report, "expected version ''")
+
     def test_missing_core_file_fails(self) -> None:
         (self.root / "scripts" / "audit_translation.py").unlink()
         process, report = self.run_check()
@@ -136,45 +159,6 @@ class ReleaseCheckTests(unittest.TestCase):
         self.assert_failed_with(
             report, "payload sha256 mismatch for scripts/audit_translation.py"
         )
-
-    def test_ref_value_rejects_suffix_slash_and_duplicate(self) -> None:
-        original = (self.root / "README.md").read_text(encoding="utf-8")
-        version = (self.root / "VERSION").read_text(encoding="utf-8").strip()
-        exact_ref = f"--ref v{version}"
-        cases = (
-            (f"--ref v{version}_other", f"v{version}_other"),
-            (f"--ref v{version}/other", f"v{version}/other"),
-            (f"{exact_ref} {exact_ref}", f"v{version}"),
-        )
-        for replacement, marker in cases:
-            with self.subTest(value=marker):
-                (self.root / "README.md").write_text(
-                    original.replace(exact_ref, replacement, 1),
-                    encoding="utf-8",
-                    newline="\n",
-                )
-                self.regenerate()
-                process, report = self.run_check()
-                self.assertNotEqual(process.returncode, 0)
-                self.assert_failed_with(report, "README installer --ref")
-
-    def test_installer_command_rejects_extra_shell_argv(self) -> None:
-        path = self.root / "README.md"
-        original = path.read_text(encoding="utf-8")
-        version = (self.root / "VERSION").read_text(encoding="utf-8").strip()
-        path.write_text(
-            original.replace(
-                f"--ref v{version}\n```",
-                f"--ref v{version} --method download\n```",
-                1,
-            ),
-            encoding="utf-8",
-            newline="\n",
-        )
-        self.regenerate()
-        process, report = self.run_check()
-        self.assertNotEqual(process.returncode, 0)
-        self.assert_failed_with(report, "only the documented exact argv")
 
     def test_manifest_rejects_duplicate_unsorted_case_collision_and_unsafe_path(self) -> None:
         manifest_path = self.root / "release-manifest.json"
@@ -222,6 +206,12 @@ class ReleaseCheckTests(unittest.TestCase):
         original = json.loads(manifest_path.read_text(encoding="utf-8"))
         invalid_names = (
             "CON.txt",
+            "COM¹.txt",
+            "COM².txt",
+            "COM³.txt",
+            "LPT¹.txt",
+            "LPT².txt",
+            "LPT³.txt",
             "folder/name.",
             "folder/name ",
             "folder/name?.txt",
@@ -242,17 +232,161 @@ class ReleaseCheckTests(unittest.TestCase):
                 self.assertNotEqual(process.returncode, 0)
                 self.assert_failed_with(report, "has invalid path")
 
+    def test_manifest_builder_rejects_superscript_windows_device_name(self) -> None:
+        (self.root / "COM¹.txt").write_text("reserved\n", encoding="utf-8")
+        process = self.run_generator()
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn("payload path is not portable", process.stdout + process.stderr)
+
+    def test_skill_frontmatter_rejects_malformed_non_string_and_duplicates(self) -> None:
+        path = self.root / "SKILL.md"
+        original = path.read_text(encoding="utf-8")
+        cases = {
+            "malformed collection": original.replace(
+                "description: Convert an English academic PDF",
+                "description: [unterminated",
+                1,
+            ),
+            "non-string description": re.sub(
+                r"(?m)^description:.*$", "description: true", original, count=1
+            ),
+            "non-string name": original.replace(
+                "name: make-bilingual-study-pdf", "name: [make-bilingual-study-pdf]", 1
+            ),
+            "duplicate name": original.replace(
+                "name: make-bilingual-study-pdf",
+                "name: make-bilingual-study-pdf\nname: duplicate",
+                1,
+            ),
+            "duplicate description": re.sub(
+                r"(?m)^(description:.*)$", r"\1\ndescription: duplicate", original, count=1
+            ),
+            "comment-only description": re.sub(
+                r"(?m)^description:.*$", "description: # comment", original, count=1
+            ),
+            "bare question indicator": re.sub(
+                r"(?m)^description:.*$", "description: ?", original, count=1
+            ),
+            "bare mapping indicator": re.sub(
+                r"(?m)^description:.*$", "description: :", original, count=1
+            ),
+            "bare sequence indicator": re.sub(
+                r"(?m)^description:.*$", "description: -", original, count=1
+            ),
+            "unexpected frontmatter key": original.replace(
+                "description: Convert an English academic PDF",
+                "metadata: forbidden-by-current-contract\n"
+                "description: Convert an English academic PDF",
+                1,
+            ),
+            "malformed frontmatter line": original.replace(
+                "description: Convert an English academic PDF",
+                "not-a-mapping-entry\n"
+                "description: Convert an English academic PDF",
+                1,
+            ),
+        }
+        for label, content in cases.items():
+            with self.subTest(case=label):
+                path.write_text(content, encoding="utf-8", newline="\n")
+                self.regenerate()
+                process, report = self.run_check()
+                self.assertNotEqual(process.returncode, 0, process.stderr)
+                self.assertTrue(
+                    any("SKILL.md frontmatter" in item for item in report["failures"]),
+                    report["failures"],
+                )
+                path.write_text(original, encoding="utf-8", newline="\n")
+
+    def test_empty_skill_markdown_fails(self) -> None:
+        path = self.root / "SKILL.md"
+        path.write_bytes(b"")
+        self.regenerate()
+        process, report = self.run_check()
+        self.assertNotEqual(process.returncode, 0, process.stderr)
+        self.assert_failed_with(report, "SKILL.md must not be empty")
+
+    @unittest.skipUnless(os.name == "nt", "junction regression is Windows-specific")
+    def test_windows_junction_is_rejected_without_traversal(self) -> None:
+        target = Path(self.temporary.name) / "junction-target"
+        target.mkdir()
+        secret = target / "must-not-be-traversed.txt"
+        secret.write_text("outside payload\n", encoding="utf-8")
+        junction = self.root / "junction-payload"
+        created = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(junction), str(target)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+        try:
+            check, report = self.run_check()
+            self.assertNotEqual(check.returncode, 0)
+            self.assert_failed_with(report, "reparse points are not allowed")
+            self.assertFalse(
+                any("must-not-be-traversed.txt" in item for item in report["failures"]),
+                report["failures"],
+            )
+            generator = self.run_generator()
+            self.assertNotEqual(generator.returncode, 0)
+            self.assertIn(
+                "reparse points are not allowed", generator.stdout + generator.stderr
+            )
+            self.assertTrue(secret.is_file())
+        finally:
+            if os.path.lexists(junction):
+                os.rmdir(junction)
+        self.assertTrue(secret.is_file())
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
+    def test_non_regular_fifo_fails_closed(self) -> None:
+        fifo = self.root / "payload.pipe"
+        os.mkfifo(fifo)
+        check, report = self.run_check()
+        self.assertNotEqual(check.returncode, 0)
+        self.assert_failed_with(report, "non-regular filesystem entries")
+        generator = self.run_generator()
+        self.assertNotEqual(generator.returncode, 0)
+        self.assertIn(
+            "non-regular filesystem entries", generator.stdout + generator.stderr
+        )
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
+    def test_version_fifo_fails_without_opening_it(self) -> None:
+        version = self.root / "VERSION"
+        version.unlink()
+        os.mkfifo(version)
+        generator = self.run_generator()
+        self.assertNotEqual(generator.returncode, 0)
+        self.assertIn(
+            "non-regular filesystem entries are not allowed in payload: VERSION",
+            generator.stdout + generator.stderr,
+        )
+        check, report = self.run_check()
+        self.assertNotEqual(check.returncode, 0)
+        self.assert_failed_with(report, "non-regular filesystem entries")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
+    def test_manifest_fifo_fails_without_opening_it(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        manifest.unlink()
+        os.mkfifo(manifest)
+        generator = self.run_generator()
+        self.assertNotEqual(generator.returncode, 0)
+        self.assertIn(
+            "non-regular filesystem entries are not allowed in payload: "
+            "release-manifest.json",
+            generator.stdout + generator.stderr,
+        )
+        check, report = self.run_check()
+        self.assertNotEqual(check.returncode, 0)
+        self.assert_failed_with(report, "non-regular filesystem entries")
+
     def test_future_version_does_not_depend_on_historical_acceptance(self) -> None:
         current = (self.root / "VERSION").read_text(encoding="utf-8").strip()
         future = "999.0.0" if current != "999.0.0" else "998.0.0"
-        readme = (self.root / "README.md").read_text(encoding="utf-8")
-        readme = readme.replace(f"v{current}", f"v{future}")
-        readme = readme.replace(
-            f"--expected-version {current}", f"--expected-version {future}"
-        )
-        (self.root / "README.md").write_text(
-            readme, encoding="utf-8", newline="\n"
-        )
         (self.root / "VERSION").write_text(
             f"{future}\n", encoding="utf-8", newline="\n"
         )

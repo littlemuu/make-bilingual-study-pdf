@@ -64,11 +64,16 @@ optional backend. Do not install a heavyweight parser, download model weights, o
 an AGPL component without the user's explicit approval. An alternate backend must
 still feed the same stable-ID records and pass the same downstream audits.
 
-Before starting a long translation, confirm that Poppler, PyMuPDF, Pillow, Pandoc, and
-a supported CJK font are available. The XeLaTeX profile additionally requires XeLaTeX,
-`latexmk`, `xeCJK`, `unicode-math`, and Latin Modern Math. The V2 DOCX profile requires
-`python-docx` and LibreOffice for the matching PDF render. Source artifacts can still
-be built when a rendering backend is absent, but the PDF gate must remain failed.
+Before opening the source, require Python 3.11 and the packages pinned in
+`requirements.txt`; keep the Python environment outside every active Skills root. Do
+not install missing packages, applications, fonts, or models without the user's
+approval. Source extraction and self-test require PyMuPDF, Pillow, and Poppler's
+`pdftotext` and `pdftoppm`. The editable DOCX/PDF path additionally requires Pandoc,
+`python-docx`, LibreOffice Writer (`soffice`), Fontconfig (`fc-match`), `pdffonts`, and
+a supported CJK font. The optional XeLaTeX path requires XeLaTeX, `latexmk`, `xeCJK`,
+`unicode-math`, and Latin Modern Math. If a dependency for the requested stage is
+absent, report that boundary and keep the corresponding build or PDF gate failed;
+never silently substitute a different backend.
 
 ## Workflow
 

@@ -65,12 +65,35 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Check out pinned OpenAI Skill validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 49f948faa9258a0c61caceaf225e179651397431
+          path: .ci/openai-skill-creator
+          sparse-checkout: skills/.system/skill-creator
+          persist-credentials: false
+
+      - name: Check out pinned OpenAI Skill installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 1131cea7b17214e5a96300a5a72c94642346ef34
+          path: .ci/openai-skill-installer
+          sparse-checkout: skills/.system/skill-installer
+          persist-credentials: false
+
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version-file: .python-version
           cache: pip
-          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+          cache-dependency-path: |
+            requirements-dev.txt
+            skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Skill validator dependency
+        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
 
       - name: Validate version, tag, and exact payload metadata
         id: metadata
@@ -88,6 +111,9 @@ jobs:
           python tools/check_skill_eol.py
           python tools/build_release_manifest.py --check
           python "$SKILL_PATH/scripts/release_check.py" --expected-version "$VERSION" --tag "$TAG"
+          python tools/repository_release_check.py
+          python tools/validate_skill.py "$SKILL_PATH" \
+            --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
           {
             echo "candidate_sha=$CANDIDATE_SHA"
             echo "version=$VERSION"
@@ -135,15 +161,6 @@ jobs:
             exit 1
           fi
 
-      - name: Check out pinned OpenAI skill installer
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: openai/skills
-          ref: 1131cea7b17214e5a96300a5a72c94642346ef34
-          path: .ci/openai-skills
-          sparse-checkout: skills/.system/skill-installer
-          persist-credentials: false
-
       - name: Install Poppler
         run: |
           sudo apt-get update
@@ -160,7 +177,7 @@ jobs:
           EXPECTED_TAG: ${{ steps.metadata.outputs.tag }}
         run: |
           set -euo pipefail
-          INSTALLER=.ci/openai-skills/skills/.system/skill-installer/scripts/install-skill-from-github.py
+          INSTALLER=.ci/openai-skill-installer/skills/.system/skill-installer/scripts/install-skill-from-github.py
           python "$INSTALLER" --repo "$GITHUB_REPOSITORY" --path "$SKILL_PATH" --ref "$CANDIDATE_SHA" --method download --dest "$DOWNLOAD_DEST"
           python "$INSTALLER" --repo "$GITHUB_REPOSITORY" --path "$SKILL_PATH" --ref "$CANDIDATE_SHA" --method git --dest "$GIT_DEST"
           DOWNLOAD_SKILL="$DOWNLOAD_DEST/make-bilingual-study-pdf"
@@ -213,7 +230,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Create and verify exact tag and Draft Release
+      - name: Atomically reserve the exact tag and create a Draft Release
         env:
           CANDIDATE_SHA: ${{ needs.validate.outputs.candidate_sha }}
           TAG: ${{ needs.validate.outputs.tag }}
@@ -221,6 +238,56 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          TAG_RESERVED=false
+          RELEASE_ATTEMPTED=false
+          RELEASE_MARKER="guarded-draft-release:$GITHUB_RUN_ID:$GITHUB_RUN_ATTEMPT"
+          RELEASE_COMMENT="<!-- $RELEASE_MARKER -->"
+
+          report_failed_creation() {
+            local exit_code=$?
+            trap - EXIT
+            if [[ "$exit_code" -eq 0 ]]; then
+              return
+            fi
+
+            if ! OBSERVED_TAG_SHA=$(gh api --method GET \
+              "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$TAG" \
+              --jq "[.[] | select(.ref == \"refs/tags/$TAG\") | .object.sha][0] // \"absent\"" \
+              2>/dev/null); then
+              OBSERVED_TAG_SHA=unavailable
+            fi
+            TAG_MATCHES_CANDIDATE=false
+            if [[ "$OBSERVED_TAG_SHA" == "$CANDIDATE_SHA" ]]; then
+              TAG_MATCHES_CANDIDATE=true
+            fi
+
+            RELEASE_ID=not-observed
+            RELEASE_IS_DRAFT=unknown
+            RELEASE_IS_PRERELEASE=unknown
+            RELEASE_TAG=not-observed
+            RELEASE_MARKER_OWNED_BY_RUN=unknown
+            if RELEASE_INFO=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --json body,databaseId,isDraft,isPrerelease,tagName \
+              --jq "[.databaseId, .isDraft, .isPrerelease, .tagName, (.body | contains(\"$RELEASE_MARKER\"))] | @tsv" \
+              2>/dev/null); then
+              IFS=$'\t' read -r RELEASE_ID RELEASE_IS_DRAFT RELEASE_IS_PRERELEASE RELEASE_TAG RELEASE_MARKER_OWNED_BY_RUN <<< "$RELEASE_INFO"
+            fi
+
+            echo "Draft release creation failed; manual inspection is required." >&2
+            printf '%s\n' \
+              "TAG_RESERVED_BY_RUN=$TAG_RESERVED" \
+              "RELEASE_ATTEMPTED_BY_RUN=$RELEASE_ATTEMPTED" \
+              "OBSERVED_TAG_SHA=$OBSERVED_TAG_SHA" \
+              "TAG_MATCHES_CANDIDATE=$TAG_MATCHES_CANDIDATE" \
+              "RELEASE_ID=$RELEASE_ID" \
+              "RELEASE_IS_DRAFT=$RELEASE_IS_DRAFT" \
+              "RELEASE_IS_PRERELEASE=$RELEASE_IS_PRERELEASE" \
+              "RELEASE_TAG=$RELEASE_TAG" \
+              "RELEASE_MARKER_OWNED_BY_RUN=$RELEASE_MARKER_OWNED_BY_RUN" >&2
+            exit "$exit_code"
+          }
+          trap report_failed_creation EXIT
+
           REMOTE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$DEFAULT_BRANCH" --jq '.object.sha')
           if [[ "$REMOTE_SHA" != "$CANDIDATE_SHA" ]]; then
             echo "default branch advanced before tag creation" >&2
@@ -240,11 +307,33 @@ jobs:
             echo "Release already exists: $TAG" >&2
             exit 1
           fi
+
+          CREATED_TAG_SHA=$(gh api --method POST \
+            "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f ref="refs/tags/$TAG" \
+            -f sha="$CANDIDATE_SHA" \
+            --jq '.object.sha')
+          TAG_RESERVED=true
+          if [[ "$CREATED_TAG_SHA" != "$CANDIDATE_SHA" ]]; then
+            echo "atomic tag reservation did not return the candidate SHA" >&2
+            exit 1
+          fi
+
+          # --verify-tag prevents this command from creating or retargeting a tag.
+          RELEASE_ATTEMPTED=true
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
-            --target "$CANDIDATE_SHA" --draft --title "$TAG" --generate-notes
+            --verify-tag --draft --title "$TAG" --generate-notes \
+            --notes "$RELEASE_COMMENT"
           FINAL_TAG_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq '.object.sha')
-          IS_DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq '.isDraft')
-          if [[ "$FINAL_TAG_SHA" != "$CANDIDATE_SHA" || "$IS_DRAFT" != "true" ]]; then
+          RELEASE_STATE=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json body,isDraft,isPrerelease,tagName \
+            --jq "[.isDraft, .isPrerelease, .tagName, (.body | contains(\"$RELEASE_MARKER\"))] | @tsv")
+          if [[ "$FINAL_TAG_SHA" != "$CANDIDATE_SHA" ]]; then
+            echo "post-create tag verification failed" >&2
+            exit 1
+          fi
+          if [[ "$RELEASE_STATE" != $'true\tfalse\t'"$TAG"$'\ttrue' ]]; then
             echo "post-create tag or Draft Release verification failed" >&2
             exit 1
           fi
+          trap - EXIT
