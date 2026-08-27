@@ -686,7 +686,10 @@ class ReleaseCheckTests(unittest.TestCase):
             timeout=5,
         )
         if created.returncode != 0:
-            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+            self.fail(
+                "Windows junction regression must execute: "
+                f"{created.stdout}{created.stderr}"
+            )
         try:
             process = self.run_generator_for(
                 skills / "make-bilingual-study-pdf"

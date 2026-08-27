@@ -6,6 +6,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import warnings
 from collections import Counter
 from html import unescape
@@ -20,12 +21,28 @@ from adapters.base import AdapterError, AdapterSpec
 from common import (
     normalize_text,
     problem_ids,
+    read_json,
     sha256_file,
     sha256_text,
     write_json,
     write_jsonl,
 )
 from html_table import validate_table_html
+from safe_artifacts import (
+    ArtifactSafetyError,
+    artifact_size,
+    atomic_copy_file,
+    atomic_publish_with_writer,
+    atomic_write_text,
+    clear_artifact_directory,
+    lexical_absolute_path,
+    lexical_paths_overlap,
+    prepare_artifact_directory,
+    remove_artifact_file,
+    sha256_artifact,
+    validate_artifact_file,
+    validate_artifact_tree,
+)
 from visual_utils import make_contact_sheets
 
 
@@ -35,6 +52,29 @@ SPEC = AdapterSpec(
 )
 
 ADAPTER_EVIDENCE_FILENAME = "adapter-evidence.json"
+MINERU_OUTPUT_FILES = (
+    "profile.json",
+    "manifest.json",
+    "blocks.jsonl",
+    "document-ir.json",
+    ADAPTER_EVIDENCE_FILENAME,
+    "oracle.txt",
+    "oracle-layout.txt",
+    "source-audit.json",
+)
+MINERU_OUTPUT_DIRECTORIES = (
+    "adapter-inputs",
+    "adapter-assets",
+    "renders",
+    "visuals",
+    "source-contact",
+    "source-review",
+    "source-review-contact",
+    "source-review-layout",
+    "source-review-span",
+    "translation",
+    "output",
+)
 MAX_JSON_BYTES = 100 * 1024 * 1024
 MAX_CONTENT_ITEMS = 100_000
 MAX_JSON_DEPTH = 128
@@ -67,6 +107,35 @@ AUXILIARY_TYPES = {
 }
 URL_RE = re.compile(r"https?://[^\s<>\]\[{}]+", re.I)
 VERSION_RE = re.compile(r"^(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)$")
+
+
+def _existing_profile_reference(reference: str | Path) -> Path | None:
+    candidate = lexical_absolute_path(reference)
+    return candidate if os.path.lexists(candidate) else None
+
+
+def _preflight_import_input_overlap(
+    source_pdf: Path,
+    output_dir: Path,
+    work_dir: Path,
+    profile_reference: str | Path,
+) -> None:
+    if lexical_paths_overlap(source_pdf, work_dir):
+        raise AdapterError("source PDF must be lexically outside WORK")
+    if lexical_paths_overlap(output_dir, work_dir):
+        raise AdapterError(
+            "MinerU output directory and WORK must be lexically disjoint"
+        )
+    profile_path = _existing_profile_reference(profile_reference)
+    if profile_path is not None and lexical_paths_overlap(profile_path, work_dir):
+        raise AdapterError("custom Profile must be lexically outside WORK")
+
+
+def _validate_mineru_input_tree(output_dir: Path) -> None:
+    try:
+        validate_artifact_tree(output_dir, output_dir, allow_missing=False)
+    except ArtifactSafetyError as exc:
+        raise AdapterError(f"unsafe MinerU output directory: {exc}") from exc
 
 
 def _reject_constant(value: str) -> None:
@@ -1008,7 +1077,9 @@ def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list
         raise AdapterError(
             f"missing {origin_path.name}; source binding cannot be proven without MinerU origin.pdf"
         )
-    if sha256_file(origin_path) != sha256_file(source_pdf):
+    if sha256_file(origin_path) != sha256_artifact(
+        source_pdf, boundary=source_pdf.parent
+    ):
         raise AdapterError("MinerU origin.pdf hash does not match the supplied source PDF")
     optional = [
         output_dir / f"{prefix}_layout.pdf",
@@ -1026,52 +1097,48 @@ def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list
 
 def _prepare_work_dir(work_dir: Path, force: bool) -> None:
     from profile import (
-        prepare_profile_work_directory,
         validate_profile_binding_target,
     )
 
     try:
-        work_dir = prepare_profile_work_directory(work_dir)
+        work_dir = prepare_artifact_directory(work_dir)
         validate_profile_binding_target(work_dir)
+        file_paths = [work_dir / name for name in MINERU_OUTPUT_FILES]
+        directory_paths = [work_dir / name for name in MINERU_OUTPUT_DIRECTORIES]
+        existing: list[Path] = []
+        for path in file_paths:
+            validate_artifact_file(
+                path, boundary=work_dir, allow_missing=True
+            )
+            if os.path.lexists(path):
+                existing.append(path)
+        for path in directory_paths:
+            if validate_artifact_tree(path, work_dir) is not None:
+                existing.append(path)
+
+        if existing and not force:
+            raise AdapterError(
+                "refusing to overwrite existing artifacts: "
+                + ", ".join(path.name for path in existing)
+                + "; use --force"
+            )
+        if force:
+            # The complete file and tree inventory above must succeed before the first
+            # byte is removed. This keeps a late junction from producing a half-clean.
+            remove_artifact_file(
+                work_dir / "source-audit.json", boundary=work_dir
+            )
+            for path in file_paths:
+                if path.name not in {"profile.json", "source-audit.json"}:
+                    remove_artifact_file(path, boundary=work_dir)
+            for path in directory_paths:
+                clear_artifact_directory(
+                    path,
+                    boundary=work_dir,
+                    remove_directory=True,
+                )
     except ValueError as exc:
         raise AdapterError(str(exc)) from exc
-    collisions = [
-        work_dir / "profile.json",
-        work_dir / "manifest.json",
-        work_dir / "blocks.jsonl",
-        work_dir / "document-ir.json",
-        work_dir / ADAPTER_EVIDENCE_FILENAME,
-        work_dir / "source-audit.json",
-    ]
-    existing = [path for path in collisions if path.exists()]
-    if existing and not force:
-        raise AdapterError(
-            "refusing to overwrite existing artifacts: "
-            + ", ".join(path.name for path in existing)
-            + "; use --force"
-        )
-    if force:
-        for path in collisions:
-            if path.name != "profile.json" and path.is_file():
-                path.unlink()
-        for directory in (
-            "adapter-inputs",
-            "adapter-assets",
-            "renders",
-            "visuals",
-            "source-contact",
-            "source-review",
-            "source-review-contact",
-            "source-review-layout",
-            "source-review-span",
-            "translation",
-            "output",
-        ):
-            target = work_dir / directory
-            if target.is_dir():
-                if target.resolve().parent != work_dir:
-                    raise AdapterError(f"refusing to remove unsafe work path: {target}")
-                shutil.rmtree(target)
 
 
 def _render_debug_pdf(
@@ -1081,12 +1148,24 @@ def _render_debug_pdf(
     dpi: int,
     page_count: int,
 ) -> list[Path]:
-    render_dir.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        [pdftoppm, "-png", "-r", str(dpi), str(pdf_path), str(render_dir / "page")],
-        check=True,
-    )
-    renders = sorted(render_dir.glob("page-*.png"))
+    work_dir = render_dir.parent
+    render_dir = prepare_artifact_directory(render_dir, boundary=work_dir)
+    with tempfile.TemporaryDirectory(prefix=f".{render_dir.name}-", dir=work_dir) as raw_stage:
+        stage = Path(raw_stage)
+        subprocess.run(
+            [pdftoppm, "-png", "-r", str(dpi), str(pdf_path), str(stage / "page")],
+            check=True,
+        )
+        staged = sorted(stage.glob("page-*.png"))
+        renders = [
+            atomic_copy_file(
+                path,
+                render_dir / path.name,
+                boundary=work_dir,
+                source_boundary=stage,
+            )
+            for path in staged
+        ]
     if len(renders) != page_count:
         raise AdapterError(
             f"debug review PDF {pdf_path.name} has {len(renders)} rendered pages; "
@@ -1102,7 +1181,8 @@ def _make_manual_review_pages(
     output_dir: Path,
     unavailable_labels: list[str],
 ) -> list[Path]:
-    output_dir.mkdir(exist_ok=True)
+    work_dir = output_dir.parent
+    output_dir = prepare_artifact_directory(output_dir, boundary=work_dir)
     results: list[Path] = []
     for page_index, source_path in enumerate(source_renders):
         columns: list[tuple[str, Image.Image]] = []
@@ -1141,7 +1221,7 @@ def _make_manual_review_pages(
                 fill="#7a1f1f",
             )
         path = output_dir / f"page-{page_index + 1:04d}.png"
-        canvas.save(path)
+        atomic_publish_with_writer(path, canvas.save, boundary=work_dir)
         results.append(path)
     return results
 
@@ -1165,11 +1245,22 @@ def import_mineru(
     )
     from profile import bind_profile, canonical_profile_sha256, load_profile
 
-    source_pdf = source_pdf.expanduser().resolve()
-    output_dir = output_dir.expanduser().resolve()
-    work_dir = Path(os.path.abspath(work_dir.expanduser()))
-    if not source_pdf.is_file() or source_pdf.suffix.lower() != ".pdf":
+    source_pdf = lexical_absolute_path(source_pdf)
+    output_dir = lexical_absolute_path(output_dir)
+    work_dir = lexical_absolute_path(work_dir)
+    _preflight_import_input_overlap(
+        source_pdf, output_dir, work_dir, profile_reference
+    )
+    try:
+        validate_artifact_file(
+            source_pdf, boundary=source_pdf.parent, allow_missing=True
+        )
+    except ArtifactSafetyError as exc:
+        raise AdapterError(f"unsafe source PDF input: {exc}") from exc
+    if not os.path.lexists(source_pdf) or source_pdf.suffix.lower() != ".pdf":
         raise AdapterError(f"input is not an existing PDF: {source_pdf}")
+    _validate_mineru_input_tree(output_dir)
+    source_pdf_sha256 = sha256_artifact(source_pdf, boundary=source_pdf.parent)
     if not 72 <= render_dpi <= 300:
         raise AdapterError("render_dpi must be between 72 and 300")
     profile = load_profile(profile_reference)
@@ -1207,7 +1298,7 @@ def import_mineru(
     )
     blocks, visual_requests, item_dispositions, content_asset_paths = normalize_content(
         content,
-        source_sha256=sha256_file(source_pdf),
+        source_sha256=source_pdf_sha256,
         backend=backend,
         version=version,
         page_count=page_count,
@@ -1311,8 +1402,9 @@ def import_mineru(
     _prepare_work_dir(work_dir, force)
     try:
         bound_profile = bind_profile(work_dir, profile_reference, force=force)
-        frozen_inputs_dir = work_dir / "adapter-inputs"
-        frozen_inputs_dir.mkdir(exist_ok=True)
+        frozen_inputs_dir = prepare_artifact_directory(
+            work_dir / "adapter-inputs", boundary=work_dir
+        )
         input_records = []
         input_pairs = [
             ("origin", inputs["origin"]),
@@ -1322,9 +1414,14 @@ def import_mineru(
         ]
         for role, path in input_pairs:
             destination = frozen_inputs_dir / path.name
-            shutil.copyfile(path, destination)
-            digest = sha256_file(path)
-            if sha256_file(destination) != digest:
+            digest = sha256_artifact(path, boundary=path.parent)
+            atomic_copy_file(
+                path,
+                destination,
+                boundary=work_dir,
+                source_boundary=path.parent,
+            )
+            if sha256_artifact(destination, boundary=work_dir) != digest:
                 raise AdapterError(f"input changed while importing: {path.name}")
             input_records.append(
                 {
@@ -1332,7 +1429,7 @@ def import_mineru(
                     "relative_path": path.relative_to(output_dir).as_posix(),
                     "work_path": f"adapter-inputs/{destination.name}",
                     "sha256": digest,
-                    "size": destination.stat().st_size,
+                    "size": artifact_size(destination, boundary=work_dir),
                 }
             )
         input_records.sort(key=lambda item: (item["role"], item["relative_path"]))
@@ -1342,24 +1439,35 @@ def import_mineru(
             destination = frozen_assets_dir.joinpath(
                 *PurePosixPath(asset["relative_path"]).parts
             )
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(asset["source_path"], destination)
-            if sha256_file(destination) != asset["sha256"]:
+            prepare_artifact_directory(destination.parent, boundary=work_dir)
+            atomic_copy_file(
+                asset["source_path"],
+                destination,
+                boundary=work_dir,
+                source_boundary=output_dir,
+            )
+            if sha256_artifact(destination, boundary=work_dir) != asset["sha256"]:
                 raise AdapterError(
                     f"asset changed while importing: {asset['relative_path']}"
                 )
             asset["frozen_path"] = destination
             asset["work_path"] = destination.relative_to(work_dir).as_posix()
 
-        visuals_dir = work_dir / "visuals"
-        visuals_dir.mkdir(exist_ok=True)
+        visuals_dir = prepare_artifact_directory(
+            work_dir / "visuals", boundary=work_dir
+        )
         visuals: list[dict[str, Any]] = []
         for request in visual_requests:
             asset = assets_by_path[request["source_asset"]]
             suffix = asset["source_path"].suffix.lower() or ".bin"
             destination = visuals_dir / f"{request['id']}{suffix}"
-            shutil.copyfile(asset["frozen_path"], destination)
-            if sha256_file(destination) != asset["sha256"]:
+            atomic_copy_file(
+                asset["frozen_path"],
+                destination,
+                boundary=work_dir,
+                source_boundary=work_dir,
+            )
+            if sha256_artifact(destination, boundary=work_dir) != asset["sha256"]:
                 raise AdapterError(f"asset changed while importing: {asset['relative_path']}")
             visual = dict(request)
             visual.pop("source_asset")
@@ -1369,26 +1477,43 @@ def import_mineru(
             visual["asset_id"] = asset["id"]
             visuals.append(visual)
 
-        renders_dir = work_dir / "renders"
-        renders_dir.mkdir(exist_ok=True)
-        prefix = renders_dir / "page"
-        subprocess.run(
-            [
-                pdftoppm,
-                "-png",
-                "-r",
-                str(render_dpi),
-                str(source_pdf),
-                str(prefix),
-            ],
-            check=True,
+        renders_dir = prepare_artifact_directory(
+            work_dir / "renders", boundary=work_dir
         )
-        renders = sorted(renders_dir.glob("page-*.png"))
+        with tempfile.TemporaryDirectory(prefix=".renders-", dir=work_dir) as raw_stage:
+            stage = Path(raw_stage)
+            subprocess.run(
+                [
+                    pdftoppm,
+                    "-png",
+                    "-r",
+                    str(render_dpi),
+                    str(source_pdf),
+                    str(stage / "page"),
+                ],
+                check=True,
+            )
+            staged_renders = sorted(stage.glob("page-*.png"))
+            if len(staged_renders) != page_count:
+                raise AdapterError(
+                    f"rendering incomplete: expected {page_count}, found {len(staged_renders)}"
+                )
+            repair_truncated_renders(
+                pdftoppm, source_pdf, staged_renders, render_dpi
+            )
+            renders = [
+                atomic_copy_file(
+                    path,
+                    renders_dir / path.name,
+                    boundary=work_dir,
+                    source_boundary=stage,
+                )
+                for path in staged_renders
+            ]
         if len(renders) != page_count:
             raise AdapterError(
                 f"rendering incomplete: expected {page_count}, found {len(renders)}"
             )
-        repair_truncated_renders(pdftoppm, source_pdf, renders, render_dpi)
         source_contacts = make_contact_sheets(renders, work_dir / "source-contact")
         source_review_contacts: list[dict[str, Any]] = []
         source_review_pages: list[str] = []
@@ -1430,9 +1555,9 @@ def import_mineru(
                 review_pages, work_dir / "source-review-contact"
             )
 
-        (work_dir / "oracle.txt").write_text(oracle_text, encoding="utf-8")
-        (work_dir / "oracle-layout.txt").write_text(
-            oracle_layout_text, encoding="utf-8"
+        atomic_write_text(work_dir / "oracle.txt", oracle_text, boundary=work_dir)
+        atomic_write_text(
+            work_dir / "oracle-layout.txt", oracle_layout_text, boundary=work_dir
         )
         links: list[dict[str, Any]] = []
         uri_to_id: dict[str, str] = {}
@@ -1472,7 +1597,7 @@ def import_mineru(
             "adapter": SPEC.id,
             "source": {
                 "logical_name": source_pdf.name,
-                "sha256": sha256_file(source_pdf),
+                "sha256": source_pdf_sha256,
                 "page_count": page_count,
             },
             "mineru": {
@@ -1506,14 +1631,16 @@ def import_mineru(
                 "sha256": canonical_profile_sha256(bound_profile),
             },
             "source_pdf": str(source_pdf),
-            "source_sha256": sha256_file(source_pdf),
+            "source_sha256": source_pdf_sha256,
             "page_count": page_count,
             "native_text_page_ratio": round(native_ratio, 4),
             "render_dpi": render_dpi,
             "adapter": {
                 "id": SPEC.id,
                 "evidence": ADAPTER_EVIDENCE_FILENAME,
-                "evidence_sha256": sha256_file(evidence_path),
+                "evidence_sha256": sha256_artifact(
+                    evidence_path, boundary=work_dir
+                ),
                 "backend": backend,
                 "version": version,
             },
@@ -1569,7 +1696,7 @@ def import_mineru(
         }
         write_json(work_dir / "manifest.json", manifest)
         ir_path = write_document_ir(work_dir, bound_profile)
-        document_ir = json.loads(ir_path.read_text(encoding="utf-8"))
+        document_ir = read_json(ir_path)
     except Exception:
         document.close()
         raise

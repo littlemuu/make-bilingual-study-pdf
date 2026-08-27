@@ -10,6 +10,8 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
 
+from safe_artifacts import atomic_write_text, read_artifact_text
+
 
 PROBLEM_RE = re.compile(r"(?:Problem|问题)\s*[（(]([a-z0-9_]+)", re.I)
 PLACEHOLDER_RE = re.compile(r"⟦K\d{3}⟧")
@@ -94,24 +96,25 @@ def relative_path(path: Path, start: Path) -> str:
 
 
 def write_json(path: Path, value: Any) -> None:
-    path.write_text(
+    atomic_write_text(
+        path,
         json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        encoding="utf-8",
+        boundary=path.parent,
     )
 
 
 def write_jsonl(path: Path, values: Iterable[dict[str, Any]]) -> None:
-    with path.open("w", encoding="utf-8", newline="\n") as stream:
-        for value in values:
-            stream.write(
-                json.dumps(
-                    value,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    allow_nan=False,
-                )
-            )
-            stream.write("\n")
+    payload = "".join(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+        for value in values
+    )
+    atomic_write_text(path, payload, boundary=path.parent)
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -189,12 +192,15 @@ def json_loads_strict(payload: str) -> Any:
 
 
 def read_json(path: Path) -> Any:
-    return json_loads_strict(path.read_text(encoding="utf-8"))
+    return json_loads_strict(
+        read_artifact_text(path, boundary=path.parent, encoding="utf-8")
+    )
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
     values = []
-    for line_number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    payload = read_artifact_text(path, boundary=path.parent, encoding="utf-8")
+    for line_number, raw in enumerate(payload.splitlines(), 1):
         if not raw.strip():
             continue
         try:

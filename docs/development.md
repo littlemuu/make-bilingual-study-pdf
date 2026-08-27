@@ -103,6 +103,12 @@ repository root:
 .venv/bin/python tests/release_check_test.py
 .venv/bin/python tests/repository_release_check_test.py
 .venv/bin/python tests/profile_binding_test.py
+.venv/bin/python tests/safe_artifacts_test.py
+.venv/bin/python tests/work_artifact_boundary_test.py
+.venv/bin/python tests/translation_artifact_boundary_test.py
+.venv/bin/python tests/output_artifact_boundary_test.py
+.venv/bin/python tests/docx_artifact_boundary_test.py
+.venv/bin/python tests/compile_final_artifact_boundary_test.py
 .venv/bin/python skills/make-bilingual-study-pdf/scripts/self_test.py
 .venv/bin/python tests/v23_profile_test.py
 .venv/bin/python tests/v23_mineru_test.py
@@ -116,8 +122,10 @@ repository root:
 ```
 
 On Windows, replace `.venv/bin/python` with `.\.venv\Scripts\python.exe`. The
-dedicated Windows filesystem job also runs `profile_binding_test.py`, including real
-junction/reparse-point cases. A missing Python module or external executable is an
+dedicated Windows filesystem job installs the runtime dependency set and runs the
+Profile-binding plus unified work-artifact suites. Those suites exercise real
+junction/reparse-point and hard-link cases in addition to symbolic-link cases when the
+runner grants that privilege. A missing Python module or external executable is an
 environment failure, not a product pass.
 
 ## Installer parity gate
@@ -160,9 +168,10 @@ All four installed directories must:
 
 The GitHub Actions `Baseline` workflow runs the quick baseline, installer parity, and
 both schema V2 automated forward chains for pull requests and pushes to `main`. A
-separate Windows 2025 job runs the EOL, Profile-binding, installed-release, and
-repository-release filesystem suites so junction/reparse-point regressions are
-exercised on Windows. The workflow does not use tag pushes as a release gate.
+separate Windows 2025 job runs the EOL, Profile-binding, installed-release,
+repository-release, and generated work-artifact filesystem suites so hard-link and
+junction/reparse-point regressions are exercised on Windows. The workflow does not use
+tag pushes as a release gate.
 
 ## Default-branch release path
 

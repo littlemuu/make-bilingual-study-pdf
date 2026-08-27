@@ -248,6 +248,100 @@ class ProfileBindingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "regular file"):
             profile_module.bind_profile(fifo_work, "assignment-en-zh", force=True)
 
+    def test_load_profile_rejects_linked_broken_and_nonregular_paths(self) -> None:
+        payload = (
+            json.dumps(
+                profile_module.load_profile("assignment-en-zh"),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n"
+        ).encode("utf-8")
+        outside = self.root / "outside-profile.json"
+        outside.write_bytes(payload)
+        self.assertEqual(profile_module.load_profile(outside)["id"], "assignment-en-zh")
+
+        hardlink = self.root / "hardlink-profile.json"
+        os.link(outside, hardlink)
+        with self.assertRaisesRegex(ValueError, "hard-linked"):
+            profile_module.load_profile(hardlink)
+        self.assertEqual(outside.read_bytes(), payload)
+
+        directory = self.root / "directory-profile.json"
+        directory.mkdir()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            profile_module.load_profile(directory)
+
+        target = self.root / "symlink-target.json"
+        target.write_bytes(payload)
+        symlink = self.root / "symlink-profile.json"
+        broken = self.root / "broken-profile.json"
+        with self.subTest(kind="symlink-and-broken-symlink"):
+            try:
+                os.symlink(target, symlink)
+                os.symlink(self.root / "missing-profile.json", broken)
+            except OSError as exc:
+                self.skipTest(f"file symbolic links are unavailable: {exc}")
+            with self.assertRaisesRegex(ValueError, "symbolic links"):
+                profile_module.load_profile(symlink)
+            with self.assertRaisesRegex(ValueError, "symbolic links"):
+                profile_module.load_profile(broken)
+            self.assertEqual(target.read_bytes(), payload)
+
+    def test_work_internal_profile_override_is_rejected_before_mutation(self) -> None:
+        work_dir = self.make_work("profile-role-work")
+        manifest_path = work_dir / "manifest.json"
+        blocks_path = work_dir / "blocks.jsonl"
+        manifest_path.write_bytes(b"{}\n")
+        blocks_path.write_bytes(b"")
+        output = work_dir / "output"
+        output.mkdir()
+        custom_profile = output / "custom-profile.json"
+        custom_profile.write_text(
+            json.dumps(
+                profile_module.load_profile("assignment-en-zh"),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        expected = {
+            path.relative_to(work_dir).as_posix(): path.read_bytes()
+            for path in work_dir.rglob("*")
+            if path.is_file()
+        }
+
+        with self.assertRaisesRegex(ValueError, "canonical WORK/profile.json"):
+            profile_module.bind_profile(work_dir, custom_profile, force=True)
+        with self.assertRaisesRegex(ValueError, "canonical WORK/profile.json"):
+            profile_module.load_work_profile(work_dir, custom_profile)
+
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPTS / "document_ir.py"),
+                str(work_dir),
+                "--profile",
+                str(custom_profile),
+                "--force",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("canonical WORK/profile.json", completed.stdout + completed.stderr)
+        actual = {
+            path.relative_to(work_dir).as_posix(): path.read_bytes()
+            for path in work_dir.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(actual, expected)
+        self.assertFalse((work_dir / "profile.json").exists())
+        self.assertFalse((work_dir / "document-ir.json").exists())
+
     def test_work_directory_symlink_ancestor_is_rejected_before_external_write(
         self,
     ) -> None:
@@ -290,7 +384,10 @@ class ProfileBindingTests(unittest.TestCase):
             timeout=5,
         )
         if created.returncode != 0:
-            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+            self.fail(
+                "Windows junction regression must execute: "
+                f"{created.stdout}{created.stderr}"
+            )
         try:
             with self.assertRaisesRegex(ValueError, "reparse points"):
                 profile_module.bind_profile(
@@ -320,7 +417,10 @@ class ProfileBindingTests(unittest.TestCase):
             timeout=5,
         )
         if created.returncode != 0:
-            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+            self.fail(
+                "Windows junction regression must execute: "
+                f"{created.stdout}{created.stderr}"
+            )
         try:
             missing_outside_work = outside_parent / "missing-work"
             with self.assertRaisesRegex(ValueError, "reparse points"):

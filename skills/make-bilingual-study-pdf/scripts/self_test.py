@@ -17,6 +17,7 @@ from docx.oxml.ns import qn
 from lxml import etree
 
 from common import read_json, read_jsonl, sha256_file, sha256_text, write_json, write_jsonl
+from audit_source import current_source_audit_bindings
 from build_outputs import latex_escape
 from docx_style import (
     configure_profile,
@@ -25,7 +26,7 @@ from docx_style import (
     style_callout,
 )
 from extract_pdf import invalid_pngs, repair_truncated_renders
-from document_ir import migrate_work_dir, validate_ir_against_sources
+from document_ir import expected_ir, migrate_work_dir, validate_ir_against_sources
 from pipeline import translation_plan_status
 from profile import canonical_profile_sha256, load_profile, semantic_match
 from translation_utils import protect_source, restore_placeholders
@@ -99,11 +100,106 @@ def write_responses(work_dir: Path, mutate=None) -> None:
     write_jsonl(translation_dir / "responses" / "part-0001.jsonl", responses)
 
 
+def write_source_gate(work_dir: Path) -> None:
+    blocks = read_jsonl(work_dir / "blocks.jsonl")
+    profile = read_json(work_dir / "profile.json")
+    write_json(
+        work_dir / "source-audit.json",
+        {
+            "status": "passed",
+            "failures": [],
+            "adapter_source": {"manual_source_review_required": False},
+            "problem_ids": {
+                "oracle": [],
+                "extracted": [],
+                "missing": [],
+                "extra": [],
+            },
+            "global_fivegram_coverage": 1.0,
+            "minimum_global_coverage": profile["qa"][
+                "minimum_global_fivegram_coverage"
+            ],
+            "page_results": [
+                {
+                    "page": 1,
+                    "coverage": 1.0,
+                    "oracle_fivegrams": 0,
+                    "matched_fivegrams": 0,
+                    "block_count": len(blocks),
+                }
+            ],
+            "rendered_pages": 1,
+            **current_source_audit_bindings(work_dir),
+        },
+    )
+
+
+def write_empty_translation_gate(work_dir: Path) -> None:
+    profile = load_profile("assignment-en-zh")
+    manifest = read_json(work_dir / "manifest.json")
+    translation_dir = work_dir / "translation"
+    translation_dir.mkdir(exist_ok=True)
+    glossary_path = translation_dir / "glossary.json"
+    write_json(glossary_path, {"terms": []})
+    (translation_dir / "requests").mkdir(exist_ok=True)
+    (translation_dir / "responses").mkdir(exist_ok=True)
+    plan_path = translation_dir / "plan.json"
+    write_json(
+        plan_path,
+        {
+            "schema_version": 2,
+            "profile_id": profile["id"],
+            "profile_sha256": canonical_profile_sha256(profile),
+            "profile_file_sha256": sha256_file(work_dir / "profile.json"),
+            "document_ir_sha256": sha256_file(work_dir / "document-ir.json"),
+            "source_pdf_sha256": manifest["source_sha256"],
+            "source_manifest_sha256": sha256_file(work_dir / "manifest.json"),
+            "source_blocks_sha256": sha256_file(work_dir / "blocks.jsonl"),
+            "source_audit_sha256": sha256_file(work_dir / "source-audit.json"),
+            "glossary_sha256": sha256_file(glossary_path),
+            "target_language": profile["translation"]["target_language"],
+            "batch_count": 0,
+            "batches": [],
+            "expected_segment_count": 0,
+            "expected_ids": [],
+        },
+    )
+    merged_path = translation_dir / "translations-merged.jsonl"
+    merged_path.write_text("", encoding="utf-8")
+    write_json(
+        translation_dir / "translation-audit.json",
+        {
+            "status": "passed",
+            "expected_segments": 0,
+            "response_segments": 0,
+            "validated_segments": 0,
+            "response_files": [],
+            "missing_ids": [],
+            "extra_ids": [],
+            "duplicate_ids": [],
+            "invalid_source_hash_ids": [],
+            "empty_translation_ids": [],
+            "untranslated_ids": [],
+            "source_copy_ids": [],
+            "placeholder_failures": {},
+            "glossary_failures": {},
+            "merged_output": "translation/translations-merged.jsonl",
+            "failures": [],
+            "plan_sha256": sha256_file(plan_path),
+            "merged_sha256": sha256_file(merged_path),
+            "response_bindings": [],
+        },
+    )
+
+
 def setup(work_dir: Path) -> None:
     work_dir.mkdir()
     profile = load_profile("assignment-en-zh")
     write_json(work_dir / "profile.json", profile)
-    write_json(work_dir / "document-ir.json", {"fixture": True})
+    write_json(
+        work_dir / "document-ir.json",
+        {"nodes": [], "semantic_groups": [], "inventories": {}},
+    )
     blocks = [
         {
             "id": "p001-b001",
@@ -132,11 +228,49 @@ def setup(work_dir: Path) -> None:
     for block in blocks:
         block["source_sha256"] = sha256_text(block["source"])
     write_jsonl(work_dir / "blocks.jsonl", blocks)
+    source_pdf = work_dir / "fixture.pdf"
+    source_pdf.write_bytes(b"temporary self-test source PDF fixture bytes\n")
+    (work_dir / "oracle.txt").write_text("fixture oracle\f", encoding="utf-8")
+    (work_dir / "oracle-layout.txt").write_text(
+        "fixture layout oracle\f", encoding="utf-8"
+    )
+    renders = work_dir / "renders"
+    renders.mkdir()
+    Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
+    contacts = work_dir / "source-contact"
+    contacts.mkdir()
+    contact_path = contacts / "contact-001.png"
+    Image.new("RGB", (2, 3), "white").save(contact_path)
     write_json(
         work_dir / "manifest.json",
-        {"source_sha256": "0" * 64, "problem_ids": [], "external_uris": []},
+        {
+            "source_pdf": str(source_pdf),
+            "source_sha256": sha256_file(source_pdf),
+            "page_count": 1,
+            "artifacts": {
+                "profile": "profile.json",
+                "document_ir": "document-ir.json",
+                "blocks": "blocks.jsonl",
+                "oracle": "oracle.txt",
+                "oracle_layout": "oracle-layout.txt",
+                "renders": "renders/page-*.png",
+                "visuals": "visuals/visual-*.png",
+                "source_contact": "source-contact/contact-*.png",
+            },
+            "source_contact_sheets": [
+                {
+                    "path": "source-contact/contact-001.png",
+                    "sha256": sha256_file(contact_path),
+                    "first_page": 1,
+                    "last_page": 1,
+                }
+            ],
+            "problem_ids": [],
+            "external_uris": [],
+        },
     )
-    write_json(work_dir / "source-audit.json", {"status": "passed"})
+    write_json(work_dir / "document-ir.json", expected_ir(work_dir, profile))
+    write_source_gate(work_dir)
     translation_dir = work_dir / "translation"
     translation_dir.mkdir()
     write_json(
@@ -429,7 +563,54 @@ def main() -> None:
         translation_dir = work_dir / "translation"
         output_dir.mkdir()
         translation_dir.mkdir()
-        write_json(work_dir / "manifest.json", {"source_sha256": "0" * 64})
+        profile = load_profile("assignment-en-zh")
+        write_json(work_dir / "profile.json", profile)
+        write_json(
+            work_dir / "document-ir.json",
+            {"nodes": [], "semantic_groups": [], "inventories": {}},
+        )
+        (work_dir / "blocks.jsonl").write_text("", encoding="utf-8")
+        source_pdf = work_dir / "fixture-source.pdf"
+        source_pdf.write_bytes(b"temporary final QA source PDF fixture bytes\n")
+        (work_dir / "oracle.txt").write_text("fixture oracle\f", encoding="utf-8")
+        (work_dir / "oracle-layout.txt").write_text(
+            "fixture layout oracle\f", encoding="utf-8"
+        )
+        renders = work_dir / "renders"
+        renders.mkdir()
+        Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
+        contacts = work_dir / "source-contact"
+        contacts.mkdir()
+        contact_path = contacts / "contact-001.png"
+        Image.new("RGB", (2, 3), "white").save(contact_path)
+        write_json(
+            work_dir / "manifest.json",
+            {
+                "source_pdf": str(source_pdf),
+                "source_sha256": sha256_file(source_pdf),
+                "page_count": 1,
+                "artifacts": {
+                    "profile": "profile.json",
+                    "document_ir": "document-ir.json",
+                    "blocks": "blocks.jsonl",
+                    "oracle": "oracle.txt",
+                    "oracle_layout": "oracle-layout.txt",
+                    "renders": "renders/page-*.png",
+                    "visuals": "visuals/visual-*.png",
+                    "source_contact": "source-contact/contact-*.png",
+                },
+                "visuals": [],
+                "source_contact_sheets": [
+                    {
+                        "path": "source-contact/contact-001.png",
+                        "sha256": sha256_file(contact_path),
+                        "first_page": 1,
+                        "last_page": 1,
+                    }
+                ],
+            },
+        )
+        write_json(work_dir / "document-ir.json", expected_ir(work_dir, profile))
         for path, payload in (
             (output_dir / "fixture.md", "source\n\n译文\n"),
             (output_dir / "fixture.tex", "fixture\n"),
@@ -437,14 +618,57 @@ def main() -> None:
             (output_dir / "fixture.pdf", "pdf fixture\n"),
         ):
             path.write_text(payload, encoding="utf-8")
+        write_source_gate(work_dir)
+        write_empty_translation_gate(work_dir)
+        build_manifest_path = output_dir / "build-manifest.json"
         write_json(
-            output_dir / "build-manifest.json",
-            {"markdown": "fixture.md", "latex": "fixture.tex"},
+            build_manifest_path,
+            {
+                "markdown": "fixture.md",
+                "markdown_sha256": sha256_file(output_dir / "fixture.md"),
+                "latex": "fixture.tex",
+                "latex_sha256": sha256_file(output_dir / "fixture.tex"),
+                "assets": [],
+                "block_count": 0,
+                "disposition_counts": {},
+                "role_inventory": {
+                    role: {"occurrence_count": 0}
+                    for role in ("problem", "example", "tip")
+                },
+                "problem_ids": [],
+                "external_uris": [],
+                "translation_audit_sha256": sha256_file(
+                    translation_dir / "translation-audit.json"
+                ),
+            },
         )
-        write_json(work_dir / "source-audit.json", {"status": "passed"})
-        write_json(translation_dir / "translation-audit.json", {"status": "passed"})
-        write_json(output_dir / "output-audit.json", {"status": "passed"})
+        write_json(
+            output_dir / "output-audit.json",
+            {
+                "status": "passed",
+                "failures": [],
+                "semantic_constraint_checks": {},
+                "markdown": "fixture.md",
+                "latex": "fixture.tex",
+                "asset_count": 0,
+                "block_count": 0,
+                "disposition_counts": {},
+                "build_manifest_sha256": sha256_file(build_manifest_path),
+                "artifact_bindings": {
+                    "markdown": {
+                        "path": "fixture.md",
+                        "sha256": sha256_file(output_dir / "fixture.md"),
+                    },
+                    "latex": {
+                        "path": "fixture.tex",
+                        "sha256": sha256_file(output_dir / "fixture.tex"),
+                    },
+                    "assets": [],
+                },
+            },
+        )
         pdf_hash = sha256_file(output_dir / "fixture.pdf")
+        docx_hash = sha256_file(output_dir / "fixture.docx")
         contact_dir = output_dir / "contact"
         contact_dir.mkdir()
         contact_path = contact_dir / "contact-001.png"
@@ -455,30 +679,109 @@ def main() -> None:
             "first_page": 1,
             "last_page": 1,
         }
+        docx_audit_path = output_dir / "docx-audit.json"
+        docx_bindings = {
+            "profile": profile["id"],
+            "profile_file_sha256": sha256_file(work_dir / "profile.json"),
+            "build_manifest_sha256": sha256_file(build_manifest_path),
+            "output_audit_sha256": sha256_file(
+                output_dir / "output-audit.json"
+            ),
+            "docx_sha256": docx_hash,
+        }
+        write_json(
+            docx_audit_path,
+            {
+                "status": "passed",
+                "docx": str(output_dir / "fixture.docx"),
+                **docx_bindings,
+                "problem_count": 0,
+                "problem_ids": [],
+                "problem_range_count": 0,
+                "example_count": 0,
+                "low_resource_tip_count": 0,
+                "external_link_count": 0,
+                "external_links": [],
+                "image_count": 0,
+                "chinese_character_count": 1,
+                "checks": {
+                    "docx_opens": True,
+                    "problem_ids_are_unique": True,
+                    "no_internal_problem_markers": True,
+                    "chinese_present": True,
+                    "minimum_images_met": True,
+                    "problem_callout_borders_are_aligned": True,
+                    "problem_count_matches": True,
+                    "example_count_matches": True,
+                    "tip_count_matches": True,
+                    "external_link_count_matches": True,
+                },
+                "failures": [],
+            },
+        )
         write_json(
             output_dir / "compile-audit.json",
             {
                 "status": "passed",
                 "automated_status": "passed",
                 "docx": "fixture.docx",
+                "docx_sha256": docx_hash,
                 "pdf": "fixture.pdf",
                 "pdf_sha256": pdf_hash,
                 "page_count": 1,
+                "rendered_page_count": 1,
+                "invalid_renders": [],
+                "blank_pages": [],
+                "problem_count": 0,
+                "font_count": 1,
+                "pdf_image_count": 0,
+                "requested_cjk_font": "Fixture CJK",
+                "resolved_cjk_family": "Fixture CJK",
+                "resolved_cjk_file": "fixture-cjk.ttf",
+                "minimum_page_text_characters": 1,
+                "minimum_nonwhite_fraction": 0.1,
                 "contact_sheets": [contact_record],
+                "checks": {
+                    "pdf_created": True,
+                    "all_pages_rendered": True,
+                    "all_renders_decodable": True,
+                    "contact_sheets_complete": True,
+                    "all_pages_a4": True,
+                    "no_apparently_blank_pages": True,
+                    "chinese_extractable": True,
+                    "all_fonts_embedded": True,
+                    "requested_cjk_font_resolved_exactly": True,
+                    "expected_cjk_font_embedded": True,
+                    "problem_count_matches": True,
+                },
                 "warnings": [],
+                "failures": [],
+                "build_manifest_sha256": sha256_file(build_manifest_path),
+                "output_audit_sha256": sha256_file(
+                    output_dir / "output-audit.json"
+                ),
+                **docx_bindings,
+                "docx_audit_sha256": sha256_file(docx_audit_path),
+                "docx_audit_bindings": docx_bindings,
             },
         )
         write_json(
             output_dir / "visual-review.json",
             {
                 "status": "passed",
+                "compile_audit_sha256": sha256_file(
+                    output_dir / "compile-audit.json"
+                ),
+                "pdf": "fixture.pdf",
                 "pdf_sha256": pdf_hash,
+                "page_count": 1,
                 "reviewed_pages": [1],
                 "contact_sheets_inspected": [contact_record["path"]],
                 "contact_sheets_sha256": {
                     contact_record["path"]: contact_record["sha256"]
                 },
                 "notes": "Inspected the synthetic one-page contact sheet.",
+                "failures": [],
             },
         )
         finalized = subprocess.run(

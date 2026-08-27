@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pymupdf as fitz
+from PIL import Image
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
@@ -18,8 +22,18 @@ from docx.enum.style import WD_STYLE_TYPE
 
 import docx_style
 import compile_docx_pdf
+from adapters.mineru import LARGE_RASTER_PAGE_AREA_RATIO, RASTER_COVERAGE_METHOD
+from audit_source import current_source_audit_bindings
 from build_docx import materialize_html_tables
-from common import sha256_file, write_json
+from common import (
+    read_json,
+    read_jsonl,
+    sha256_file,
+    sha256_text,
+    write_json,
+    write_jsonl,
+)
+from document_ir import expected_ir
 from docx_ast import GENERIC_BEGIN, GENERIC_END, PROBLEM_BEGIN, PROBLEM_END, transform
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
@@ -259,132 +273,372 @@ def test_html_table_materialization() -> None:
     )
 
 
-def make_inventory(profile: dict) -> dict:
-    result = {}
-    node_ids = {
-        "theorem": "theorem-node",
-        "definition": "definition-node",
-        "equation": "equation-node",
-    }
-    for role, policy in profile_contract(profile)["role_inventory"].items():
-        occurrence = 1 if role in node_ids else 0
-        membership = "complete" if role == "theorem" else "anchor-only"
-        result[role] = {
-            "occurrence_count": occurrence,
-            "node_count": occurrence,
-            "occurrence_ids": [f"{role}:{node_ids[role]}"] if occurrence else [],
-            "membership_counts": {
-                "none": 0,
-                "anchor-only": occurrence if membership == "anchor-only" else 0,
-                "complete": occurrence if membership == "complete" else 0,
-            },
-            "minimum": policy["minimum"],
-            "maximum": policy["maximum"],
-            "style": policy["style"],
-            "output": policy["output"],
+def run_work_script(name: str, work: Path, *arguments: str) -> None:
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONUTF8"] = "1"
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPT_DIR / name), str(work), *arguments],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
+def prepare_frozen_v2_output(
+    work: Path,
+    profile: dict,
+    theorem_source: str,
+    definition_source: str,
+    equation_source: str,
+) -> tuple[dict, Path]:
+    """Build a complete synthetic source-to-output freeze for the DOCX tests."""
+    blocks = [
+        {
+            "id": "title-node",
+            "page": 1,
+            "bbox": [72.0, 30.0, 500.0, 50.0],
+            "kind": "heading",
+            "source": "Frozen Lecture Notes",
+            "source_sha256": sha256_text("Frozen Lecture Notes"),
+            "translatable": True,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "title",
+        },
+        {
+            "id": "section-node",
+            "page": 1,
+            "bbox": [72.0, 55.0, 500.0, 75.0],
+            "kind": "heading",
+            "source": "1 Foundations",
+            "source_sha256": sha256_text("1 Foundations"),
+            "translatable": True,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "section",
+        },
+        {
+            "id": "theorem-node",
+            "page": 1,
+            "bbox": [72.0, 80.0, 500.0, 110.0],
+            "kind": "prose",
+            "source": theorem_source,
+            "source_sha256": sha256_text(theorem_source),
+            "translatable": True,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "theorem",
+        },
+        {
+            "id": "definition-node",
+            "page": 1,
+            "bbox": [72.0, 130.0, 500.0, 160.0],
+            "kind": "prose",
+            "source": definition_source,
+            "source_sha256": sha256_text(definition_source),
+            "translatable": True,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "definition",
+        },
+        {
+            "id": "equation-node",
+            "page": 1,
+            "bbox": [72.0, 180.0, 500.0, 210.0],
+            "kind": "equation",
+            "source": equation_source,
+            "source_sha256": sha256_text(equation_source),
+            "translatable": False,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "equation",
+        },
+        {
+            "id": "paragraph-node",
+            "page": 1,
+            "bbox": [72.0, 220.0, 500.0, 250.0],
+            "kind": "prose",
+            "source": "This paragraph closes the synthetic lecture fixture.",
+            "source_sha256": sha256_text(
+                "This paragraph closes the synthetic lecture fixture."
+            ),
+            "translatable": True,
+            "links": [],
+            "protected_spans": [],
+            "stats": {},
+            "adapter_role": "paragraph",
+        },
+    ]
+    content: list[dict] = []
+    evidence_items: list[dict] = []
+    adapter_id = profile_contract(profile)["adapter"]
+    for index, block in enumerate(blocks):
+        pointer = f"/{index}"
+        content_item = {
+            "type": block["kind"],
+            "sub_type": None,
+            "text": block["source"],
+            "page_idx": 0,
+            "bbox": block["bbox"],
         }
-    return result
+        item_hash = sha256_text(
+            json.dumps(
+                content_item,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        block["evidence"] = {
+            "adapter": adapter_id,
+            "adapter_role": block["adapter_role"],
+            "content_pointer": pointer,
+            "content_item_pointer": pointer,
+            "content_item_sha256": item_hash,
+            "raw_type": block["kind"],
+            "raw_sub_type": None,
+        }
+        if block["id"] == "theorem-node":
+            block["evidence"]["structural_membership"] = {
+                "status": "complete",
+                "member_node_ids": ["theorem-node"],
+            }
+        content.append(content_item)
+        evidence_items.append(
+            {
+                "pointer": pointer,
+                "item_sha256": item_hash,
+                "page_idx": 0,
+                "page_order": index + 1,
+                "raw_type": block["kind"],
+                "raw_sub_type": None,
+                "disposition": "emitted",
+                "reason": None,
+                "node_ids": [block["id"]],
+                "visual_ids": [],
+                "middle_pointers": [],
+                "middle_match": "not-applicable",
+            }
+        )
+    write_jsonl(work / "blocks.jsonl", blocks)
+
+    (work / "oracle.txt").write_text("\f", encoding="utf-8")
+    (work / "oracle-layout.txt").write_text("\f", encoding="utf-8")
+    renders = work / "renders"
+    renders.mkdir()
+    Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
+    source_contact = work / "source-contact"
+    source_contact.mkdir()
+    contact_path = source_contact / "contact-1.png"
+    Image.new("RGB", (2, 3), "white").save(contact_path)
+
+    source_pdf = work / "source.pdf"
+    source_document = fitz.open()
+    source_page = source_document.new_page(width=612, height=792)
+    source_page.insert_text(
+        (72, 72),
+        "Lecture notes provide a deterministic native-text fixture for theorem, "
+        "definition, and equation DOCX freeze-chain verification.",
+    )
+    source_pdf.write_bytes(
+        source_document.tobytes(garbage=4, deflate=True, no_new_id=True)
+    )
+    source_document.close()
+
+    adapter_inputs = work / "adapter-inputs"
+    adapter_inputs.mkdir()
+    origin_path = adapter_inputs / "fixture-origin.pdf"
+    origin_path.write_bytes(source_pdf.read_bytes())
+    content_path = adapter_inputs / "fixture-content.json"
+    write_json(content_path, content)
+    middle_path = adapter_inputs / "fixture-middle.json"
+    write_json(middle_path, {})
+    input_records = []
+    for role, path in (
+        ("origin", origin_path),
+        ("content", content_path),
+        ("middle", middle_path),
+    ):
+        input_records.append(
+            {
+                "role": role,
+                "relative_path": path.name,
+                "work_path": path.relative_to(work).as_posix(),
+                "sha256": sha256_file(path),
+                "size": path.stat().st_size,
+            }
+        )
+    input_records.sort(key=lambda item: (item["role"], item["relative_path"]))
+    evidence = {
+        "schema_version": 1,
+        "adapter": adapter_id,
+        "source": {
+            "logical_name": source_pdf.name,
+            "sha256": sha256_file(source_pdf),
+            "page_count": 1,
+        },
+        "mineru": {
+            "version": "3.4.4",
+            "backend": "pipeline",
+            "support_level": "verified",
+        },
+        "raster_detection": {
+            "method": RASTER_COVERAGE_METHOD,
+            "large_page_area_ratio": LARGE_RASTER_PAGE_AREA_RATIO,
+        },
+        "inputs": input_records,
+        "assets": [],
+        "pages": [
+            {
+                "page_idx": 0,
+                "page_size": [612.0, 792.0],
+                "source_page_size": [612.0, 792.0],
+                "native_text_characters": 130,
+                "adapter_text_characters": sum(len(block["source"]) for block in blocks),
+                "raster_image_area_ratio": 0.0,
+                "manual_review_reasons": [],
+                "status": "native_oracle_available",
+            }
+        ],
+        "items": evidence_items,
+        "manual_source_review_required": False,
+        "manual_review_pages": [],
+        "manual_review_page_comparisons": [],
+        "manual_review_contact_sheets": [],
+    }
+    evidence_path = work / "adapter-evidence.json"
+    write_json(evidence_path, evidence)
+    manifest = {
+        "schema_version": 4,
+        "profile": {
+            "id": profile["id"],
+            "sha256": canonical_profile_sha256(profile),
+        },
+        "source_pdf": str(source_pdf),
+        "source_sha256": sha256_file(source_pdf),
+        "page_count": 1,
+        "artifacts": {
+            "profile": "profile.json",
+            "document_ir": "document-ir.json",
+            "adapter_evidence": "adapter-evidence.json",
+            "blocks": "blocks.jsonl",
+            "oracle": "oracle.txt",
+            "oracle_layout": "oracle-layout.txt",
+            "renders": "renders/page-*.png",
+            "source_contact": "source-contact/contact-*.png",
+        },
+        "adapter": {
+            "id": adapter_id,
+            "evidence": "adapter-evidence.json",
+            "evidence_sha256": sha256_file(evidence_path),
+            "backend": "pipeline",
+            "version": "3.4.4",
+        },
+        "input_artifacts": input_records,
+        "external_uris": [],
+        "external_uri_count": 0,
+        "links": [],
+        "visuals": [],
+        "source_contact_sheets": [
+            {
+                "path": "source-contact/contact-1.png",
+                "sha256": sha256_file(contact_path),
+                "first_page": 1,
+                "last_page": 1,
+            }
+        ],
+        "source_review_pages": [],
+        "source_review_contact_sheets": [],
+    }
+    write_json(work / "manifest.json", manifest)
+    ir = expected_ir(work, profile)
+    write_json(work / "document-ir.json", ir)
+    source_bindings = current_source_audit_bindings(work)
+    write_json(
+        work / "source-audit.json",
+        {
+            "status": "passed",
+            **source_bindings,
+            "minimum_global_coverage": profile["qa"][
+                "minimum_global_fivegram_coverage"
+            ],
+            "failures": [],
+        },
+    )
+
+    translation_dir = work / "translation"
+    translation_dir.mkdir()
+    write_json(
+        translation_dir / "glossary.json",
+        {
+            "schema_version": 1,
+            "profile_id": profile["id"],
+            "profile_sha256": canonical_profile_sha256(profile),
+            "target_language": profile["translation"]["target_language"],
+            "source_blocks_sha256": sha256_file(work / "blocks.jsonl"),
+            "terms": [],
+        },
+    )
+    run_work_script("prepare_translation.py", work)
+    plan = read_json(work / "translation" / "plan.json")
+    translations = {
+        "title-node": "冻结讲义",
+        "section-node": "1 基础",
+        "theorem-node": "定理一。这是冻结的目标陈述。",
+        "definition-node": "定义二。这是只包含锚点的目标陈述。",
+        "paragraph-node": "本段结束这个合成讲义夹具。",
+    }
+    for batch in plan["batches"]:
+        requests = read_jsonl(work / "translation" / batch["request_file"])
+        responses = []
+        for request in requests:
+            placeholders = " ".join(
+                token["placeholder"] for token in request.get("protected_tokens", [])
+            )
+            translation = translations[request["id"]]
+            if placeholders:
+                translation = f"{translation} {placeholders}"
+            responses.append(
+                {
+                    "id": request["id"],
+                    "source_sha256": request["source_sha256"],
+                    "translation": translation,
+                }
+            )
+        write_jsonl(work / "translation" / batch["response_file"], responses)
+    run_work_script("audit_translation.py", work)
+    run_work_script("build_outputs.py", work, "--basename", "fixture")
+    run_work_script("audit_outputs.py", work)
+    return ir["inventories"]["role_inventory"], work / "output" / "fixture.md"
 
 
 def test_frozen_audit() -> None:
     profile = load_profile("lecture-notes-en-zh")
     with tempfile.TemporaryDirectory(prefix="v23-docx-test-") as temporary:
         work = Path(temporary)
-        output = work / "output"
-        output.mkdir()
         profile_path = work / "profile.json"
         write_json(profile_path, profile)
-        inventory = make_inventory(profile)
         theorem_source = "Theorem 1. Frozen source statement."
         definition_source = "Definition 2. Scoped anchor source statement."
         equation_source = "E equals m c squared."
-        ir = {
-            "schema_version": 2,
-            "profile": {"id": profile["id"], "sha256": canonical_profile_sha256(profile)},
-            "nodes": [
-                {
-                    "id": "theorem-node",
-                    "source": {"text": theorem_source, "sha256": "test"},
-                    "semantic": {"role": "theorem", "style": "theorem", "output": "bilingual"},
-                },
-                {
-                    "id": "definition-node",
-                    "source": {"text": definition_source, "sha256": "test"},
-                    "semantic": {
-                        "role": "definition",
-                        "style": "definition",
-                        "output": "bilingual",
-                    },
-                },
-                {
-                    "id": "equation-node",
-                    "source": {"text": equation_source, "sha256": "test"},
-                    "semantic": {"role": "equation", "style": "equation", "output": "source-only"},
-                },
-            ],
-            "semantic_groups": [
-                {
-                    "id": "theorem:theorem-node",
-                    "role": "theorem",
-                    "identifier": None,
-                    "anchor_node_id": "theorem-node",
-                    "member_node_ids": ["theorem-node"],
-                    "membership": "complete",
-                },
-                {
-                    "id": "equation:equation-node",
-                    "role": "equation",
-                    "identifier": None,
-                    "anchor_node_id": "equation-node",
-                    "member_node_ids": ["equation-node"],
-                    "membership": "anchor-only",
-                },
-                {
-                    "id": "definition:definition-node",
-                    "role": "definition",
-                    "identifier": None,
-                    "anchor_node_id": "definition-node",
-                    "member_node_ids": ["definition-node"],
-                    "membership": "anchor-only",
-                },
-            ],
-            "inventories": {"role_inventory": inventory},
-        }
-        ir_path = work / "document-ir.json"
-        write_json(ir_path, ir)
-        markdown_path = output / "fixture.md"
-        markdown_path.write_text(
-            "\n".join(
-                [
-                    "<!-- bilingual:segment id=theorem-node source_sha256=test -->",
-                    theorem_source,
-                    "",
-                    "> 定理一。这是冻结的目标陈述。",
-                    "",
-                    "<!-- bilingual:segment id=definition-node source_sha256=test -->",
-                    definition_source,
-                    "",
-                    "> 定义二。这是只包含锚点的目标陈述。",
-                    "",
-                    "<!-- bilingual:source-only id=equation-node source_sha256=test -->",
-                    equation_source,
-                    "",
-                ]
-            ),
-            encoding="utf-8",
+        inventory, markdown_path = prepare_frozen_v2_output(
+            work,
+            profile,
+            theorem_source,
+            definition_source,
+            equation_source,
         )
-        build = {
-            "schema_version": 1,
-            "profile_id": profile["id"],
-            "profile_file_sha256": sha256_file(profile_path),
-            "document_ir_sha256": sha256_file(ir_path),
-            "role_inventory": inventory,
-            "external_uris": [],
-            "assets": [],
-            "markdown": markdown_path.name,
-            "markdown_sha256": sha256_file(markdown_path),
-        }
-        write_json(output / "build-manifest.json", build)
+        output = work / "output"
+        ir_path = work / "document-ir.json"
 
         docx_path = output / "fixture.docx"
         if shutil.which("pandoc"):
@@ -468,31 +722,40 @@ def test_frozen_audit() -> None:
         assert report["scoped_anchor_callout_checks"] == {
             "definition:definition-node": True
         }
-        assert report["non_structural_anchor_unboxed"] == {
-            "equation:equation-node": True
-        }
+        assert report["non_structural_anchor_unboxed"][
+            "equation:equation-node"
+        ] is True
         assert report["source_only_occurrence_counts"] == {"equation-node": 1}
         assert report["document_ir_sha256"] == sha256_file(ir_path)
+        passed_docx_bytes = docx_path.read_bytes()
+        passed_audit_bytes = audit_path.read_bytes()
 
         def audit_fixture(path: Path) -> subprocess.CompletedProcess[str]:
-            return subprocess.run(
-                [
-                    sys.executable,
-                    str(SCRIPT_DIR / "audit_docx.py"),
-                    str(path),
-                    "--work-dir",
-                    str(work),
-                    "--expected-role",
-                    "theorem=1",
-                    "--expected-role",
-                    "definition=1",
-                    "--expected-role",
-                    "equation=1",
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
+            candidate_bytes = path.read_bytes()
+            path.unlink()
+            docx_path.write_bytes(candidate_bytes)
+            try:
+                return subprocess.run(
+                    [
+                        sys.executable,
+                        str(SCRIPT_DIR / "audit_docx.py"),
+                        str(docx_path),
+                        "--work-dir",
+                        str(work),
+                        "--expected-role",
+                        "theorem=1",
+                        "--expected-role",
+                        "definition=1",
+                        "--expected-role",
+                        "equation=1",
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+            finally:
+                docx_path.write_bytes(passed_docx_bytes)
+                audit_path.write_bytes(passed_audit_bytes)
 
         missing_document = Document()
         missing_document.styles.add_style("Block Text", WD_STYLE_TYPE.PARAGRAPH)

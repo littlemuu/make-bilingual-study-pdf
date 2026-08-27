@@ -80,6 +80,14 @@ never silently substitute a different backend.
 Use `python3` for all scripts below. Let `SKILL_DIR` mean the directory containing this
 file and `WORK_DIR` mean a new dedicated directory for this one document.
 
+Treat every pre-existing entry below `WORK_DIR` as untrusted. The scripts reject
+symbolic links, junctions/reparse points, hard-linked files, non-regular entries, and
+unsafe relative metadata before reading, clearing, or replacing a stage's artifacts.
+`--force` authorizes rebuilding only after a complete stage preflight; it never
+authorizes following a link or modifying another inode. Do not work around an artifact
+boundary error with manual deletion or copying. Inspect the reported entry, move any
+legitimate backup completely outside the active work directory, and rerun the stage.
+
 ### 1. Extract and prove the source inventory
 
 For the native adapter, run:

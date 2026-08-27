@@ -11,7 +11,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from common import json_loads_strict, read_json, sha256_text, validate_json_value
+from common import json_loads_strict, sha256_text, validate_json_value
+from safe_artifacts import (
+    ArtifactSafetyError,
+    lexical_absolute_path,
+    read_artifact_text,
+    validate_artifact_file,
+)
 from semantic_registry import (
     AUXILIARY_ROLES,
     GROUPING_MODES,
@@ -727,21 +733,83 @@ def role_inventory(profile: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return copy.deepcopy(profile_contract(profile)["role_inventory"])
 
 
-def load_profile(reference: str | Path | None = None) -> dict[str, Any]:
+def _profile_reference_path(
+    reference: str | Path | None,
+) -> tuple[Path, bool]:
     if reference is None:
-        path = PROFILE_DIR / f"{DEFAULT_PROFILE_ID}.json"
-    else:
-        candidate = Path(reference).expanduser()
-        if candidate.is_file():
-            path = candidate.resolve()
-        else:
-            name = str(reference)
-            if not PROFILE_ID_RE.fullmatch(name):
-                raise ValueError(f"profile does not exist: {reference}")
-            path = PROFILE_DIR / f"{name}.json"
-    if not path.is_file():
-        raise ValueError(f"profile does not exist: {path}")
-    return validate_profile(read_json(path))
+        return lexical_absolute_path(PROFILE_DIR / f"{DEFAULT_PROFILE_ID}.json"), False
+
+    name = str(reference)
+    candidate = Path(reference).expanduser()
+    explicit_path = (
+        isinstance(reference, Path)
+        or candidate.is_absolute()
+        or "/" in name
+        or "\\" in name
+        or bool(candidate.suffix)
+        or os.path.lexists(candidate)
+    )
+    if explicit_path:
+        return lexical_absolute_path(candidate), True
+    if not PROFILE_ID_RE.fullmatch(name):
+        raise ValueError(f"profile does not exist: {reference}")
+    return lexical_absolute_path(PROFILE_DIR / f"{name}.json"), False
+
+
+def _reject_noncanonical_work_profile_path(path: Path) -> None:
+    """Do not let a Profile input double as a generated WORK artifact."""
+    for ancestor in (path.parent, *path.parents):
+        if not (
+            os.path.lexists(ancestor / "manifest.json")
+            and os.path.lexists(ancestor / "blocks.jsonl")
+        ):
+            continue
+        canonical = lexical_absolute_path(ancestor / "profile.json")
+        if os.path.normcase(os.fspath(path)) != os.path.normcase(os.fspath(canonical)):
+            raise ValueError(
+                "a Profile path inside WORK must be the canonical WORK/profile.json"
+            )
+        return
+
+
+def _validate_work_profile_reference(
+    work_dir: Path, reference: str | Path | None
+) -> None:
+    if reference is None:
+        return
+    path, explicit_path = _profile_reference_path(reference)
+    if not explicit_path:
+        return
+    absolute_work = lexical_absolute_path(work_dir)
+    try:
+        path.relative_to(absolute_work)
+    except ValueError:
+        return
+    canonical = absolute_work / "profile.json"
+    if os.path.normcase(os.fspath(path)) != os.path.normcase(os.fspath(canonical)):
+        raise ValueError(
+            "a Profile override inside WORK must be the canonical WORK/profile.json"
+        )
+
+
+def load_profile(reference: str | Path | None = None) -> dict[str, Any]:
+    path, explicit_path = _profile_reference_path(reference)
+    if explicit_path:
+        _reject_noncanonical_work_profile_path(path)
+    try:
+        validate_artifact_file(path, boundary=path.parent, allow_missing=True)
+        if not os.path.lexists(path):
+            raise ValueError(f"profile does not exist: {path}")
+        payload = read_artifact_text(path, boundary=path.parent)
+    except ArtifactSafetyError as exc:
+        raise ValueError(f"unsafe Profile path: {exc}") from exc
+    try:
+        profile = json_loads_strict(payload)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"invalid Profile JSON: {exc}") from exc
+    if not isinstance(profile, dict):
+        raise ValueError("Profile must be a JSON object")
+    return validate_profile(profile)
 
 
 def _bind_validated_profile(
@@ -776,6 +844,7 @@ def bind_profile(
     work_dir: Path, reference: str | Path | None = None, *, force: bool = False
 ) -> dict[str, Any]:
     work_dir = validate_profile_binding_target(work_dir)
+    _validate_work_profile_reference(work_dir, reference)
     return _bind_validated_profile(work_dir, load_profile(reference), force=force)
 
 
@@ -783,6 +852,7 @@ def load_work_profile(
     work_dir: Path, reference: str | Path | None = None
 ) -> dict[str, Any]:
     work_dir, directory_identities = _inspect_work_directory(work_dir)
+    _validate_work_profile_reference(work_dir, reference)
     bound_path = work_dir / "profile.json"
     bound_status = _profile_target_status(bound_path)
     if bound_status is not None:

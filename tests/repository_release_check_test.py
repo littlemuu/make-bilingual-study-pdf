@@ -300,8 +300,9 @@ class RepositoryReleaseCheckTests(unittest.TestCase):
                 timeout=5,
             )
             if created.returncode != 0:
-                self.skipTest(
-                    "directory symlinks and junctions unavailable: "
+                self.fail(
+                    "Windows junction regression must execute after the "
+                    "directory-symlink attempt failed: "
                     f"{exc}; {created.stdout}{created.stderr}"
                 )
             junction_created = True
@@ -344,7 +345,10 @@ class RepositoryReleaseCheckTests(unittest.TestCase):
                 timeout=5,
             )
             if created.returncode != 0:
-                self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+                self.fail(
+                    "Windows junction regression must execute: "
+                    f"{created.stdout}{created.stderr}"
+                )
             junction_created = True
         else:
             try:

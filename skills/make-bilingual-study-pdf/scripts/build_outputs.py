@@ -4,31 +4,93 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
-import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 from common import (
+    json_loads_strict,
     problem_ids,
-    read_json,
-    read_jsonl,
     repair_pdf_linebreaks,
-    sha256_file,
-    write_json,
+    sha256_text,
 )
+from audit_source import current_manifest_visual_bindings, validate_source_audit_binding
+from audit_translation import validate_translation_audit_binding
 from profile import (
     canonical_profile_sha256,
     load_work_profile,
     profile_contract,
 )
 from html_table import validate_table_html
+from safe_artifacts import (
+    atomic_copy_file,
+    atomic_write_text,
+    clear_artifact_directory,
+    lexical_absolute_path,
+    portable_artifact_basename,
+    prepare_artifact_directory,
+    read_artifact_text,
+    remove_artifact_file,
+    sha256_artifact,
+    validate_artifact_directory,
+    validate_artifact_file,
+    validate_artifact_tree,
+    work_relative_artifact_path,
+)
 
 
 GENERIC_OUTPUT_DISPOSITIONS = frozenset(
     {"bilingual", "source-only", "visual-once", "artifact-omitted"}
 )
+
+
+def _read_json(path: Path, work_dir: Path) -> Any:
+    return json_loads_strict(read_artifact_text(path, boundary=work_dir))
+
+
+def _read_jsonl(path: Path, work_dir: Path) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(
+        read_artifact_text(path, boundary=work_dir).splitlines(), 1
+    ):
+        if not raw.strip():
+            continue
+        try:
+            value = json_loads_strict(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"invalid JSONL at {path}:{line_number}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"invalid JSONL object at {path}:{line_number}")
+        values.append(value)
+    return values
+
+
+def _atomic_write_json(path: Path, value: object, work_dir: Path) -> None:
+    atomic_write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        boundary=work_dir,
+    )
+
+
+def _artifact_exists(path: Path, work_dir: Path) -> bool:
+    validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+    return os.path.lexists(path)
+
+
+def _invalidate_output_audit(work_dir: Path) -> None:
+    output_dir = work_dir / "output"
+    if validate_artifact_tree(
+        output_dir, work_dir, allow_missing=True
+    ) is None:
+        return
+    output_audit_path = output_dir / "output-audit.json"
+    validate_artifact_file(
+        output_audit_path, boundary=work_dir, allow_missing=True
+    )
+    remove_artifact_file(output_audit_path, boundary=work_dir)
 
 
 def _legacy_output_policy(block: dict[str, Any]) -> str:
@@ -111,8 +173,8 @@ def load_semantic_model(
     """Load a strict V2 semantic model, with a non-mutating V1 compatibility view."""
     contract = profile_contract(profile)
     ir_path = work_dir / "document-ir.json"
-    if ir_path.is_file():
-        ir = read_json(ir_path)
+    if _artifact_exists(ir_path, work_dir):
+        ir = _read_json(ir_path, work_dir)
         raw_nodes = ir.get("nodes")
         if not isinstance(raw_nodes, list):
             raise ValueError("document IR nodes must be an array")
@@ -570,29 +632,40 @@ def make_source_only_latex(block: dict[str, Any]) -> str:
     return f"{anchor}\n{latex_escape(source)}"
 
 
-def copy_visuals(
+def plan_visuals(
     work_dir: Path, output_dir: Path, visuals: list[dict[str, Any]]
-) -> tuple[dict[str, str], list[dict[str, str]]]:
+) -> tuple[
+    dict[str, str],
+    list[dict[str, str]],
+    list[tuple[Path, Path]],
+]:
     assets_dir = output_dir / "assets"
-    assets_dir.mkdir(exist_ok=True)
     paths: dict[str, str] = {}
     copied: list[dict[str, str]] = []
-    for visual in visuals:
-        source = work_dir / visual["path"]
-        if not source.is_file():
-            raise SystemExit(f"missing required visual: {source}")
+    copies: list[tuple[Path, Path]] = []
+    bindings = current_manifest_visual_bindings(work_dir, {"visuals": visuals})
+    target_names: set[str] = set()
+    for visual in bindings:
+        source = work_relative_artifact_path(
+            work_dir, visual.get("path"), label="visual asset path"
+        )
+        validate_artifact_file(source, boundary=work_dir)
         target = assets_dir / source.name
-        shutil.copy2(source, target)
+        target_key = target.name.casefold()
+        if target_key in target_names:
+            raise ValueError(f"visual output basename is duplicated: {target.name}")
+        target_names.add(target_key)
         relative = f"assets/{target.name}"
         paths[visual["id"]] = relative
         copied.append(
             {
                 "id": visual["id"],
                 "path": relative,
-                "sha256": sha256_file(target),
+                "sha256": visual["sha256"],
             }
         )
-    return paths, copied
+        copies.append((source, target))
+    return paths, copied, copies
 
 
 def main() -> None:
@@ -604,20 +677,44 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = lexical_absolute_path(args.work_dir)
+    validate_artifact_directory(work_dir)
+    validate_artifact_tree(work_dir, work_dir, allow_missing=False)
     source_audit_path = work_dir / "source-audit.json"
     translation_audit_path = work_dir / "translation" / "translation-audit.json"
     merged_path = work_dir / "translation" / "translations-merged.jsonl"
     for path in (source_audit_path, translation_audit_path, merged_path):
-        if not path.is_file():
+        validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+        if not os.path.lexists(path):
             raise SystemExit(f"missing required artifact: {path}")
-    if read_json(source_audit_path).get("status") != "passed":
-        raise SystemExit("source audit is not passed")
-    if read_json(translation_audit_path).get("status") != "passed":
+    _, source_binding_errors = validate_source_audit_binding(
+        work_dir, source_audit_path
+    )
+    if source_binding_errors:
+        _invalidate_output_audit(work_dir)
+        raise SystemExit(
+            "source audit bindings are stale: "
+            + "; ".join(source_binding_errors)
+        )
+    translation_audit = _read_json(translation_audit_path, work_dir)
+    if translation_audit.get("status") != "passed":
         raise SystemExit("translation audit is not passed")
+    _, translation_binding_errors = validate_translation_audit_binding(
+        work_dir, translation_audit_path
+    )
+    if translation_binding_errors:
+        _invalidate_output_audit(work_dir)
+        raise SystemExit(
+            "translation audit bindings are stale: "
+            + "; ".join(translation_binding_errors)
+        )
 
-    manifest = read_json(work_dir / "manifest.json")
-    blocks = read_jsonl(work_dir / "blocks.jsonl")
+    manifest_path = work_dir / "manifest.json"
+    blocks_path = work_dir / "blocks.jsonl"
+    for path in (manifest_path, blocks_path):
+        validate_artifact_file(path, boundary=work_dir)
+    manifest = _read_json(manifest_path, work_dir)
+    blocks = _read_jsonl(blocks_path, work_dir)
     try:
         profile = load_work_profile(work_dir)
         (
@@ -630,7 +727,7 @@ def main() -> None:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     generic_semantics = semantic_contract["source_schema_version"] == 2
-    translations_list = read_jsonl(merged_path)
+    translations_list = _read_jsonl(merged_path, work_dir)
     translations = {entry["id"]: entry["translation"] for entry in translations_list}
     if len(translations) != len(translations_list):
         raise SystemExit("merged translations contain duplicate IDs")
@@ -654,22 +751,46 @@ def main() -> None:
             )
 
     default_stem = Path(manifest["source_pdf"]).stem + "_bilingual"
-    basename = args.basename or default_stem
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", basename):
-        raise SystemExit("--basename may contain only letters, digits, dot, underscore, and hyphen")
+    try:
+        basename = portable_artifact_basename(
+            args.basename or default_stem, label="--basename"
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     output_dir = work_dir / "output"
-    output_dir.mkdir(exist_ok=True)
+    assets_dir = output_dir / "assets"
+    output_exists = validate_artifact_tree(
+        output_dir, work_dir, allow_missing=True
+    ) is not None
+    assets_exist = False
+    if output_exists:
+        assets_exist = validate_artifact_tree(
+            assets_dir, work_dir, allow_missing=True
+        ) is not None
     markdown_path = output_dir / f"{basename}.md"
     latex_path = output_dir / f"{basename}.tex"
     build_manifest_path = output_dir / "build-manifest.json"
-    collisions = [path for path in (markdown_path, latex_path, build_manifest_path) if path.exists()]
+    output_audit_path = output_dir / "output-audit.json"
+    collisions: list[Path] = []
+    if output_exists:
+        for path in (
+            markdown_path,
+            latex_path,
+            build_manifest_path,
+            output_audit_path,
+        ):
+            validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+            if os.path.lexists(path):
+                collisions.append(path)
+        if assets_exist:
+            collisions.append(assets_dir)
     if collisions and not args.force:
         raise SystemExit(
             "refusing to overwrite output artifacts; use --force: "
             + ", ".join(path.name for path in collisions)
         )
 
-    visual_paths, copied_visuals = copy_visuals(
+    visual_paths, copied_visuals, visual_copies = plan_visuals(
         work_dir, output_dir, manifest.get("visuals", [])
     )
     visuals_by_anchor: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -968,8 +1089,6 @@ def main() -> None:
     if "%%__" in latex_text:
         raise SystemExit("unresolved template placeholder")
 
-    markdown_path.write_text(markdown_text, encoding="utf-8", newline="\n")
-    latex_path.write_text(latex_text, encoding="utf-8", newline="\n")
     output_problem_ids = sorted(
         set(problem_ids("\n".join(block["source"] for block in blocks)))
     )
@@ -997,21 +1116,31 @@ def main() -> None:
         "profile_id": manifest.get("profile", {}).get("id"),
         "profile_sha256": canonical_profile_sha256(profile),
         "profile_file_sha256": (
-            sha256_file(work_dir / "profile.json")
-            if (work_dir / "profile.json").is_file()
+            sha256_artifact(work_dir / "profile.json", boundary=work_dir)
+            if _artifact_exists(work_dir / "profile.json", work_dir)
             else None
         ),
-        "document_ir_sha256": sha256_file(work_dir / "document-ir.json") if (work_dir / "document-ir.json").is_file() else None,
+        "document_ir_sha256": (
+            sha256_artifact(work_dir / "document-ir.json", boundary=work_dir)
+            if _artifact_exists(work_dir / "document-ir.json", work_dir)
+            else None
+        ),
         "source_pdf_sha256": manifest["source_sha256"],
-        "source_manifest_sha256": sha256_file(work_dir / "manifest.json"),
-        "source_blocks_sha256": sha256_file(work_dir / "blocks.jsonl"),
-        "source_audit_sha256": sha256_file(source_audit_path),
-        "translation_audit_sha256": sha256_file(translation_audit_path),
-        "translations_merged_sha256": sha256_file(merged_path),
+        "source_manifest_sha256": sha256_artifact(manifest_path, boundary=work_dir),
+        "source_blocks_sha256": sha256_artifact(blocks_path, boundary=work_dir),
+        "source_audit_sha256": sha256_artifact(
+            source_audit_path, boundary=work_dir
+        ),
+        "translation_audit_sha256": sha256_artifact(
+            translation_audit_path, boundary=work_dir
+        ),
+        "translations_merged_sha256": sha256_artifact(
+            merged_path, boundary=work_dir
+        ),
         "markdown": markdown_path.name,
-        "markdown_sha256": sha256_file(markdown_path),
+        "markdown_sha256": sha256_text(markdown_text),
         "latex": latex_path.name,
-        "latex_sha256": sha256_file(latex_path),
+        "latex_sha256": sha256_text(latex_text),
         "assets": copied_visuals,
         "block_count": len(blocks),
         "disposition_counts": dict(Counter(dispositions.values())),
@@ -1024,7 +1153,44 @@ def main() -> None:
         "problem_ids": expected_problem_ids,
         "external_uris": sorted(external_uris),
     }
-    write_json(build_manifest_path, build_manifest)
+
+    # All inputs, metadata paths, and prior output entries are validated before
+    # force invalidates a previous audit or clears the generated asset directory.
+    _, source_binding_errors = validate_source_audit_binding(
+        work_dir, source_audit_path
+    )
+    _, translation_binding_errors = validate_translation_audit_binding(
+        work_dir, translation_audit_path
+    )
+    if source_binding_errors or translation_binding_errors:
+        problems = [
+            *(f"source: {message}" for message in source_binding_errors),
+            *(f"translation: {message}" for message in translation_binding_errors),
+        ]
+        raise SystemExit(
+            "output inputs changed before publication: " + "; ".join(problems)
+        )
+    refreshed_visuals = plan_visuals(
+        work_dir, output_dir, manifest.get("visuals", [])
+    )
+    if refreshed_visuals != (visual_paths, copied_visuals, visual_copies):
+        raise SystemExit("source visual plan changed before output publication")
+    if args.force and output_exists:
+        remove_artifact_file(output_audit_path, boundary=work_dir)
+        if assets_exist:
+            clear_artifact_directory(assets_dir, boundary=work_dir)
+    prepare_artifact_directory(output_dir, boundary=work_dir)
+    prepare_artifact_directory(assets_dir, boundary=work_dir)
+    for source, target in visual_copies:
+        atomic_copy_file(
+            source,
+            target,
+            boundary=work_dir,
+            source_boundary=work_dir,
+        )
+    atomic_write_text(markdown_path, markdown_text, boundary=work_dir)
+    atomic_write_text(latex_path, latex_text, boundary=work_dir)
+    _atomic_write_json(build_manifest_path, build_manifest, work_dir)
     print(
         json.dumps(
             {

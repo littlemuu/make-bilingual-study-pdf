@@ -21,7 +21,7 @@ from common import (
     ngrams,
     normalize_text,
     problem_ids,
-    sha256_file,
+    read_json,
     sha256_text,
     write_json,
     write_jsonl,
@@ -31,10 +31,63 @@ from profile import (
     bind_profile,
     canonical_profile_sha256,
     load_profile,
-    prepare_profile_work_directory,
     validate_profile_binding_target,
 )
+from safe_artifacts import (
+    ArtifactSafetyError,
+    atomic_copy_file,
+    atomic_publish_with_writer,
+    atomic_write_text,
+    clear_artifact_directory,
+    lexical_absolute_path,
+    lexical_paths_overlap,
+    prepare_artifact_directory,
+    remove_artifact_file,
+    sha256_artifact,
+    validate_artifact_file,
+    validate_artifact_tree,
+)
 from visual_utils import make_contact_sheets
+
+
+SOURCE_OUTPUT_FILES = (
+    "profile.json",
+    "document-ir.json",
+    "manifest.json",
+    "blocks.jsonl",
+    "oracle.txt",
+    "oracle-layout.txt",
+    "adapter-evidence.json",
+    "source-audit.json",
+)
+SOURCE_OUTPUT_DIRECTORIES = (
+    "adapter-inputs",
+    "adapter-assets",
+    "renders",
+    "visuals",
+    "source-contact",
+    "source-review",
+    "source-review-contact",
+    "source-review-layout",
+    "source-review-span",
+    "translation",
+    "output",
+)
+
+
+def _existing_profile_reference(reference: str | Path) -> Path | None:
+    candidate = lexical_absolute_path(reference)
+    return candidate if os.path.lexists(candidate) else None
+
+
+def _preflight_source_input_overlap(
+    pdf_path: Path, work_dir: Path, profile_reference: str | Path
+) -> None:
+    if lexical_paths_overlap(pdf_path, work_dir):
+        raise SystemExit("source PDF must be lexically outside WORK")
+    profile_path = _existing_profile_reference(profile_reference)
+    if profile_path is not None and lexical_paths_overlap(profile_path, work_dir):
+        raise SystemExit("custom Profile must be lexically outside WORK")
 
 
 def require_command(name: str) -> str:
@@ -116,16 +169,12 @@ def repair_truncated_renders(
                 retry_path = retry_prefix.with_suffix(".png")
                 if invalid_pngs([retry_path]):
                     continue
-                copy_command = shutil.which("cp")
-                if copy_command:
-                    subprocess.run(
-                        [copy_command, "--", str(retry_path), str(path)], check=True
-                    )
-                else:
-                    with retry_path.open("rb") as source, path.open("wb") as target:
-                        shutil.copyfileobj(source, target, length=1024 * 1024)
-                        target.flush()
-                        os.fsync(target.fileno())
+                atomic_copy_file(
+                    retry_path,
+                    path,
+                    boundary=path.parent,
+                    source_boundary=Path(temp_dir),
+                )
                 if not invalid_pngs([path]):
                     repaired = True
                     break
@@ -423,8 +472,9 @@ def make_visuals(
     render_dpi: int,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     """Crop native figures/tables and PDF image blocks without reconstructing them."""
-    visuals_dir = work_dir / "visuals"
-    visuals_dir.mkdir(exist_ok=True)
+    visuals_dir = prepare_artifact_directory(
+        work_dir / "visuals", boundary=work_dir
+    )
     by_page: dict[int, list[dict[str, Any]]] = {}
     for block in blocks:
         by_page.setdefault(int(block["page"]), []).append(block)
@@ -453,9 +503,14 @@ def make_visuals(
                 )
             visual_id = f"visual-{block['id']}"
             filename = f"{visual_id}.png"
-            page.get_pixmap(
+            pixmap = page.get_pixmap(
                 matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False
-            ).save(visuals_dir / filename)
+            )
+            atomic_publish_with_writer(
+                visuals_dir / filename,
+                pixmap.save,
+                boundary=work_dir,
+            )
             visuals.append(
                 {
                     "id": visual_id,
@@ -593,9 +648,14 @@ def make_visuals(
 
                 visual_id = f"visual-{caption['id']}"
                 filename = f"{visual_id}.png"
-                page.get_pixmap(
+                pixmap = page.get_pixmap(
                     matrix=fitz.Matrix(scale, scale), clip=union, alpha=False
-                ).save(visuals_dir / filename)
+                )
+                atomic_publish_with_writer(
+                    visuals_dir / filename,
+                    pixmap.save,
+                    boundary=work_dir,
+                )
                 visuals.append(
                     {
                         "id": visual_id,
@@ -685,34 +745,48 @@ def margin_repetitions(raw_pages: list[list[dict[str, Any]]]) -> set[str]:
 
 def prepare_output(work_dir: Path, force: bool) -> None:
     try:
-        work_dir = prepare_profile_work_directory(work_dir)
+        work_dir = prepare_artifact_directory(work_dir)
         validate_profile_binding_target(work_dir)
+        file_paths = [work_dir / name for name in SOURCE_OUTPUT_FILES]
+        directory_paths = [work_dir / name for name in SOURCE_OUTPUT_DIRECTORIES]
+
+        # Inventory every target before collision handling or force cleanup. lstat-based
+        # validation deliberately recognizes dangling links and scans complete trees.
+        existing: list[Path] = []
+        for path in file_paths:
+            validate_artifact_file(
+                path, boundary=work_dir, allow_missing=True
+            )
+            if os.path.lexists(path):
+                existing.append(path)
+        for path in directory_paths:
+            if validate_artifact_tree(path, work_dir) is not None:
+                existing.append(path)
+
+        if existing and not force:
+            names = ", ".join(path.name for path in existing)
+            raise SystemExit(
+                f"refusing to overwrite existing artifacts: {names}; use --force"
+            )
+        if force:
+            # Invalidate old gates before publishing a new source generation. All
+            # targets and trees above have already passed one complete preflight.
+            remove_artifact_file(
+                work_dir / "source-audit.json", boundary=work_dir
+            )
+            for name in (
+                "document-ir.json",
+                "adapter-evidence.json",
+            ):
+                remove_artifact_file(work_dir / name, boundary=work_dir)
+            for path in directory_paths:
+                clear_artifact_directory(
+                    path,
+                    boundary=work_dir,
+                    remove_directory=True,
+                )
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
-    collisions = [
-        work_dir / "profile.json",
-        work_dir / "document-ir.json",
-        work_dir / "manifest.json",
-        work_dir / "blocks.jsonl",
-        work_dir / "oracle.txt",
-        work_dir / "oracle-layout.txt",
-        work_dir / "source-audit.json",
-    ]
-    existing = [path for path in collisions if path.exists()]
-    if existing and not force:
-        names = ", ".join(path.name for path in existing)
-        raise SystemExit(f"refusing to overwrite existing artifacts: {names}; use --force")
-    if force:
-        for generated in (work_dir / "document-ir.json",):
-            if generated.is_file():
-                generated.unlink()
-        for directory, pattern in (
-            (work_dir / "renders", "page-*.png"),
-            (work_dir / "visuals", "visual-*.png"),
-        ):
-            if directory.is_dir():
-                for generated in directory.glob(pattern):
-                    generated.unlink()
 
 
 def main() -> None:
@@ -730,14 +804,22 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    pdf_path = args.pdf.expanduser().resolve()
-    work_dir = Path(os.path.abspath(args.work_dir.expanduser()))
-    if not pdf_path.is_file():
+    pdf_path = lexical_absolute_path(args.pdf)
+    work_dir = lexical_absolute_path(args.work_dir)
+    _preflight_source_input_overlap(pdf_path, work_dir, args.profile)
+    try:
+        validate_artifact_file(
+            pdf_path, boundary=pdf_path.parent, allow_missing=True
+        )
+    except ArtifactSafetyError as exc:
+        raise SystemExit(f"unsafe PDF input: {exc}") from exc
+    if not os.path.lexists(pdf_path):
         raise SystemExit(f"PDF does not exist: {pdf_path}")
     if pdf_path.suffix.lower() != ".pdf":
         raise SystemExit(f"input is not a PDF: {pdf_path}")
     if args.render_dpi < 72 or args.render_dpi > 300:
         raise SystemExit("--render-dpi must be between 72 and 300")
+    source_pdf_sha256 = sha256_artifact(pdf_path, boundary=pdf_path.parent)
     try:
         profile = load_profile(args.profile)
     except ValueError as exc:
@@ -871,34 +953,51 @@ def main() -> None:
         doc, blocks, work_dir, args.render_dpi
     )
 
-    renders_dir = work_dir / "renders"
-    renders_dir.mkdir(exist_ok=True)
-    prefix = renders_dir / "page"
-    subprocess.run(
-        [
-            pdftoppm,
-            "-png",
-            "-r",
-            str(args.render_dpi),
-            str(pdf_path),
-            str(prefix),
-        ],
-        check=True,
-        stdout=subprocess.DEVNULL,
+    renders_dir = prepare_artifact_directory(
+        work_dir / "renders", boundary=work_dir
     )
-    rendered_pages = sorted(renders_dir.glob("page-*.png"))
+    with tempfile.TemporaryDirectory(prefix=".renders-", dir=work_dir) as raw_stage:
+        stage = Path(raw_stage)
+        subprocess.run(
+            [
+                pdftoppm,
+                "-png",
+                "-r",
+                str(args.render_dpi),
+                str(pdf_path),
+                str(stage / "page"),
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        staged_pages = sorted(stage.glob("page-*.png"))
+        if len(staged_pages) != doc.page_count:
+            raise SystemExit(
+                f"rendering incomplete: expected {doc.page_count}, found {len(staged_pages)}"
+            )
+        repair_truncated_renders(
+            pdftoppm, pdf_path, staged_pages, args.render_dpi
+        )
+        rendered_pages = [
+            atomic_copy_file(
+                path,
+                renders_dir / path.name,
+                boundary=work_dir,
+                source_boundary=stage,
+            )
+            for path in staged_pages
+        ]
     if len(rendered_pages) != doc.page_count:
         raise SystemExit(
             f"rendering incomplete: expected {doc.page_count}, found {len(rendered_pages)}"
         )
-    repair_truncated_renders(pdftoppm, pdf_path, rendered_pages, args.render_dpi)
     source_contact_sheets = make_contact_sheets(
         rendered_pages, work_dir / "source-contact"
     )
 
-    (work_dir / "oracle.txt").write_text(oracle_text, encoding="utf-8")
-    (work_dir / "oracle-layout.txt").write_text(
-        oracle_layout_text, encoding="utf-8"
+    atomic_write_text(work_dir / "oracle.txt", oracle_text, boundary=work_dir)
+    atomic_write_text(
+        work_dir / "oracle-layout.txt", oracle_layout_text, boundary=work_dir
     )
     write_jsonl(work_dir / "blocks.jsonl", blocks)
     external_uris = sorted({item["uri"] for item in all_links if item.get("uri")})
@@ -909,7 +1008,7 @@ def main() -> None:
             "sha256": canonical_profile_sha256(profile),
         },
         "source_pdf": str(pdf_path),
-        "source_sha256": sha256_file(pdf_path),
+        "source_sha256": source_pdf_sha256,
         "page_count": doc.page_count,
         "native_text_page_ratio": round(native_ratio, 4),
         "render_dpi": args.render_dpi,
@@ -945,7 +1044,7 @@ def main() -> None:
     }
     write_json(work_dir / "manifest.json", manifest)
     document_ir_path = write_document_ir(work_dir, profile)
-    document_ir = json.loads(document_ir_path.read_text(encoding="utf-8"))
+    document_ir = read_json(document_ir_path)
     print(
         json.dumps(
             {

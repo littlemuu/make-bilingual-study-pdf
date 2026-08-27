@@ -73,6 +73,8 @@ def find_poppler_executable(name: str) -> str:
                 check=False,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=10,
             )
         except (OSError, subprocess.TimeoutExpired):
@@ -731,12 +733,13 @@ class MinerUContractTests(unittest.TestCase):
             fixture_dir = root / "fixture"
             fixture_dir.mkdir()
             link = fixture_dir / "escape.png"
-            try:
-                link.symlink_to(outside)
-            except OSError:
-                return
-            with self.assertRaises(AdapterError):
-                resolve_asset(fixture_dir, "escape.png")
+            with self.subTest(kind="asset-symlink"):
+                try:
+                    link.symlink_to(outside)
+                except OSError as exc:
+                    self.skipTest(f"file symbolic links are unavailable: {exc}")
+                with self.assertRaises(AdapterError):
+                    resolve_asset(fixture_dir, "escape.png")
 
     def test_asset_decode_hash_and_corruption_fail_closed(self) -> None:
         case = self.load_case("native")

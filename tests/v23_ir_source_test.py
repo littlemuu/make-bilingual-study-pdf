@@ -22,7 +22,11 @@ from adapters.mineru import (
     RASTER_COVERAGE_METHOD,
     _prepare_work_dir,
 )
-from audit_source import audit_adapter_source
+from audit_source import (
+    audit_adapter_source,
+    current_source_audit_bindings,
+    validate_source_audit_binding,
+)
 from common import sha256_file, sha256_text, write_json, write_jsonl
 from document_ir import (
     _classify_v2_block,
@@ -151,6 +155,17 @@ class V23IrSourceTests(unittest.TestCase):
             source_document.tobytes(garbage=4, deflate=True, no_new_id=True)
         )
         source_document.close()
+        (work_dir / "oracle.txt").write_text(
+            "Title Abstract Introduction Body paragraph References\f",
+            encoding="utf-8",
+        )
+        (work_dir / "oracle-layout.txt").write_text(
+            "Title Abstract Introduction Body paragraph References\f",
+            encoding="utf-8",
+        )
+        renders_dir = work_dir / "renders"
+        renders_dir.mkdir()
+        Image.new("RGB", (2, 3), "white").save(renders_dir / "page-1.png")
 
         specifications = [
             ("Title", "title", 1, "heading"),
@@ -319,6 +334,19 @@ class V23IrSourceTests(unittest.TestCase):
             "source_pdf": str(source_path),
             "source_sha256": sha256_file(source_path),
             "page_count": 1,
+            "artifacts": {
+                "profile": "profile.json",
+                "document_ir": "document-ir.json",
+                "adapter_evidence": "adapter-evidence.json",
+                "blocks": "blocks.jsonl",
+                "oracle": "oracle.txt",
+                "oracle_layout": "oracle-layout.txt",
+                "renders": "renders/page-*.png",
+                "visuals": "visuals/*",
+                "source_contact": "source-contact/contact-*.png",
+                "source_review": "source-review/page-*.png",
+                "source_review_contact": "source-review-contact/contact-*.png",
+            },
             "adapter": {
                 "id": "mineru-import",
                 "evidence": "adapter-evidence.json",
@@ -458,8 +486,35 @@ class V23IrSourceTests(unittest.TestCase):
             write_json(work_dir / "document-ir.json", ir)
             self.assertEqual(validate_ir_against_sources(work_dir, self.profile), [])
 
+            contacts = work_dir / "source-contact"
+            contacts.mkdir()
+            contact_path = contacts / "contact-001.png"
+            Image.new("RGB", (2, 3), "white").save(contact_path)
+            manifest["source_contact_sheets"] = [
+                {
+                    "path": contact_path.relative_to(work_dir).as_posix(),
+                    "sha256": sha256_file(contact_path),
+                    "first_page": 1,
+                    "last_page": 1,
+                }
+            ]
+            write_json(work_dir / "manifest.json", manifest)
+            write_json(work_dir / "document-ir.json", expected_ir(work_dir, self.profile))
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPT_DIR / "audit_source.py"), str(work_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
             asset_path = work_dir / "adapter-assets" / "pixel.png"
             asset_path.write_bytes(asset_path.read_bytes() + b"drift")
+            _report, binding_errors = validate_source_audit_binding(work_dir)
+            self.assertTrue(
+                any("adapter" in item or "freeze" in item for item in binding_errors),
+                binding_errors,
+            )
             failures = validate_ir_against_sources(work_dir, self.profile)
             self.assertTrue(any("invalid document IR inputs" in item for item in failures))
 
@@ -475,7 +530,7 @@ class V23IrSourceTests(unittest.TestCase):
                 "Title Abstract Introduction Body paragraph References\f", encoding="utf-8"
             )
             renders = work_dir / "renders"
-            renders.mkdir()
+            renders.mkdir(exist_ok=True)
             Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
             contacts = work_dir / "source-contact"
             contacts.mkdir()
@@ -503,8 +558,45 @@ class V23IrSourceTests(unittest.TestCase):
             self.assertEqual(report["status"], "manual_source_review_required")
             self.assertEqual(report["failures"], [])
 
+            report["status"] = "passed"
+            write_json(work_dir / "source-audit.json", report)
+            _forged, binding_errors = validate_source_audit_binding(work_dir)
+            self.assertTrue(
+                any("manual" in error for error in binding_errors), binding_errors
+            )
+            status = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "pipeline.py"),
+                    "status",
+                    str(work_dir),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            self.assertEqual(
+                json.loads(status.stdout)["gate_statuses"]["source_audit"], "stale"
+            )
+            glossary = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "init_glossary.py"),
+                    str(work_dir),
+                    "--force",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(glossary.returncode, 0)
+            self.assertIn("source audit bindings are stale", glossary.stdout + glossary.stderr)
+
             review_page = work_dir / manifest["source_review_pages"][0]
             review_page.write_bytes(b"not-a-decodable-image")
+            with self.assertRaisesRegex(ValueError, "complete audit"):
+                current_source_audit_bindings(work_dir)
             drifted = audit_adapter_source(work_dir, manifest, blocks, self.profile)
             self.assertTrue(
                 any("comparison cannot be fully decoded" in item for item in drifted["failures"])
@@ -518,7 +610,7 @@ class V23IrSourceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             renders = work_dir / "renders"
-            renders.mkdir()
+            renders.mkdir(exist_ok=True)
             Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
             contacts = work_dir / "source-contact"
             contacts.mkdir()
@@ -559,6 +651,15 @@ class V23IrSourceTests(unittest.TestCase):
                 report,
             )
 
+            report["status"] = "passed"
+            report["failures"] = []
+            write_json(work_dir / "source-audit.json", report)
+            _forged, binding_errors = validate_source_audit_binding(work_dir)
+            self.assertTrue(
+                any("coverage is below" in error for error in binding_errors),
+                binding_errors,
+            )
+
             for option, value in (
                 ("--minimum-global-coverage", "nan"),
                 ("--minimum-global-coverage", "inf"),
@@ -593,7 +694,7 @@ class V23IrSourceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             renders = work_dir / "renders"
-            renders.mkdir()
+            renders.mkdir(exist_ok=True)
             Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
             contacts = work_dir / "source-contact"
             contacts.mkdir()

@@ -3,19 +3,90 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
+from audit_source import validate_source_audit_binding
 from common import (
-    read_json,
-    read_jsonl,
+    json_loads_strict,
     repair_pdf_linebreaks,
-    sha256_file,
-    write_json,
-    write_jsonl,
+    sha256_text,
+)
+from profile import canonical_profile_sha256, load_work_profile, profile_contract
+from safe_artifacts import (
+    ArtifactSafetyError,
+    atomic_write_text,
+    lexical_absolute_path,
+    prepare_artifact_directory,
+    read_artifact_text,
+    remove_artifact_file,
+    sha256_artifact,
+    validate_artifact_directory,
+    validate_artifact_file,
+    validate_artifact_tree,
 )
 from translation_utils import glossary_term_present, protect_source, validate_glossary
-from profile import canonical_profile_sha256, load_work_profile, profile_contract
+
+
+def _read_json(path: Path, work_dir: Path) -> Any:
+    return json_loads_strict(read_artifact_text(path, boundary=work_dir))
+
+
+def _read_jsonl(path: Path, work_dir: Path) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    for line_number, raw in enumerate(
+        read_artifact_text(path, boundary=work_dir).splitlines(), 1
+    ):
+        if not raw.strip():
+            continue
+        try:
+            value = json_loads_strict(raw)
+        except (json.JSONDecodeError, ValueError) as exc:
+            raise ValueError(f"invalid JSONL at {path}:{line_number}: {exc}") from exc
+        if not isinstance(value, dict):
+            raise ValueError(f"invalid JSONL object at {path}:{line_number}")
+        values.append(value)
+    return values
+
+
+def _json_payload(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+
+
+def _jsonl_payload(values: list[dict[str, Any]]) -> str:
+    return "".join(
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        + "\n"
+        for value in values
+    )
+
+
+def _artifact_exists(path: Path, work_dir: Path) -> bool:
+    validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+    return os.path.lexists(path)
+
+
+def _preflight_flat_directory(directory: Path, work_dir: Path) -> list[Path]:
+    """Validate a generated flat directory and every entry without following links."""
+    if validate_artifact_tree(directory, boundary=work_dir, allow_missing=True) is None:
+        return []
+    try:
+        with os.scandir(directory) as iterator:
+            paths = sorted((Path(entry.path) for entry in iterator), key=lambda item: item.name)
+    except OSError as exc:
+        raise ArtifactSafetyError(
+            f"cannot scan translation artifact directory: {exc}"
+        ) from exc
+    for path in paths:
+        validate_artifact_file(path, boundary=work_dir)
+    validate_artifact_directory(directory, boundary=work_dir)
+    return paths
 
 
 def semantic_policy(
@@ -68,9 +139,9 @@ def ir_nodes_by_id(
     if contract["source_schema_version"] == 1:
         return {}
     path = work_dir / "document-ir.json"
-    if not path.is_file():
+    if not _artifact_exists(path, work_dir):
         raise ValueError("schema V2 translation requires document-ir.json")
-    ir = read_json(path)
+    ir = _read_json(path, work_dir)
     nodes = ir.get("nodes")
     if not isinstance(nodes, list):
         raise ValueError("document IR nodes must be an array")
@@ -133,7 +204,8 @@ def main() -> None:
     if not 1000 <= args.max_source_chars <= 30000:
         raise SystemExit("--max-source-chars must be between 1000 and 30000")
 
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = lexical_absolute_path(args.work_dir)
+    validate_artifact_directory(work_dir)
     required = [
         work_dir / "manifest.json",
         work_dir / "blocks.jsonl",
@@ -141,14 +213,20 @@ def main() -> None:
         work_dir / "translation" / "glossary.json",
     ]
     for path in required:
-        if not path.is_file():
-            raise SystemExit(f"missing required artifact: {path}")
-    source_audit = read_json(work_dir / "source-audit.json")
-    if source_audit.get("status") != "passed":
-        raise SystemExit("source audit has not passed; translation is blocked")
+        validate_artifact_file(path, boundary=work_dir)
+    _, source_binding_errors = validate_source_audit_binding(
+        work_dir, work_dir / "source-audit.json"
+    )
+    if source_binding_errors:
+        raise SystemExit(
+            "source audit bindings are stale; translation is blocked: "
+            + "; ".join(source_binding_errors)
+        )
 
     glossary_path = work_dir / "translation" / "glossary.json"
-    glossary = read_json(glossary_path)
+    glossary = _read_json(glossary_path, work_dir)
+    if not isinstance(glossary, dict):
+        raise SystemExit("glossary must be a JSON object")
     try:
         profile = load_work_profile(work_dir)
     except ValueError as exc:
@@ -160,7 +238,9 @@ def main() -> None:
         raise SystemExit("glossary profile changed; reinitialize and review it")
     if glossary.get("target_language") != profile["translation"]["target_language"]:
         raise SystemExit("glossary target language does not match the active profile")
-    if glossary.get("source_blocks_sha256") != sha256_file(work_dir / "blocks.jsonl"):
+    if glossary.get("source_blocks_sha256") != sha256_artifact(
+        work_dir / "blocks.jsonl", boundary=work_dir
+    ):
         raise SystemExit(
             "glossary was created for different source blocks; reinitialize and review it"
         )
@@ -173,18 +253,16 @@ def main() -> None:
     requests_dir = translation_dir / "requests"
     responses_dir = translation_dir / "responses"
     plan_path = translation_dir / "plan.json"
-    if plan_path.exists() and not args.force:
+    plan_exists = _artifact_exists(plan_path, work_dir)
+    if plan_exists and not args.force:
         raise SystemExit(
             f"translation plan already exists: {plan_path}; use --force to rebuild requests"
         )
-    requests_dir.mkdir(parents=True, exist_ok=True)
-    responses_dir.mkdir(parents=True, exist_ok=True)
-    if args.force:
-        for path in requests_dir.glob("part-*.jsonl"):
-            path.unlink()
 
-    manifest = read_json(work_dir / "manifest.json")
-    blocks = read_jsonl(work_dir / "blocks.jsonl")
+    manifest = _read_json(work_dir / "manifest.json", work_dir)
+    blocks = _read_jsonl(work_dir / "blocks.jsonl", work_dir)
+    if not isinstance(manifest, dict):
+        raise SystemExit("source manifest must be a JSON object")
     contract = profile_contract(profile)
     try:
         nodes_by_id = ir_nodes_by_id(work_dir, blocks, contract)
@@ -233,17 +311,31 @@ def main() -> None:
         requests.append(request)
 
     chunks = chunk_requests(requests, args.max_source_chars)
-    batch_summaries = []
+
+    source_pdf_sha256 = manifest.get("source_sha256")
+    if (
+        not isinstance(source_pdf_sha256, str)
+        or len(source_pdf_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in source_pdf_sha256)
+    ):
+        raise SystemExit("source manifest has an invalid source_sha256")
+
+    # Serialize and hash the complete replacement set before --force is allowed
+    # to invalidate any prior plan or request. This keeps validation failures
+    # non-destructive and makes each individual publication atomic.
+    request_publications: list[tuple[Path, str]] = []
+    batch_summaries: list[dict[str, Any]] = []
     for number, chunk in enumerate(chunks, start=1):
         filename = f"part-{number:04d}.jsonl"
         path = requests_dir / filename
-        write_jsonl(path, chunk)
+        payload = _jsonl_payload(chunk)
+        request_publications.append((path, payload))
         batch_summaries.append(
             {
                 "part": number,
                 "request_file": f"requests/{filename}",
                 "response_file": f"responses/{filename}",
-                "request_sha256": sha256_file(path),
+                "request_sha256": sha256_text(payload),
                 "segment_count": len(chunk),
                 "source_characters": sum(
                     len(item["source_for_translation"]) for item in chunk
@@ -258,16 +350,26 @@ def main() -> None:
         "profile_id": profile["id"],
         "profile_sha256": profile_sha256,
         "profile_file_sha256": (
-            sha256_file(work_dir / "profile.json")
-            if (work_dir / "profile.json").is_file()
+            sha256_artifact(work_dir / "profile.json", boundary=work_dir)
+            if _artifact_exists(work_dir / "profile.json", work_dir)
             else None
         ),
-        "document_ir_sha256": sha256_file(work_dir / "document-ir.json") if (work_dir / "document-ir.json").is_file() else None,
-        "source_pdf_sha256": manifest["source_sha256"],
-        "source_manifest_sha256": sha256_file(work_dir / "manifest.json"),
-        "source_blocks_sha256": sha256_file(work_dir / "blocks.jsonl"),
-        "source_audit_sha256": sha256_file(work_dir / "source-audit.json"),
-        "glossary_sha256": sha256_file(glossary_path),
+        "document_ir_sha256": (
+            sha256_artifact(work_dir / "document-ir.json", boundary=work_dir)
+            if _artifact_exists(work_dir / "document-ir.json", work_dir)
+            else None
+        ),
+        "source_pdf_sha256": source_pdf_sha256,
+        "source_manifest_sha256": sha256_artifact(
+            work_dir / "manifest.json", boundary=work_dir
+        ),
+        "source_blocks_sha256": sha256_artifact(
+            work_dir / "blocks.jsonl", boundary=work_dir
+        ),
+        "source_audit_sha256": sha256_artifact(
+            work_dir / "source-audit.json", boundary=work_dir
+        ),
+        "glossary_sha256": sha256_artifact(glossary_path, boundary=work_dir),
         "target_language": profile["translation"]["target_language"],
         "translation_policy": profile["translation"]["policy"],
         "expected_segment_count": len(requests),
@@ -279,14 +381,35 @@ def main() -> None:
     if contract["source_schema_version"] == 2:
         plan["semantic_contract_version"] = contract["contract_version"]
         plan["translation_role_counts"] = translation_role_counts
-    write_json(plan_path, plan)
+    plan_payload = _json_payload(plan)
+
+    # Complete every directory and target preflight after all fallible input
+    # validation/serialization, but before force removes any prior artifact.
+    # Responses are user/model inputs and are never cleared.
+    prior_request_files = _preflight_flat_directory(requests_dir, work_dir)
+    response_files = _preflight_flat_directory(responses_dir, work_dir)
+    validate_artifact_file(plan_path, boundary=work_dir, allow_missing=True)
+
+    if args.force:
+        # Invalidate the old plan before changing any request it may reference.
+        remove_artifact_file(plan_path, boundary=work_dir, missing_ok=True)
+        for path in prior_request_files:
+            if path.match("part-*.jsonl"):
+                remove_artifact_file(path, boundary=work_dir, missing_ok=False)
+    prepare_artifact_directory(requests_dir, boundary=work_dir)
+    prepare_artifact_directory(responses_dir, boundary=work_dir)
+    for path, payload in request_publications:
+        atomic_write_text(path, payload, boundary=work_dir)
+    atomic_write_text(plan_path, plan_payload, boundary=work_dir)
     print(
         json.dumps(
             {
                 "translation_dir": str(translation_dir),
                 "segments": len(requests),
                 "batches": len(chunks),
-                "responses_preserved": len(list(responses_dir.glob("part-*.jsonl"))),
+                "responses_preserved": sum(
+                    path.match("part-*.jsonl") for path in response_files
+                ),
             },
             ensure_ascii=False,
             indent=2,
@@ -295,4 +418,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ArtifactSafetyError as exc:
+        raise SystemExit(str(exc)) from exc

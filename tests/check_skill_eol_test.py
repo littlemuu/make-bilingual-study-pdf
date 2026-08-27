@@ -311,7 +311,10 @@ class CheckSkillEolTests(unittest.TestCase):
             timeout=5,
         )
         if created.returncode != 0:
-            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+            self.fail(
+                "Windows junction regression must execute: "
+                f"{created.stdout}{created.stderr}"
+            )
         try:
             result, output = self.run_main(fix=True)
             self.assertNotEqual(result, 0, output)
@@ -337,7 +340,10 @@ class CheckSkillEolTests(unittest.TestCase):
             timeout=5,
         )
         if created.returncode != 0:
-            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+            self.fail(
+                "Windows junction regression must execute: "
+                f"{created.stdout}{created.stderr}"
+            )
         try:
             result, output = self.run_main(fix=True)
             self.assertNotEqual(result, 0, output)

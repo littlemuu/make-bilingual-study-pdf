@@ -35,6 +35,19 @@ chain; never call recursive directory creation through an unchecked ancestor.
 `--force` may recover only a safe regular target and publishes through a same-directory
 temporary file plus atomic replacement; it must never rewrite an external link target.
 
+Apply the same boundary to every generated artifact under `WORK_DIR`, not only the
+Profile binding. Before a stage reads, removes, or replaces anything, inventory all of
+its fixed files and generated directories with lexical paths and `lstat` semantics.
+Reject broken or live symbolic links, Windows reparse points and junctions, hard-linked
+files, non-regular entries, unsafe dynamic relative paths, and any unsafe ancestor.
+`--force` is valid only after that complete preflight; a later invalid input must not
+leave an older passing report bound to changed bytes. Publish text, JSON, images,
+documents, and converted outputs through same-directory temporary files followed by
+atomic replacement. Programs that insist on writing named files or directory trees
+must write into a safe staging directory first, then publish each validated regular
+file. A failure may leave an incomplete unbound staging set, but it must not change an
+external inode or preserve a stale `passed` gate.
+
 Implemented adapters are `native-text-pdf` and `mineru-import`. The latter consumes
 only frozen stable MinerU 3.x `pipeline` legacy output; it does not execute MinerU.
 Adapter, style, and constraint IDs are registry-backed and unknown IDs fail closed.

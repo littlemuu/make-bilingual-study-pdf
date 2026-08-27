@@ -4,10 +4,23 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 from pathlib import Path
 
-from profile import load_profile, profile_contract, semantic_match
+from common import json_loads_strict
+from profile import load_profile, load_work_profile, profile_contract, semantic_match
+from safe_artifacts import (
+    ArtifactSafetyError,
+    atomic_write_text,
+    lexical_absolute_path,
+    prepare_artifact_directory,
+    read_artifact_text,
+    validate_artifact_directory,
+    validate_artifact_file,
+    validate_artifact_tree,
+    work_relative_artifact_path,
+)
 
 CJK_RE = re.compile(r"[\u3400-\u9fff]")
 LEADING_NUMBER_RE = re.compile(r"^\s*(\d+(?:\.\d+)*)\s+")
@@ -16,6 +29,21 @@ PROBLEM_END = "V2-PROBLEM-CALLOUT-END"
 GENERIC_BEGIN = "V23-CALLOUT-BEGIN"
 GENERIC_END = "V23-CALLOUT-END"
 SEGMENT_MARKER_RE = re.compile(r"<!--\s*bilingual:[^\s]+\s+id=([^\s]+)\s+")
+
+
+def _bounded_cli_path(boundary: Path, path: Path, *, label: str) -> Path:
+    boundary = lexical_absolute_path(boundary)
+    candidate = lexical_absolute_path(path)
+    try:
+        relative = os.path.relpath(candidate, boundary)
+    except ValueError as exc:
+        raise ArtifactSafetyError(f"{label} is outside WORK") from exc
+    bounded = work_relative_artifact_path(
+        boundary, Path(relative).as_posix(), label=label
+    )
+    if os.path.normcase(os.fspath(bounded)) != os.path.normcase(os.fspath(candidate)):
+        raise ArtifactSafetyError(f"{label} is outside WORK")
+    return bounded
 
 
 def stringify(value) -> str:
@@ -541,17 +569,56 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("input", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--profile", default="assignment-en-zh")
+    parser.add_argument("--profile")
+    parser.add_argument("--work-dir", type=Path)
     args = parser.parse_args()
-    document = json.loads(args.input.read_text(encoding="utf-8"))
     try:
-        profile = load_profile(args.profile)
-    except ValueError as exc:
+        if args.work_dir is None:
+            input_path = args.input
+            output_path = args.output
+            document = json.loads(input_path.read_text(encoding="utf-8"))
+            profile = load_profile(args.profile)
+            work_dir = None
+        else:
+            work_dir = lexical_absolute_path(args.work_dir)
+            validate_artifact_directory(work_dir)
+            stage_dir = work_dir / "output" / "docx-build"
+            validate_artifact_tree(stage_dir, boundary=work_dir, allow_missing=False)
+            input_path = _bounded_cli_path(
+                stage_dir, args.input, label="DOCX AST input"
+            )
+            output_path = _bounded_cli_path(
+                stage_dir, args.output, label="DOCX AST output"
+            )
+            input_key = tuple(part.casefold() for part in input_path.relative_to(stage_dir).parts)
+            output_key = tuple(part.casefold() for part in output_path.relative_to(stage_dir).parts)
+            if input_key == output_key:
+                raise ArtifactSafetyError("DOCX AST input and output roles must be distinct")
+            validate_artifact_file(input_path, boundary=stage_dir)
+            if os.path.lexists(output_path.parent):
+                validate_artifact_file(
+                    output_path, boundary=stage_dir, allow_missing=True
+                )
+            document = json_loads_strict(
+                read_artifact_text(input_path, boundary=stage_dir)
+            )
+            profile = load_work_profile(work_dir, args.profile)
+    except (ArtifactSafetyError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
+    if not isinstance(document, dict):
+        raise SystemExit("DOCX AST input must be a JSON object")
     transformed = transform(document, profile)
-    args.output.write_text(json.dumps(transformed, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(args.output)
+    rendered = json.dumps(transformed, ensure_ascii=False, allow_nan=False) + "\n"
+    if work_dir is None:
+        output_path.write_text(rendered, encoding="utf-8")
+    else:
+        prepare_artifact_directory(output_path.parent, boundary=stage_dir)
+        atomic_write_text(output_path, rendered, boundary=stage_dir)
+    print(output_path)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ArtifactSafetyError as exc:
+        raise SystemExit(str(exc)) from exc

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import io
+import os
 import re
 from pathlib import Path
 
@@ -13,6 +15,17 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Inches, Pt, RGBColor
 
 from profile import profile_contract
+from safe_artifacts import (
+    ArtifactSafetyError,
+    atomic_publish_with_writer,
+    lexical_absolute_path,
+    prepare_artifact_directory,
+    read_artifact_bytes,
+    validate_artifact_directory,
+    validate_artifact_file,
+    validate_artifact_tree,
+    work_relative_artifact_path,
+)
 from semantic_registry import get_style
 
 
@@ -58,6 +71,21 @@ GENERIC_PALETTES = {
     "warning": ("B54708", "FFF8F0"),
     "exercise": ("7A5AF8", "F7F5FF"),
 }
+
+
+def _bounded_cli_path(boundary: Path, path: Path, *, label: str) -> Path:
+    boundary = lexical_absolute_path(boundary)
+    candidate = lexical_absolute_path(path)
+    try:
+        relative = os.path.relpath(candidate, boundary)
+    except ValueError as exc:
+        raise ArtifactSafetyError(f"{label} is outside WORK") from exc
+    bounded = work_relative_artifact_path(
+        boundary, Path(relative).as_posix(), label=label
+    )
+    if os.path.normcase(os.fspath(bounded)) != os.path.normcase(os.fspath(candidate)):
+        raise ArtifactSafetyError(f"{label} is outside WORK")
+    return bounded
 
 
 def configure_profile(profile: dict) -> None:
@@ -693,21 +721,60 @@ def main() -> None:
     parser.add_argument("--latin-font", default=LATIN_FONT)
     parser.add_argument("--cjk-font", default=CJK_FONT)
     parser.add_argument("--code-font", default=CODE_FONT)
+    parser.add_argument("--work-dir", type=Path)
     args = parser.parse_args()
     LATIN_FONT = args.latin_font
     CJK_FONT = args.cjk_font
     CODE_FONT = args.code_font
-    document = Document(args.input)
+    if args.work_dir is None:
+        work_dir = None
+        input_path = args.input
+        output_path = args.output
+        document = Document(input_path)
+    else:
+        work_dir = lexical_absolute_path(args.work_dir)
+        validate_artifact_directory(work_dir)
+        stage_dir = work_dir / "output" / "docx-build"
+        validate_artifact_tree(stage_dir, boundary=work_dir, allow_missing=False)
+        input_path = _bounded_cli_path(
+            stage_dir, args.input, label="DOCX style input"
+        )
+        output_path = _bounded_cli_path(
+            stage_dir, args.output, label="DOCX style output"
+        )
+        input_key = tuple(part.casefold() for part in input_path.relative_to(stage_dir).parts)
+        output_key = tuple(part.casefold() for part in output_path.relative_to(stage_dir).parts)
+        if input_key == output_key:
+            raise ArtifactSafetyError("DOCX style input and output roles must be distinct")
+        validate_artifact_file(input_path, boundary=stage_dir)
+        if os.path.lexists(output_path.parent):
+            validate_artifact_file(
+                output_path, boundary=stage_dir, allow_missing=True
+            )
+        document = Document(
+            io.BytesIO(read_artifact_bytes(input_path, boundary=stage_dir))
+        )
     report = apply_styles(
         document,
         document_title=args.title,
         header_label=args.header_label,
         footer_label=args.footer_label,
     )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    document.save(args.output)
+    if work_dir is None:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        document.save(output_path)
+    else:
+        prepare_artifact_directory(output_path.parent, boundary=stage_dir)
+        atomic_publish_with_writer(
+            output_path,
+            document.save,
+            boundary=stage_dir,
+        )
     print(report)
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ArtifactSafetyError as exc:
+        raise SystemExit(str(exc)) from exc

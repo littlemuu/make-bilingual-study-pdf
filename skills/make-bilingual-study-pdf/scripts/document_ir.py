@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-from common import read_json, read_jsonl, sha256_file, sha256_text, write_json
+from common import read_json, read_jsonl, sha256_text, write_json
 from profile import (
     _bind_validated_profile,
     canonical_profile_sha256,
@@ -19,6 +19,18 @@ from profile import (
     profile_contract,
     semantic_match,
     validate_profile_binding_target,
+)
+from safe_artifacts import (
+    ArtifactSafetyError,
+    artifact_size,
+    clear_artifact_directory,
+    lexical_absolute_path,
+    remove_artifact_file,
+    sha256_artifact,
+    validate_artifact_directory,
+    validate_artifact_file,
+    validate_artifact_tree,
+    work_relative_artifact_path,
 )
 
 
@@ -278,18 +290,7 @@ def _complete_members(
 
 
 def _safe_work_path(work_dir: Path, value: Any, *, label: str) -> Path:
-    if not isinstance(value, str) or not value or "\x00" in value:
-        raise ValueError(f"{label} must be a nonempty work-relative path")
-    relative = Path(value)
-    if relative.is_absolute():
-        raise ValueError(f"{label} must be work-relative")
-    root = work_dir.resolve()
-    candidate = (root / relative).resolve()
-    try:
-        candidate.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"{label} escapes the work directory") from exc
-    return candidate
+    return work_relative_artifact_path(work_dir, value, label=label)
 
 
 def load_adapter_source_evidence(
@@ -307,9 +308,8 @@ def load_adapter_source_evidence(
     evidence_path = _safe_work_path(
         work_dir, adapter.get("evidence"), label="adapter evidence path"
     )
-    if not evidence_path.is_file():
-        raise ValueError("adapter evidence is missing")
-    evidence_sha256 = sha256_file(evidence_path)
+    validate_artifact_file(evidence_path, boundary=work_dir)
+    evidence_sha256 = sha256_artifact(evidence_path, boundary=work_dir)
     if evidence_sha256 != adapter.get("evidence_sha256"):
         raise ValueError("adapter evidence hash does not match manifest")
     evidence = read_json(evidence_path)
@@ -344,11 +344,10 @@ def load_adapter_source_evidence(
                 record.get("work_path"),
                 label=f"adapter evidence {category}[{index}].work_path",
             )
-            if not path.is_file():
-                raise ValueError(f"frozen adapter {category[:-1]} is missing: {record.get('work_path')}")
-            if path.stat().st_size != record.get("size"):
+            validate_artifact_file(path, boundary=work_dir)
+            if artifact_size(path, boundary=work_dir) != record.get("size"):
                 raise ValueError(f"frozen adapter {category[:-1]} size changed: {record.get('work_path')}")
-            if sha256_file(path) != record.get("sha256"):
+            if sha256_artifact(path, boundary=work_dir) != record.get("sha256"):
                 raise ValueError(f"frozen adapter {category[:-1]} hash changed: {record.get('work_path')}")
             frozen[category].append(
                 {
@@ -590,16 +589,19 @@ def build_document_ir(
 
 
 def expected_ir(work_dir: Path, profile: dict[str, Any]) -> dict[str, Any]:
+    work_dir = validate_artifact_directory(work_dir)
     manifest_path = work_dir / "manifest.json"
     blocks_path = work_dir / "blocks.jsonl"
+    validate_artifact_file(manifest_path, boundary=work_dir)
+    validate_artifact_file(blocks_path, boundary=work_dir)
     manifest = read_json(manifest_path)
     _evidence, adapter_freeze = load_adapter_source_evidence(work_dir, manifest)
     return build_document_ir(
         manifest,
         read_jsonl(blocks_path),
         profile,
-        manifest_sha256=sha256_file(manifest_path),
-        blocks_sha256=sha256_file(blocks_path),
+        manifest_sha256=sha256_artifact(manifest_path, boundary=work_dir),
+        blocks_sha256=sha256_artifact(blocks_path, boundary=work_dir),
         adapter_freeze=adapter_freeze,
     )
 
@@ -608,14 +610,19 @@ def validate_ir_against_sources(
     work_dir: Path, profile: dict[str, Any] | None = None
 ) -> list[str]:
     failures: list[str] = []
-    path = work_dir / IR_FILENAME
-    if not path.is_file():
-        return [f"missing {IR_FILENAME}"]
     try:
+        work_dir = validate_artifact_directory(work_dir)
+    except ArtifactSafetyError as exc:
+        return [f"unsafe document IR work directory: {exc}"]
+    path = work_dir / IR_FILENAME
+    try:
+        validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+        if not os.path.lexists(path):
+            return [f"missing {IR_FILENAME}"]
         active_profile = profile or load_work_profile(work_dir)
         actual = read_json(path)
         expected = expected_ir(work_dir, active_profile)
-    except (ValueError, KeyError, FileNotFoundError, json.JSONDecodeError) as exc:
+    except (ValueError, KeyError, json.JSONDecodeError) as exc:
         return [f"invalid document IR inputs: {exc}"]
     if actual != expected:
         failures.append("document IR is stale or does not match its bound profile/source artifacts")
@@ -623,7 +630,9 @@ def validate_ir_against_sources(
 
 
 def write_document_ir(work_dir: Path, profile: dict[str, Any]) -> Path:
+    work_dir = validate_artifact_directory(work_dir)
     output = work_dir / IR_FILENAME
+    validate_artifact_file(output, boundary=work_dir, allow_missing=True)
     write_json(output, expected_ir(work_dir, profile))
     return output
 
@@ -631,12 +640,22 @@ def write_document_ir(work_dir: Path, profile: dict[str, Any]) -> Path:
 def migrate_work_dir(
     work_dir: Path, profile_reference: str | Path | None, *, force: bool = False
 ) -> Path:
-    work_dir = Path(os.path.abspath(work_dir.expanduser()))
+    work_dir = lexical_absolute_path(work_dir)
+    validate_artifact_directory(work_dir)
     manifest_path = work_dir / "manifest.json"
     blocks_path = work_dir / "blocks.jsonl"
     for path in (manifest_path, blocks_path):
-        if not path.is_file():
+        validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+        if not os.path.lexists(path):
             raise ValueError(f"missing required source artifact: {path}")
+    ir_path = work_dir / IR_FILENAME
+    source_audit_path = work_dir / "source-audit.json"
+    for path in (ir_path, source_audit_path):
+        validate_artifact_file(path, boundary=work_dir, allow_missing=True)
+    downstream_directories = [work_dir / "translation", work_dir / "output"]
+    for path in downstream_directories:
+        validate_artifact_tree(path, work_dir)
+
     manifest = read_json(manifest_path)
     validate_profile_binding_target(work_dir)
     requested_profile = load_profile(profile_reference)
@@ -647,16 +666,33 @@ def migrate_work_dir(
     if manifest.get("profile") not in (None, requested_binding) and not force:
         raise ValueError("manifest is bound to a different profile")
 
-    profile = _bind_validated_profile(work_dir, requested_profile, force=force)
-    profile_binding = {
-        "id": profile["id"],
-        "sha256": canonical_profile_sha256(profile),
-    }
+    profile_binding = requested_binding
     manifest["profile"] = profile_binding
     manifest.setdefault("artifacts", {})["profile"] = "profile.json"
     manifest["artifacts"]["document_ir"] = IR_FILENAME
+    blocks = read_jsonl(blocks_path)
+    _evidence, adapter_freeze = load_adapter_source_evidence(work_dir, manifest)
+    manifest_payload = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    )
+    document_ir = build_document_ir(
+        manifest,
+        blocks,
+        requested_profile,
+        manifest_sha256=sha256_text(manifest_payload),
+        blocks_sha256=sha256_artifact(blocks_path, boundary=work_dir),
+        adapter_freeze=adapter_freeze,
+    )
+
+    remove_artifact_file(source_audit_path, boundary=work_dir)
+    _bind_validated_profile(work_dir, requested_profile, force=force)
+    for path in downstream_directories:
+        clear_artifact_directory(
+            path, boundary=work_dir, remove_directory=True
+        )
+    write_json(ir_path, document_ir)
     write_json(manifest_path, manifest)
-    return write_document_ir(work_dir, profile)
+    return ir_path
 
 
 def main() -> None:
