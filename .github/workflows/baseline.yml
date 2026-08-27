@@ -102,6 +102,7 @@ jobs:
           python tests/repository_release_check_test.py
           python tests/profile_binding_test.py
           python tests/safe_artifacts_test.py
+          python tests/macos_path_alias_test.py
           python tests/work_artifact_boundary_test.py
           python tests/translation_artifact_boundary_test.py
           python tests/output_artifact_boundary_test.py
@@ -170,6 +171,33 @@ jobs:
           python tests/output_artifact_boundary_test.py
           python tests/docx_artifact_boundary_test.py
           python tests/compile_final_artifact_boundary_test.py
+
+  macos-filesystem:
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r "$SKILL_PATH/requirements.txt"
+          python -m pip check
+
+      - name: Run real APFS path-alias regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/macos_path_alias_test.py
 
   installer-parity:
     runs-on: ubuntu-24.04

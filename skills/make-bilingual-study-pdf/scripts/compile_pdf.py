@@ -141,6 +141,45 @@ def _publish_flat_directory(source: Path, target: Path, work_dir: Path) -> None:
         )
 
 
+def _publish_compile_stage(
+    *,
+    work_dir: Path,
+    compile_audit_path: Path,
+    visual_review_path: Path,
+    qa_report_path: Path,
+    build_dir: Path,
+    renders_dir: Path,
+    contact_dir: Path,
+    stage_build: Path,
+    stage_renders: Path,
+    stage_contact: Path,
+    report: dict[str, Any],
+    force: bool,
+) -> None:
+    # The compile gate must disappear before the first mutation of any final
+    # directory. A failed or partial publication may leave new bytes, but it can
+    # never leave an earlier passed audit describing those mixed generations.
+    remove_artifact_file(compile_audit_path, boundary=work_dir)
+    remove_artifact_file(visual_review_path, boundary=work_dir)
+    remove_artifact_file(qa_report_path, boundary=work_dir)
+    if force and validate_artifact_tree(
+        build_dir, work_dir, allow_missing=True
+    ) is not None:
+        clear_artifact_directory(build_dir, boundary=work_dir)
+    for directory in (renders_dir, contact_dir):
+        if validate_artifact_tree(directory, work_dir, allow_missing=True) is not None:
+            clear_artifact_directory(directory, boundary=work_dir)
+    prepare_artifact_directory(build_dir, boundary=work_dir)
+    _publish_flat_directory(stage_build, build_dir, work_dir)
+    _publish_flat_directory(stage_renders, renders_dir, work_dir)
+    _publish_flat_directory(stage_contact, contact_dir, work_dir)
+    atomic_write_text(
+        compile_audit_path,
+        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        boundary=work_dir,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Compile XeLaTeX, render every page, and run automated PDF QA."
@@ -426,23 +465,19 @@ def main() -> None:
         "failures": failures,
         **compile_output_bindings,
     }
-    remove_artifact_file(visual_review_path, boundary=work_dir)
-    remove_artifact_file(qa_report_path, boundary=work_dir)
-    if args.force and validate_artifact_tree(
-        build_dir, work_dir, allow_missing=True
-    ) is not None:
-        clear_artifact_directory(build_dir, boundary=work_dir)
-    for directory in (renders_dir, contact_dir):
-        if validate_artifact_tree(directory, work_dir, allow_missing=True) is not None:
-            clear_artifact_directory(directory, boundary=work_dir)
-    prepare_artifact_directory(build_dir, boundary=work_dir)
-    _publish_flat_directory(stage_build, build_dir, work_dir)
-    _publish_flat_directory(stage_renders, renders_dir, work_dir)
-    _publish_flat_directory(stage_contact, contact_dir, work_dir)
-    atomic_write_text(
-        compile_audit_path,
-        json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
-        boundary=work_dir,
+    _publish_compile_stage(
+        work_dir=work_dir,
+        compile_audit_path=compile_audit_path,
+        visual_review_path=visual_review_path,
+        qa_report_path=qa_report_path,
+        build_dir=build_dir,
+        renders_dir=renders_dir,
+        contact_dir=contact_dir,
+        stage_build=stage_build,
+        stage_renders=stage_renders,
+        stage_contact=stage_contact,
+        report=report,
+        force=args.force,
     )
     clear_artifact_directory(
         stage_root, boundary=work_dir, remove_directory=True

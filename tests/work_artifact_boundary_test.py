@@ -545,7 +545,7 @@ class WorkArtifactBoundaryTests(unittest.TestCase):
                 )
 
                 self.assertIsInstance(error, AdapterError)
-                self.assertIn("lexically disjoint", str(error))
+                self.assertIn("filesystem-disjoint", str(error))
                 self.assertEqual(tree_snapshot(root), before)
 
     def test_mineru_rejects_linked_input_tree_before_reading_or_cleanup(self) -> None:
@@ -608,7 +608,7 @@ class WorkArtifactBoundaryTests(unittest.TestCase):
             )
 
             self.assertIsInstance(profile_error, AdapterError)
-            self.assertIn("custom Profile must be lexically outside WORK", str(profile_error))
+            self.assertIn("custom Profile must be outside WORK", str(profile_error))
             self.assertEqual(tree_snapshot(root), before)
 
             external = root / "outside-input.json"

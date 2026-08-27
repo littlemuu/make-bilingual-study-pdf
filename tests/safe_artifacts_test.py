@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -21,6 +22,7 @@ sys.path.insert(0, str(SCRIPTS))
 import safe_artifacts  # noqa: E402
 from safe_artifacts import (  # noqa: E402
     ArtifactSafetyError,
+    artifact_paths_same_entry,
     artifact_size,
     atomic_copy_file,
     atomic_publish_with_writer,
@@ -109,6 +111,75 @@ class SafeArtifactTests(unittest.TestCase):
         self.assertTrue(lexical_paths_overlap(self.boundary, child))
         self.assertTrue(lexical_paths_overlap(child, self.boundary))
         self.assertFalse(lexical_paths_overlap(self.boundary, sibling))
+
+    def test_physical_overlap_detects_case_and_unicode_directory_aliases(self) -> None:
+        case_directory = self.temp / "CaseWork"
+        case_source = case_directory / "renders" / "source.pdf"
+        case_source.parent.mkdir(parents=True)
+        case_source.write_bytes(b"case-alias-source\n")
+        case_alias = self.temp / "casework"
+
+        nfc_name = unicodedata.normalize("NFC", "caf\u00e9-work")
+        nfd_name = unicodedata.normalize("NFD", nfc_name)
+        self.assertNotEqual(nfc_name, nfd_name)
+        unicode_directory = self.temp / nfc_name
+        unicode_directory.mkdir()
+        unicode_profile = unicode_directory / "profile.json"
+        unicode_profile.write_bytes(b"unicode-alias-profile\n")
+        unicode_alias = self.temp / nfd_name
+
+        sensitive_directory = self.temp / "SensitiveWork"
+        sensitive_directory.mkdir()
+        sensitive_backing = self.temp / "sensitive-backing"
+        sensitive_backing.mkdir()
+        sensitive_alias = self.temp / "sensitivework"
+
+        real_lstat = os.lstat
+        aliases = (
+            (lexical_absolute_path(case_alias), lexical_absolute_path(case_directory)),
+            (
+                lexical_absolute_path(unicode_alias),
+                lexical_absolute_path(unicode_directory),
+            ),
+            (
+                lexical_absolute_path(sensitive_alias),
+                lexical_absolute_path(sensitive_backing),
+            ),
+        )
+
+        def aliasing_lstat(value: object) -> os.stat_result:
+            candidate = lexical_absolute_path(os.fspath(value))
+            for alias, target in aliases:
+                candidate_text = os.fspath(candidate)
+                alias_text = os.fspath(alias)
+                if candidate_text == alias_text:
+                    candidate = target
+                    break
+                prefix = alias_text + os.sep
+                if candidate_text.startswith(prefix):
+                    candidate = target / candidate_text[len(prefix) :]
+                    break
+            return real_lstat(candidate)
+
+        with mock.patch.object(
+            safe_artifacts.os, "lstat", side_effect=aliasing_lstat
+        ):
+            self.assertTrue(lexical_paths_overlap(case_source, case_alias))
+            self.assertTrue(
+                artifact_paths_same_entry(case_directory, case_alias)
+            )
+            self.assertTrue(
+                lexical_paths_overlap(unicode_profile, unicode_alias)
+            )
+            self.assertTrue(
+                artifact_paths_same_entry(unicode_directory, unicode_alias)
+            )
+            self.assertFalse(
+                lexical_paths_overlap(sensitive_directory, sensitive_alias)
+            )
+
+        missing = self.temp / "missing-entry"
+        self.assertFalse(artifact_paths_same_entry(missing, missing))
 
     def test_directory_validation_rejects_a_regular_file_component(self) -> None:
         file_path = self.boundary / "not-a-directory"

@@ -104,6 +104,7 @@ repository root:
 .venv/bin/python tests/repository_release_check_test.py
 .venv/bin/python tests/profile_binding_test.py
 .venv/bin/python tests/safe_artifacts_test.py
+.venv/bin/python tests/macos_path_alias_test.py
 .venv/bin/python tests/work_artifact_boundary_test.py
 .venv/bin/python tests/translation_artifact_boundary_test.py
 .venv/bin/python tests/output_artifact_boundary_test.py
@@ -170,8 +171,10 @@ The GitHub Actions `Baseline` workflow runs the quick baseline, installer parity
 both schema V2 automated forward chains for pull requests and pushes to `main`. A
 separate Windows 2025 job runs the EOL, Profile-binding, installed-release,
 repository-release, and generated work-artifact filesystem suites so hard-link and
-junction/reparse-point regressions are exercised on Windows. The workflow does not use
-tag pushes as a release gate.
+junction/reparse-point regressions are exercised on Windows. A focused macOS 15 job
+uses the hosted APFS filesystem to prove that case-only and NFC/NFD aliases are detected
+by physical directory identity before native or MinerU preflight can mutate `WORK`.
+The workflow does not use tag pushes as a release gate.
 
 ## Default-branch release path
 

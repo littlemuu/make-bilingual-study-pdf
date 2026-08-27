@@ -120,15 +120,31 @@ def _preflight_import_input_overlap(
     work_dir: Path,
     profile_reference: str | Path,
 ) -> None:
-    if lexical_paths_overlap(source_pdf, work_dir):
-        raise AdapterError("source PDF must be lexically outside WORK")
-    if lexical_paths_overlap(output_dir, work_dir):
+    try:
+        source_overlap = lexical_paths_overlap(source_pdf, work_dir)
+    except ArtifactSafetyError as exc:
+        raise AdapterError(f"unsafe source PDF input: {exc}") from exc
+    if source_overlap:
+        raise AdapterError("source PDF must be outside WORK without filesystem aliases")
+    try:
+        output_overlap = lexical_paths_overlap(output_dir, work_dir)
+    except ArtifactSafetyError as exc:
+        raise AdapterError(f"unsafe MinerU output directory: {exc}") from exc
+    if output_overlap:
         raise AdapterError(
-            "MinerU output directory and WORK must be lexically disjoint"
+            "MinerU output directory and WORK must be filesystem-disjoint"
         )
     profile_path = _existing_profile_reference(profile_reference)
-    if profile_path is not None and lexical_paths_overlap(profile_path, work_dir):
-        raise AdapterError("custom Profile must be lexically outside WORK")
+    try:
+        profile_overlap = profile_path is not None and lexical_paths_overlap(
+            profile_path, work_dir
+        )
+    except ArtifactSafetyError as exc:
+        raise AdapterError(f"unsafe custom Profile path: {exc}") from exc
+    if profile_overlap:
+        raise AdapterError(
+            "custom Profile must be outside WORK without filesystem aliases"
+        )
 
 
 def _validate_mineru_input_tree(output_dir: Path) -> None:

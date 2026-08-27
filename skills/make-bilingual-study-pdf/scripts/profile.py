@@ -14,7 +14,9 @@ from typing import Any
 from common import json_loads_strict, sha256_text, validate_json_value
 from safe_artifacts import (
     ArtifactSafetyError,
+    artifact_paths_same_entry,
     lexical_absolute_path,
+    lexical_paths_overlap,
     read_artifact_text,
     validate_artifact_file,
 )
@@ -756,6 +758,13 @@ def _profile_reference_path(
     return lexical_absolute_path(PROFILE_DIR / f"{name}.json"), False
 
 
+def _profile_paths_same_entry(left: Path, right: Path) -> bool:
+    try:
+        return artifact_paths_same_entry(left, right)
+    except ArtifactSafetyError as exc:
+        raise ValueError(f"unsafe Profile path identity: {exc}") from exc
+
+
 def _reject_noncanonical_work_profile_path(path: Path) -> None:
     """Do not let a Profile input double as a generated WORK artifact."""
     for ancestor in (path.parent, *path.parents):
@@ -765,7 +774,7 @@ def _reject_noncanonical_work_profile_path(path: Path) -> None:
         ):
             continue
         canonical = lexical_absolute_path(ancestor / "profile.json")
-        if os.path.normcase(os.fspath(path)) != os.path.normcase(os.fspath(canonical)):
+        if not _profile_paths_same_entry(path, canonical):
             raise ValueError(
                 "a Profile path inside WORK must be the canonical WORK/profile.json"
             )
@@ -781,12 +790,10 @@ def _validate_work_profile_reference(
     if not explicit_path:
         return
     absolute_work = lexical_absolute_path(work_dir)
-    try:
-        path.relative_to(absolute_work)
-    except ValueError:
+    if not lexical_paths_overlap(path, absolute_work):
         return
     canonical = absolute_work / "profile.json"
-    if os.path.normcase(os.fspath(path)) != os.path.normcase(os.fspath(canonical)):
+    if not _profile_paths_same_entry(path, canonical):
         raise ValueError(
             "a Profile override inside WORK must be the canonical WORK/profile.json"
         )

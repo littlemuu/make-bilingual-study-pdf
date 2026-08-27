@@ -56,20 +56,48 @@ def lexical_absolute_path(path: str | os.PathLike[str]) -> Path:
 def lexical_paths_overlap(
     left: str | os.PathLike[str], right: str | os.PathLike[str]
 ) -> bool:
-    """Return whether either lexical absolute path contains the other."""
+    """Return whether either path lexically or physically contains the other.
+
+    The physical fallback compares no-follow ``lstat`` snapshots. This catches
+    alternate spellings that the filesystem maps to the same directory, such as
+    case or NFC/NFD aliases on a default macOS APFS volume, without guessing that
+    those spellings are aliases on case-sensitive filesystems.
+    """
     absolute_left = lexical_absolute_path(left)
     absolute_right = lexical_absolute_path(right)
-    try:
-        common = Path(
-            os.path.commonpath((os.fspath(absolute_left), os.fspath(absolute_right)))
+    left_parts = absolute_left.parts
+    right_parts = absolute_right.parts
+    if (
+        left_parts == right_parts[: len(left_parts)]
+        or right_parts == left_parts[: len(right_parts)]
+    ):
+        return True
+    return _physical_paths_overlap(absolute_left, absolute_right)
+
+
+def artifact_paths_same_entry(
+    left: str | os.PathLike[str], right: str | os.PathLike[str]
+) -> bool:
+    """Compare exact path identity without following any filesystem link."""
+    absolute_left = lexical_absolute_path(left)
+    absolute_right = lexical_absolute_path(right)
+    left_snapshots, left_complete = _inspect_existing_path_components(absolute_left)
+    if absolute_left == absolute_right:
+        _recheck_entry_snapshots(left_snapshots)
+        return bool(left_complete and left_snapshots)
+    right_snapshots, right_complete = _inspect_existing_path_components(absolute_right)
+    same = bool(
+        left_complete
+        and right_complete
+        and left_snapshots
+        and right_snapshots
+        and _same_entry_identity(
+            left_snapshots[-1].status, right_snapshots[-1].status
         )
-    except ValueError:
-        return False
-    common_key = os.path.normcase(os.fspath(common))
-    return common_key in {
-        os.path.normcase(os.fspath(absolute_left)),
-        os.path.normcase(os.fspath(absolute_right)),
-    }
+    )
+    _recheck_entry_snapshots(left_snapshots)
+    _recheck_entry_snapshots(right_snapshots)
+    return same
 
 
 def work_relative_artifact_path(
@@ -170,6 +198,87 @@ def _same_file(left: os.stat_result, right: os.stat_result) -> bool:
         and left.st_ctime_ns == right.st_ctime_ns
         and left.st_nlink == right.st_nlink
     )
+
+
+def _same_entry_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return os.path.samestat(left, right) and stat.S_IFMT(left.st_mode) == stat.S_IFMT(
+        right.st_mode
+    )
+
+
+def _inspect_existing_path_components(
+    path: Path,
+) -> tuple[tuple[_EntrySnapshot, ...], bool]:
+    components = _path_components(path)
+    snapshots: list[_EntrySnapshot] = []
+    for index, component in enumerate(components):
+        try:
+            status = os.lstat(component)
+        except FileNotFoundError:
+            return tuple(snapshots), False
+        except OSError as exc:
+            raise ArtifactSafetyError(
+                f"cannot inspect artifact path identity: {exc}"
+            ) from exc
+        _reject_link_or_reparse(status, component)
+        if index < len(components) - 1:
+            _require_directory(status, component)
+        snapshots.append(_EntrySnapshot(component, status))
+    return tuple(snapshots), True
+
+
+def _recheck_entry_snapshots(snapshots: tuple[_EntrySnapshot, ...]) -> None:
+    for snapshot in snapshots:
+        try:
+            current = os.lstat(snapshot.path)
+            _reject_link_or_reparse(current, snapshot.path)
+        except (OSError, ArtifactSafetyError) as exc:
+            if isinstance(exc, ArtifactSafetyError):
+                raise
+            raise ArtifactSafetyError(
+                f"artifact path identity changed during overlap check: {exc}"
+            ) from exc
+        if not _same_entry_identity(snapshot.status, current):
+            raise ArtifactSafetyError(
+                f"artifact path identity changed during overlap check: {snapshot.path}"
+            )
+
+
+def _physical_paths_overlap(left: Path, right: Path) -> bool:
+    left_snapshots, left_complete = _inspect_existing_path_components(left)
+    right_snapshots, right_complete = _inspect_existing_path_components(right)
+    overlap = False
+
+    left_endpoint = left_snapshots[-1] if left_complete and left_snapshots else None
+    right_endpoint = right_snapshots[-1] if right_complete and right_snapshots else None
+    if left_endpoint is not None and right_endpoint is not None:
+        overlap = _same_entry_identity(
+            left_endpoint.status, right_endpoint.status
+        )
+    if (
+        not overlap
+        and left_endpoint is not None
+        and stat.S_ISDIR(left_endpoint.status.st_mode)
+    ):
+        overlap = any(
+            stat.S_ISDIR(snapshot.status.st_mode)
+            and _same_directory(left_endpoint.status, snapshot.status)
+            for snapshot in right_snapshots
+        )
+    if (
+        not overlap
+        and right_endpoint is not None
+        and stat.S_ISDIR(right_endpoint.status.st_mode)
+    ):
+        overlap = any(
+            stat.S_ISDIR(snapshot.status.st_mode)
+            and _same_directory(right_endpoint.status, snapshot.status)
+            for snapshot in left_snapshots
+        )
+
+    _recheck_entry_snapshots(left_snapshots)
+    _recheck_entry_snapshots(right_snapshots)
+    return overlap
 
 
 def _bounded_path(
@@ -1117,6 +1226,7 @@ def clear_artifact_directory(
 
 __all__ = [
     "ArtifactSafetyError",
+    "artifact_paths_same_entry",
     "artifact_size",
     "atomic_copy_file",
     "atomic_publish_with_writer",

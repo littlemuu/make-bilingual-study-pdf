@@ -18,6 +18,7 @@ SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import profile as profile_module
+import safe_artifacts
 
 
 class ProfileBindingTests(unittest.TestCase):
@@ -341,6 +342,53 @@ class ProfileBindingTests(unittest.TestCase):
         self.assertEqual(actual, expected)
         self.assertFalse((work_dir / "profile.json").exists())
         self.assertFalse((work_dir / "document-ir.json").exists())
+
+    def test_physical_work_alias_enforces_canonical_profile_identity(self) -> None:
+        work_dir = self.make_work("CaseWork")
+        output = work_dir / "output"
+        output.mkdir()
+        custom_profile = output / "custom-profile.json"
+        custom_profile.write_bytes(b"custom profile sentinel\n")
+        canonical_profile = work_dir / "profile.json"
+        canonical_profile.write_bytes(b"canonical profile sentinel\n")
+        alias_work = self.root / "casework"
+        canonical_alias = alias_work / "PROFILE.JSON"
+        real_lstat = os.lstat
+        aliases = (
+            (canonical_alias, canonical_profile),
+            (alias_work, work_dir),
+        )
+
+        def aliasing_lstat(value: object) -> os.stat_result:
+            candidate = Path(os.path.abspath(os.fspath(value)))
+            candidate_text = os.fspath(candidate)
+            for alias, target in aliases:
+                alias_text = os.fspath(Path(os.path.abspath(alias)))
+                if candidate_text == alias_text:
+                    candidate = target
+                    break
+                prefix = alias_text + os.sep
+                if candidate_text.startswith(prefix):
+                    candidate = target / candidate_text[len(prefix) :]
+                    break
+            return real_lstat(candidate)
+
+        with (
+            mock.patch.object(safe_artifacts.os, "lstat", side_effect=aliasing_lstat),
+            mock.patch.object(
+                safe_artifacts.os.path, "normcase", side_effect=lambda value: value
+            ),
+        ):
+            with self.assertRaisesRegex(ValueError, "canonical WORK/profile.json"):
+                profile_module._validate_work_profile_reference(
+                    alias_work, custom_profile
+                )
+            profile_module._validate_work_profile_reference(
+                alias_work, canonical_alias
+            )
+
+        self.assertEqual(custom_profile.read_bytes(), b"custom profile sentinel\n")
+        self.assertEqual(canonical_profile.read_bytes(), b"canonical profile sentinel\n")
 
     def test_work_directory_symlink_ancestor_is_rejected_before_external_write(
         self,

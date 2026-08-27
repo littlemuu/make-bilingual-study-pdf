@@ -83,11 +83,23 @@ def _existing_profile_reference(reference: str | Path) -> Path | None:
 def _preflight_source_input_overlap(
     pdf_path: Path, work_dir: Path, profile_reference: str | Path
 ) -> None:
-    if lexical_paths_overlap(pdf_path, work_dir):
-        raise SystemExit("source PDF must be lexically outside WORK")
+    try:
+        source_overlap = lexical_paths_overlap(pdf_path, work_dir)
+    except ArtifactSafetyError as exc:
+        raise SystemExit(f"unsafe source PDF or WORK path: {exc}") from exc
+    if source_overlap:
+        raise SystemExit("source PDF must be outside WORK without filesystem aliases")
     profile_path = _existing_profile_reference(profile_reference)
-    if profile_path is not None and lexical_paths_overlap(profile_path, work_dir):
-        raise SystemExit("custom Profile must be lexically outside WORK")
+    try:
+        profile_overlap = profile_path is not None and lexical_paths_overlap(
+            profile_path, work_dir
+        )
+    except ArtifactSafetyError as exc:
+        raise SystemExit(f"unsafe custom Profile or WORK path: {exc}") from exc
+    if profile_overlap:
+        raise SystemExit(
+            "custom Profile must be outside WORK without filesystem aliases"
+        )
 
 
 def require_command(name: str) -> str:

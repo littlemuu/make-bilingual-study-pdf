@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "eb1462d3bdebadf0bba7106aef0498931ab2a7c9492c0f269c86dbd4728b558e",
+  "tree_sha256": "c351b56e0b1edf411e16dd4ecce934c9ecd076ce5b35fc4376c4f5ff20d19b55",
   "files": [
     {
       "path": "SKILL.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "scripts/adapters/mineru.py",
-      "size": 66704,
-      "sha256": "7f613ac491c1de68423a2bc895a2c24b5b8add46ddced39acd6f7be04db3f418"
+      "size": 67272,
+      "sha256": "8d11484f5d6986af892a183e167e8134e2428af6c78a22a24bc87f5b96adca75"
     },
     {
       "path": "scripts/adapters/native_pdf.py",
@@ -137,8 +137,8 @@
     },
     {
       "path": "scripts/compile_pdf.py",
-      "size": 17208,
-      "sha256": "5319ddb162d90669722a8694e911b66aab0dbce996232ea390fe84c5bdea6935"
+      "size": 18287,
+      "sha256": "916ef343bb97aad8c0ad23becdfebcda996c4e8f4ee53df84e14d5ed245e48bd"
     },
     {
       "path": "scripts/document_ir.py",
@@ -157,8 +157,8 @@
     },
     {
       "path": "scripts/extract_pdf.py",
-      "size": 39536,
-      "sha256": "579aa2936322bda68c4f33a2af0db57bce005690ae3ebd6a395c9bcfb1552da1"
+      "size": 39948,
+      "sha256": "76eceb28294ae3634037859d6ab4cf8c21e8fb0239b4a1e4ce0fe37e30ca9eee"
     },
     {
       "path": "scripts/finalize_qa.py",
@@ -192,8 +192,8 @@
     },
     {
       "path": "scripts/profile.py",
-      "size": 36839,
-      "sha256": "1af005bbea891af79240d0d49f4c7e61d9fdf75efcb3e6b10de6c58c3ff87cb4"
+      "size": 37064,
+      "sha256": "4cfb4f2fecc3b69d66d8bb3efc7a703998836916a501b54ff6b18600edbc6f6e"
     },
     {
       "path": "scripts/record_visual_review.py",
@@ -207,8 +207,8 @@
     },
     {
       "path": "scripts/safe_artifacts.py",
-      "size": 39421,
-      "sha256": "072cff16637a7dd451748b4bf19685283da53f810f287603f490f124a3e8a9b1"
+      "size": 43647,
+      "sha256": "81e4bf953cfda9217d521b13bf5ab202ffe853e40307681ebcff5751ef022122"
     },
     {
       "path": "scripts/self_test.py",

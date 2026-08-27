@@ -30,6 +30,7 @@ from audit_docx import (  # noqa: E402
     validate_v2_compile_docx_binding,
 )
 from document_ir import expected_ir  # noqa: E402
+import compile_pdf as compile_pdf_module  # noqa: E402
 import pipeline as pipeline_module  # noqa: E402
 from profile import canonical_profile_sha256, load_profile, profile_contract  # noqa: E402
 
@@ -736,6 +737,80 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             self.assertIn("hard-linked", completed.stdout + completed.stderr)
             self.assertEqual(outside.read_bytes(), b"outside audit\n")
 
+    def test_partial_compile_publication_removes_old_passed_gates_first(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="compile-partial-publish-") as temp:
+            root = Path(temp)
+            work, paths = self.make_compile_work(root)
+            output = work / "output"
+            build_dir = output / "build"
+            renders_dir = output / "pdf-renders"
+            contact_dir = output / "contact"
+            renders_dir.mkdir()
+            contact_dir.mkdir()
+            (renders_dir / "old-render.png").write_bytes(b"old render\n")
+            (contact_dir / "old-contact.png").write_bytes(b"old contact\n")
+
+            stage_root = work / ".compile-stage-test"
+            stage_build = stage_root / "build"
+            stage_renders = stage_root / "renders"
+            stage_contact = stage_root / "contact"
+            for directory in (stage_build, stage_renders, stage_contact):
+                directory.mkdir(parents=True)
+            (stage_build / "fixture.pdf").write_bytes(b"new compiled PDF\n")
+            (stage_renders / "page-0001.png").write_bytes(b"new render\n")
+            (stage_contact / "contact-001.png").write_bytes(b"new contact\n")
+
+            real_publish = compile_pdf_module._publish_flat_directory
+            publish_targets: list[Path] = []
+
+            def fail_second_publish(source: Path, target: Path, boundary: Path) -> None:
+                publish_targets.append(target)
+                if len(publish_targets) == 2:
+                    raise OSError("injected second publication failure")
+                real_publish(source, target, boundary)
+
+            outside_before = paths["outside"].read_bytes()
+            with patch.object(
+                compile_pdf_module,
+                "_publish_flat_directory",
+                side_effect=fail_second_publish,
+            ):
+                with self.assertRaisesRegex(
+                    OSError, "injected second publication failure"
+                ):
+                    compile_pdf_module._publish_compile_stage(
+                        work_dir=work,
+                        compile_audit_path=output / "compile-audit.json",
+                        visual_review_path=output / "visual-review.json",
+                        qa_report_path=output / "qa-report.json",
+                        build_dir=build_dir,
+                        renders_dir=renders_dir,
+                        contact_dir=contact_dir,
+                        stage_build=stage_build,
+                        stage_renders=stage_renders,
+                        stage_contact=stage_contact,
+                        report={"status": "needs_visual_review"},
+                        force=True,
+                    )
+
+            self.assertEqual(publish_targets, [build_dir, renders_dir])
+            self.assertEqual(
+                (build_dir / "fixture.pdf").read_bytes(), b"new compiled PDF\n"
+            )
+            for name in (
+                "compile-audit.json",
+                "visual-review.json",
+                "qa-report.json",
+            ):
+                self.assertFalse(os.path.lexists(output / name), name)
+            self.assertEqual(paths["outside"].read_bytes(), outside_before)
+
+            status = self.run_script("pipeline.py", "status", work)
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            gate_statuses = json.loads(status.stdout)["gate_statuses"]
+            for name in ("compile_audit", "visual_review", "qa_report"):
+                self.assertIsNone(gate_statuses[name], name)
+
     def test_latex_compile_rejects_every_stale_output_binding_before_discovery(
         self,
     ) -> None:
@@ -1338,10 +1413,13 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             outside = root / "outside.pdf"
             outside.write_bytes(b"outside PDF sentinel\n")
             compile_target = work / "output" / "fixture.pdf"
+            compile_target.unlink()
             try:
                 os.symlink(outside, compile_target)
             except OSError as exc:
-                self.skipTest(f"file symlinks unavailable: {exc}")
+                if os.name == "nt" and getattr(exc, "winerror", None) in {5, 1314}:
+                    self.skipTest(f"file symlink privilege unavailable: {exc}")
+                self.fail(f"file symlink regression setup failed: {exc}")
             calls: list[str] = []
 
             with self.assertRaisesRegex(ValueError, "symbolic links"):
