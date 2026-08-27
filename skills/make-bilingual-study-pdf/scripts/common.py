@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from collections import Counter
@@ -94,14 +95,22 @@ def relative_path(path: Path, start: Path) -> str:
 
 def write_json(path: Path, value: Any) -> None:
     path.write_text(
-        json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n",
+        encoding="utf-8",
     )
 
 
 def write_jsonl(path: Path, values: Iterable[dict[str, Any]]) -> None:
     with path.open("w", encoding="utf-8", newline="\n") as stream:
         for value in values:
-            stream.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+            stream.write(
+                json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    allow_nan=False,
+                )
+            )
             stream.write("\n")
 
 
@@ -114,9 +123,69 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"JSON number is outside the finite float range: {value}")
+    return parsed
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is not allowed: {value}")
+
+
+def validate_json_value(value: Any) -> None:
+    """Require an acyclic tree of native, finite JSON values."""
+    active_container_ids: set[int] = set()
+
+    def visit(item: Any) -> None:
+        item_type = type(item)
+        if item is None or item_type in {bool, int}:
+            return
+        if item_type is float:
+            if not math.isfinite(item):
+                raise ValueError("JSON numbers must be finite")
+            return
+        if item_type is str:
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in item):
+                raise ValueError("JSON strings must not contain unpaired surrogates")
+            return
+        if item_type not in {list, dict}:
+            raise ValueError(
+                "JSON values must use only null, boolean, integer, finite float, "
+                "string, array, and object types"
+            )
+
+        container_id = id(item)
+        if container_id in active_container_ids:
+            raise ValueError("JSON values must not contain circular references")
+        active_container_ids.add(container_id)
+        try:
+            if item_type is list:
+                for child in item:
+                    visit(child)
+            else:
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ValueError("JSON object keys must be strings")
+                    visit(key)
+                    visit(child)
+        finally:
+            active_container_ids.remove(container_id)
+
+    visit(value)
+
+
 def json_loads_strict(payload: str) -> Any:
-    """Parse JSON while rejecting duplicate object keys at every depth."""
-    return json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
+    """Parse strict finite JSON made only of Unicode scalar-value strings."""
+    value = json.loads(
+        payload,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_float=_parse_finite_json_float,
+        parse_constant=_reject_json_constant,
+    )
+    validate_json_value(value)
+    return value
 
 
 def read_json(path: Path) -> Any:

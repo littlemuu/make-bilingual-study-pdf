@@ -10,6 +10,10 @@ A Profile is a versioned JSON control plane. It declares the input adapter and s
 thresholds, languages and target-script detection, semantic roles, reading order,
 DOCX theme, and QA thresholds.
 
+Every ratio or coverage threshold is a non-boolean, finite JSON number in `(0, 1]`.
+Reject zero, negative values, `NaN`/infinities, and values that overflow to infinity;
+never interpret them as a way to disable a gate.
+
 Bind the selected Profile to `WORK_DIR/profile.json` before extraction. Hash the bound
 copy into the manifest, document IR, translation plan, and output manifest. The field
 `profile_sha256` always means the canonical JSON hash; `profile_file_sha256` is the

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import stat
@@ -60,9 +61,76 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return value
 
 
+def _parse_finite_json_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError(f"JSON number is outside the finite float range: {value}")
+    return parsed
+
+
+def _reject_json_constant(value: str) -> None:
+    raise ValueError(f"non-finite JSON number is not allowed: {value}")
+
+
+def _validate_json_value(value: Any) -> None:
+    active_container_ids: set[int] = set()
+
+    def visit(item: Any) -> None:
+        item_type = type(item)
+        if item is None or item_type in {bool, int}:
+            return
+        if item_type is float:
+            if not math.isfinite(item):
+                raise ValueError("JSON numbers must be finite")
+            return
+        if item_type is str:
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in item):
+                raise ValueError("JSON strings must not contain unpaired surrogates")
+            return
+        if item_type not in {list, dict}:
+            raise ValueError(
+                "JSON values must use only null, boolean, integer, finite float, "
+                "string, array, and object types"
+            )
+
+        container_id = id(item)
+        if container_id in active_container_ids:
+            raise ValueError("JSON values must not contain circular references")
+        active_container_ids.add(container_id)
+        try:
+            if item_type is list:
+                for child in item:
+                    visit(child)
+            else:
+                for key, child in item.items():
+                    if type(key) is not str:
+                        raise ValueError("JSON object keys must be strings")
+                    visit(key)
+                    visit(child)
+        finally:
+            active_container_ids.remove(container_id)
+
+    visit(value)
+
+
 def json_loads_strict(payload: str) -> Any:
-    """Parse JSON without importing payload modules or accepting duplicate keys."""
-    return json.loads(payload, object_pairs_hook=_reject_duplicate_json_keys)
+    """Parse finite scalar-value JSON without importing payload modules."""
+    value = json.loads(
+        payload,
+        object_pairs_hook=_reject_duplicate_json_keys,
+        parse_float=_parse_finite_json_float,
+        parse_constant=_reject_json_constant,
+    )
+    _validate_json_value(value)
+    return value
+
+
+def _valid_unit_interval_number(value: Any) -> bool:
+    return (
+        type(value) in {int, float}
+        and (type(value) is not float or math.isfinite(value))
+        and 0 < value <= 1
+    )
 
 
 def is_reparse_point(status: os.stat_result) -> bool:
@@ -283,7 +351,8 @@ def valid_manifest_path(value: object) -> bool:
             return False
         if any(character in WINDOWS_FORBIDDEN_CHARACTERS for character in part):
             return False
-        if part.split(".", 1)[0].casefold() in WINDOWS_RESERVED_STEMS:
+        windows_stem = part.split(".", 1)[0].rstrip(" ").casefold()
+        if windows_stem in WINDOWS_RESERVED_STEMS:
             return False
     return True
 
@@ -561,6 +630,13 @@ def validate_profiles(failures: list[str]) -> dict[str, dict[str, object]]:
         if not isinstance(profile_input, dict):
             failures.append(f"{relative} input must be a JSON object")
             profile_input = {}
+        if not _valid_unit_interval_number(
+            profile_input.get("minimum_native_text_page_ratio")
+        ):
+            failures.append(
+                f"{relative} input.minimum_native_text_page_ratio must be a finite "
+                "number in (0, 1]"
+            )
         actual_schema_version = profile.get("schema_version")
         if type(actual_schema_version) is not int:
             failures.append(f"{relative} schema_version must be an integer")
@@ -579,6 +655,15 @@ def validate_profiles(failures: list[str]) -> dict[str, dict[str, object]]:
             failures.append(
                 f"{relative} release identity mismatch: expected {expected}, got {actual}"
             )
+        qa = profile.get("qa")
+        if not isinstance(qa, dict):
+            failures.append(f"{relative} qa must be a JSON object")
+            continue
+        for field in ("minimum_global_fivegram_coverage", "warn_page_below"):
+            if not _valid_unit_interval_number(qa.get(field)):
+                failures.append(
+                    f"{relative} qa.{field} must be a finite number in (0, 1]"
+                )
     return observed
 
 

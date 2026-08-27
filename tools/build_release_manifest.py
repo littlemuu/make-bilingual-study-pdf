@@ -198,7 +198,8 @@ def valid_payload_path(value: str) -> bool:
             return False
         if any(character in WINDOWS_FORBIDDEN_CHARACTERS for character in part):
             return False
-        if part.split(".", 1)[0].casefold() in WINDOWS_RESERVED_STEMS:
+        windows_stem = part.split(".", 1)[0].rstrip(" ").casefold()
+        if windows_stem in WINDOWS_RESERVED_STEMS:
             return False
     return True
 

@@ -146,6 +146,18 @@ class SkillValidatorTest(unittest.TestCase):
             "skill token with Unicode suffix": original.replace(
                 "$make-bilingual-study-pdf", "$make-bilingual-study-pdf恶", 1
             ),
+            "skill token with combining-mark suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf\u0301", 1
+            ),
+            "skill token with zero-width suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf\u200b", 1
+            ),
+            "skill token with word-joiner suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf\u2060", 1
+            ),
+            "skill token with private-use suffix": original.replace(
+                "$make-bilingual-study-pdf", "$make-bilingual-study-pdf\ue000", 1
+            ),
             "embedded skill token": original.replace(
                 "$make-bilingual-study-pdf", "prefix$make-bilingual-study-pdf", 1
             ),
@@ -155,6 +167,26 @@ class SkillValidatorTest(unittest.TestCase):
             "duplicate skill token": original.replace(
                 "$make-bilingual-study-pdf",
                 "$make-bilingual-study-pdf and $make-bilingual-study-pdf",
+                1,
+            ),
+            "valid plus combining-mark malformed token": original.replace(
+                "$make-bilingual-study-pdf",
+                "$make-bilingual-study-pdf and $make-bilingual-study-pdf\u0301",
+                1,
+            ),
+            "valid plus zero-width malformed token": original.replace(
+                "$make-bilingual-study-pdf",
+                "$make-bilingual-study-pdf and $make-bilingual-study-pdf\u200b",
+                1,
+            ),
+            "valid plus double-dollar malformed token": original.replace(
+                "$make-bilingual-study-pdf",
+                "$make-bilingual-study-pdf and $$make-bilingual-study-pdf",
+                1,
+            ),
+            "valid plus embedded malformed token": original.replace(
+                "$make-bilingual-study-pdf",
+                "$make-bilingual-study-pdf and prefix$make-bilingual-study-pdf",
                 1,
             ),
             "non-string display name": original.replace(

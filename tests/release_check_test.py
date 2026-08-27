@@ -222,6 +222,9 @@ class ReleaseCheckTests(unittest.TestCase):
             "LPT¹.txt",
             "LPT².txt",
             "LPT³.txt",
+            "NUL .txt",
+            "COM1 .bin",
+            "CONIN$ .x",
             "folder/name.",
             "folder/name ",
             "folder/name?.txt",
@@ -251,12 +254,18 @@ class ReleaseCheckTests(unittest.TestCase):
             "com0.txt",
             "LPT0",
             "lPt0.bin",
+            "NUL .txt",
+            "COM1 .bin",
+            "CONIN$ .x",
         )
         valid_names = (
             "coninput.txt",
             "conoutput.txt",
             "com10.txt",
             "lpt10.txt",
+            "NULL .txt",
+            "COM10 .bin",
+            "CONINX$ .x",
         )
         for invalid_name in invalid_names:
             with self.subTest(path=invalid_name):
@@ -277,6 +286,9 @@ class ReleaseCheckTests(unittest.TestCase):
             "LPT0",
             "lPt0.bin",
             "COM¹.txt",
+            "NUL .txt",
+            "COM1 .bin",
+            "CONIN$ .x",
         )
         for invalid_name in invalid_names:
             with self.subTest(path=invalid_name):
@@ -522,6 +534,76 @@ class ReleaseCheckTests(unittest.TestCase):
                 original.replace('  "schema_version": 1,', '  "schema_version": true,', 1),
                 "schema_version must be an integer",
             ),
+            "boolean coverage threshold": (
+                original.replace(
+                    '"minimum_global_fivegram_coverage": 0.95',
+                    '"minimum_global_fivegram_coverage": false',
+                    1,
+                ),
+                "qa.minimum_global_fivegram_coverage must be a finite number",
+            ),
+            "boolean native text ratio": (
+                original.replace(
+                    '"minimum_native_text_page_ratio": 0.7',
+                    '"minimum_native_text_page_ratio": false',
+                    1,
+                ),
+                "input.minimum_native_text_page_ratio must be a finite number",
+            ),
+            "huge native text ratio": (
+                original.replace(
+                    '"minimum_native_text_page_ratio": 0.7',
+                    '"minimum_native_text_page_ratio": ' + "1" + "0" * 400,
+                    1,
+                ),
+                "input.minimum_native_text_page_ratio must be a finite number",
+            ),
+            "zero warning threshold": (
+                original.replace(
+                    '"warn_page_below": 0.75', '"warn_page_below": 0', 1
+                ),
+                "qa.warn_page_below must be a finite number",
+            ),
+            "NaN coverage threshold": (
+                original.replace(
+                    '"minimum_global_fivegram_coverage": 0.95',
+                    '"minimum_global_fivegram_coverage": NaN',
+                    1,
+                ),
+                "non-finite JSON number is not allowed: NaN",
+            ),
+            "Infinity coverage threshold": (
+                original.replace(
+                    '"minimum_global_fivegram_coverage": 0.95',
+                    '"minimum_global_fivegram_coverage": Infinity',
+                    1,
+                ),
+                "non-finite JSON number is not allowed: Infinity",
+            ),
+            "negative Infinity warning threshold": (
+                original.replace(
+                    '"warn_page_below": 0.75',
+                    '"warn_page_below": -Infinity',
+                    1,
+                ),
+                "non-finite JSON number is not allowed: -Infinity",
+            ),
+            "overflow coverage threshold": (
+                original.replace(
+                    '"minimum_global_fivegram_coverage": 0.95',
+                    '"minimum_global_fivegram_coverage": -1e9999',
+                    1,
+                ),
+                "JSON number is outside the finite float range",
+            ),
+            "unpaired surrogate": (
+                original.replace(
+                    '"header_label": "Bilingual study edition"',
+                    '"header_label": "\\ud800"',
+                    1,
+                ),
+                "JSON strings must not contain unpaired surrogates",
+            ),
         }
         for label, (content, expected_failure) in cases.items():
             with self.subTest(case=label):
@@ -531,6 +613,23 @@ class ReleaseCheckTests(unittest.TestCase):
                 self.assertNotEqual(process.returncode, 0, process.stderr)
                 self.assert_failed_with(report, expected_failure)
                 profile_path.write_text(original, encoding="utf-8", newline="\n")
+
+    def test_profiles_preserve_valid_non_bmp_unicode(self) -> None:
+        profile_path = self.root / "profiles" / "assignment-en-zh.json"
+        original = profile_path.read_text(encoding="utf-8")
+        profile_path.write_text(
+            original.replace(
+                '"header_label": "Bilingual study edition"',
+                '"header_label": "Assignment \\ud83d\\ude00"',
+                1,
+            ),
+            encoding="utf-8",
+            newline="\n",
+        )
+        self.regenerate()
+        process, report = self.run_check()
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertEqual(report["status"], "passed")
 
     def test_malformed_profiles_fail_without_crashing(self) -> None:
         profile_path = self.root / "profiles" / "assignment-en-zh.json"

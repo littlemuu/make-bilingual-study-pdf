@@ -18,6 +18,7 @@ REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
+from common import json_loads_strict, write_json, write_jsonl
 from profile import (
     PROFILE_DIR,
     canonical_profile_sha256,
@@ -179,6 +180,163 @@ def main() -> None:
         else:
             raise AssertionError("duplicate Profile JSON key unexpectedly passed")
     results.append("Profile JSON rejects duplicate keys and non-integer schema versions")
+
+    for field in ("minimum_global_fivegram_coverage", "warn_page_below"):
+        for invalid_threshold in (
+            False,
+            0,
+            -1,
+            1.01,
+            "0.95",
+        ):
+            expect_value_error(
+                academic,
+                f"profile.qa.{field} must be a finite number in (0, 1]",
+                mutate=lambda value, name=field, invalid=invalid_threshold: value[
+                    "qa"
+                ].__setitem__(name, invalid),
+            )
+        for non_finite in (float("nan"), float("inf"), float("-inf")):
+            expect_value_error(
+                academic,
+                "JSON numbers must be finite",
+                mutate=lambda value, name=field, invalid=non_finite: value[
+                    "qa"
+                ].__setitem__(name, invalid),
+            )
+
+    expect_value_error(
+        academic,
+        "minimum_native_text_page_ratio must be a finite number in (0, 1]",
+        mutate=lambda value: value["input"].__setitem__(
+            "minimum_native_text_page_ratio", 10**400
+        ),
+    )
+
+    strict_numeric_cases = {
+        "NaN": "non-finite JSON number is not allowed",
+        "Infinity": "non-finite JSON number is not allowed",
+        "-Infinity": "non-finite JSON number is not allowed",
+        "1e9999": "outside the finite float range",
+        "-1e9999": "outside the finite float range",
+    }
+    for token, expected_error in strict_numeric_cases.items():
+        try:
+            json_loads_strict(f'{{"threshold": {token}}}')
+        except ValueError as exc:
+            assert expected_error in str(exc), str(exc)
+        else:
+            raise AssertionError(f"non-finite JSON token unexpectedly passed: {token}")
+
+    with tempfile.TemporaryDirectory(prefix="profile-strict-json-") as temp_dir:
+        temp_root = Path(temp_dir)
+        for token in ("false", "0", "-1", "NaN", "Infinity", "-1e9999"):
+            invalid_path = temp_root / f"threshold-{len(token)}-{ord(token[0])}.json"
+            invalid_path.write_text(
+                academic_text.replace(
+                    '"minimum_global_fivegram_coverage": 0.95',
+                    f'"minimum_global_fivegram_coverage": {token}',
+                    1,
+                ),
+                encoding="utf-8",
+                newline="\n",
+            )
+            try:
+                load_profile(invalid_path)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(
+                    f"invalid Profile threshold unexpectedly passed: {token}"
+                )
+
+        for writer, destination in (
+            (lambda path: write_json(path, {"value": float("nan")}), temp_root / "nan.json"),
+            (
+                lambda path: write_jsonl(path, [{"value": float("inf")}]),
+                temp_root / "infinity.jsonl",
+            ),
+        ):
+            try:
+                writer(destination)
+            except ValueError as exc:
+                assert "Out of range float values" in str(exc), str(exc)
+            else:
+                raise AssertionError("non-finite JSON serialization unexpectedly passed")
+    results.append("Profile thresholds and JSON numeric values fail closed")
+
+    class CustomList(list):
+        pass
+
+    programmatic_cases: list[tuple[str, dict, str]] = []
+    non_finite_profile = copy.deepcopy(academic)
+    non_finite_profile["label"] = float("nan")
+    programmatic_cases.append(
+        ("non-finite scalar", non_finite_profile, "JSON numbers must be finite")
+    )
+    tuple_surrogate_profile = copy.deepcopy(academic)
+    tuple_surrogate_profile["label"] = ("\ud800",)
+    programmatic_cases.append(
+        (
+            "tuple containing surrogate",
+            tuple_surrogate_profile,
+            "JSON values must use only",
+        )
+    )
+    custom_container_profile = copy.deepcopy(academic)
+    custom_container_profile["label"] = CustomList(["custom"])
+    programmatic_cases.append(
+        ("custom container", custom_container_profile, "JSON values must use only")
+    )
+    non_string_key_profile = copy.deepcopy(academic)
+    non_string_key_profile["metadata"] = {1: "not-a-JSON-object-key"}
+    programmatic_cases.append(
+        ("non-string object key", non_string_key_profile, "keys must be strings")
+    )
+    circular_profile = copy.deepcopy(academic)
+    circular_profile["cycle"] = circular_profile
+    programmatic_cases.append(
+        ("circular reference", circular_profile, "circular references")
+    )
+    for label, invalid_profile, expected_error in programmatic_cases:
+        for operation in (validate_profile, canonical_profile_sha256):
+            try:
+                operation(invalid_profile)
+            except ValueError as exc:
+                assert expected_error in str(exc), (label, operation.__name__, str(exc))
+            else:
+                raise AssertionError(
+                    f"{label} unexpectedly passed {operation.__name__}"
+                )
+    results.append("programmatic Profiles must be acyclic native finite JSON values")
+
+    surrogate_profile = academic_text.replace(
+        '"header_label": "Academic paper study edition"',
+        '"header_label": "\\ud800"',
+        1,
+    )
+    valid_non_bmp_profile = academic_text.replace(
+        '"header_label": "Academic paper study edition"',
+        '"header_label": "Academic \\ud83d\\ude00"',
+        1,
+    )
+    with tempfile.TemporaryDirectory(prefix="profile-unicode-json-") as temp_dir:
+        temp_root = Path(temp_dir)
+        surrogate_path = temp_root / "surrogate.json"
+        surrogate_path.write_text(surrogate_profile, encoding="utf-8", newline="\n")
+        try:
+            load_profile(surrogate_path)
+        except ValueError as exc:
+            assert "unpaired surrogates" in str(exc), str(exc)
+        else:
+            raise AssertionError("unpaired Profile surrogate unexpectedly passed")
+
+        non_bmp_path = temp_root / "non-bmp.json"
+        non_bmp_path.write_text(valid_non_bmp_profile, encoding="utf-8", newline="\n")
+        non_bmp_profile = load_profile(non_bmp_path)
+        assert non_bmp_profile["render"]["docx"]["header_label"] == "Academic 😀"
+        assert canonical_profile_sha256(non_bmp_profile)
+    results.append("Profile JSON rejects unpaired surrogates and preserves non-BMP text")
     expect_value_error(
         academic,
         "unsupported input adapter",

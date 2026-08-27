@@ -10,7 +10,27 @@ from pathlib import Path, PurePosixPath
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SKILL_ROOT = REPOSITORY / "skills" / "make-bilingual-study-pdf"
-BINARY_SUFFIXES = {".pdf", ".png", ".pyc", ".pyo"}
+TEXT_SUFFIXES = {
+    ".json",
+    ".md",
+    ".py",
+    ".svg",
+    ".tex",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
+TEXT_FILENAMES = {"VERSION"}
+PASSTHROUGH_BINARY_SUFFIXES = {
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".pdf",
+    ".png",
+    ".pyc",
+    ".pyo",
+    ".webp",
+}
 WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
 
 
@@ -272,16 +292,42 @@ def display_path(root: Path, path: Path) -> str:
         return path.relative_to(root).as_posix()
 
 
+def classify_payload(relative: PurePosixPath) -> str:
+    suffix = relative.suffix.lower()
+    if relative.name in TEXT_FILENAMES or suffix in TEXT_SUFFIXES:
+        return "text"
+    if suffix in PASSTHROUGH_BINARY_SUFFIXES:
+        return "binary"
+    raise ValueError(
+        "unsupported file type in Skill tree; add an explicit text or binary "
+        f"classification before release: {relative.as_posix()}"
+    )
+
+
+def validate_text_payload(payload: bytes, label: str) -> None:
+    if b"\x00" in payload:
+        raise ValueError(f"NUL bytes are not allowed in Skill text files: {label}")
+    try:
+        payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Skill text file is not valid UTF-8: {label}") from exc
+
+
 def find_changes(
     root: Path,
 ) -> list[tuple[Path, str, os.stat_result, bytes, bytes]]:
     files = iter_safe_files(root)
+    classifications = [
+        (path, relative, status, classify_payload(relative))
+        for path, relative, status in files
+    ]
     changes: list[tuple[Path, str, os.stat_result, bytes, bytes]] = []
-    for path, relative, status in files:
-        if "__pycache__" in relative.parts or path.suffix.lower() in BINARY_SUFFIXES:
+    for path, relative, status, payload_type in classifications:
+        if payload_type == "binary":
             continue
         label = relative.as_posix()
         payload = read_regular_bytes(root, path, label, status)
+        validate_text_payload(payload, label)
         normalized = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         if normalized != payload:
             changes.append(

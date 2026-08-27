@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "6dd1fa931ee1bdef3885c152cc565ff0e4b89182b630f47ff03804fa4bb584d3",
+  "tree_sha256": "606dd9bf944e6341bbeb2128268e3ba85dc7fd3f4adbf5fa0164f840276e536c",
   "files": [
     {
       "path": "SKILL.md",
@@ -57,8 +57,8 @@
     },
     {
       "path": "references/profile-ir.md",
-      "size": 4691,
-      "sha256": "e2bc09dca1fd63f4b7e5201f995802d90f8bc2d7857d793815ea6fa44b48a43b"
+      "size": 4911,
+      "sha256": "4126fb38d2bdbbfdb7a413b2465659a2e57c741b2dd925ea447bbcef4b50db38"
     },
     {
       "path": "references/qa-rules.md",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/audit_source.py",
-      "size": 39168,
-      "sha256": "6e31345ca6c1c5d2f7fcd0ee97beec140f7c492b8886061a51cfc207b1bbded3"
+      "size": 39520,
+      "sha256": "020d81ccbe971aa57357321d62931bac9183b8ccddb227bff9bdf5e3a6a458fc"
     },
     {
       "path": "scripts/audit_translation.py",
@@ -127,8 +127,8 @@
     },
     {
       "path": "scripts/common.py",
-      "size": 4158,
-      "sha256": "3f6ccf4612e102e8e62e7f8e1687bad16bb264f4f82656590c8231261807c37d"
+      "size": 6389,
+      "sha256": "9d7cbe3e3f0e6684360ee713eb333c7574c069b31266783be048f4bb0b071e9b"
     },
     {
       "path": "scripts/compile_docx_pdf.py",
@@ -192,8 +192,8 @@
     },
     {
       "path": "scripts/profile.py",
-      "size": 21418,
-      "sha256": "1f962586a486c4aa7f16b8e48b313973543061e795274ff738dde821fd71d07f"
+      "size": 22092,
+      "sha256": "4c6bc7f4137ffd57d8e0cab87711f8e0e3bc63992855f1d028de33b8b4189670"
     },
     {
       "path": "scripts/record_visual_review.py",
@@ -202,8 +202,8 @@
     },
     {
       "path": "scripts/release_check.py",
-      "size": 24210,
-      "sha256": "2e1fa2d7f11e526f1dcd8e9f9c91527202e7e6df63bcdd7bf93ac7774c18f09d"
+      "size": 27153,
+      "sha256": "82f664e94241ca5360df33aff41481369635018de5eb841d6be39a32b8203a9c"
     },
     {
       "path": "scripts/self_test.py",

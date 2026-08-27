@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
 
-from common import read_json, sha256_text, write_json
+from common import read_json, sha256_text, validate_json_value, write_json
 from semantic_registry import (
     AUXILIARY_ROLES,
     GROUPING_MODES,
@@ -36,8 +37,13 @@ DOCX_FIELDS = (
 
 def canonical_profile_sha256(profile: dict[str, Any]) -> str:
     """Hash the raw Profile, never its derived compatibility contract."""
+    validate_json_value(profile)
     payload = json.dumps(
-        profile, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        profile,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
     )
     return sha256_text(payload)
 
@@ -59,6 +65,17 @@ def _compile_pattern(pattern: Any, field: str) -> None:
         raise ValueError(f"invalid {field}: {exc}") from exc
 
 
+def validate_unit_interval_number(value: Any, field: str) -> float:
+    """Return a non-boolean finite number in the supported unit interval."""
+    if (
+        type(value) not in {int, float}
+        or (type(value) is float and not math.isfinite(value))
+        or not 0 < value <= 1
+    ):
+        raise ValueError(f"{field} must be a finite number in (0, 1]")
+    return float(value)
+
+
 def _validate_common(profile: dict[str, Any], *, schema_version: int) -> None:
     profile_id = profile.get("id")
     if not _valid_identifier(profile_id):
@@ -76,12 +93,7 @@ def _validate_common(profile: dict[str, Any], *, schema_version: int) -> None:
 
     get_adapter(adapter_id)
     ratio = input_config.get("minimum_native_text_page_ratio")
-    if (
-        not isinstance(ratio, (int, float))
-        or isinstance(ratio, bool)
-        or not 0 < float(ratio) <= 1
-    ):
-        raise ValueError("minimum_native_text_page_ratio must be in (0, 1]")
+    validate_unit_interval_number(ratio, "minimum_native_text_page_ratio")
     minimum_characters = input_config.get("minimum_text_characters_per_page")
     if (
         not isinstance(minimum_characters, int)
@@ -118,6 +130,12 @@ def _validate_common(profile: dict[str, Any], *, schema_version: int) -> None:
     for field in DOCX_FIELDS:
         if not isinstance(docx.get(field), str) or not docx[field].strip():
             raise ValueError(f"profile.render.docx.{field} is required")
+
+    qa = profile.get("qa")
+    if not isinstance(qa, dict):
+        raise ValueError("profile.qa must be an object")
+    for field in ("minimum_global_fivegram_coverage", "warn_page_below"):
+        validate_unit_interval_number(qa.get(field), f"profile.qa.{field}")
 
 
 def _validate_v1(profile: dict[str, Any]) -> None:
@@ -327,6 +345,7 @@ def _validate_v2(profile: dict[str, Any]) -> None:
 def validate_profile(profile: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(profile, dict):
         raise ValueError("profile must be a JSON object")
+    validate_json_value(profile)
     schema_version = profile.get("schema_version")
     if type(schema_version) is not int or schema_version not in {1, 2}:
         raise ValueError("unsupported profile schema_version")

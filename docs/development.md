@@ -56,8 +56,10 @@ binds the human-facing install and installed-verification commands in the root
 `README.md` to the current Skill `VERSION`; the installed Skill does not carry or
 depend on that repository documentation.
 
-The EOL checker inventories the complete Skill tree before changing any bytes. Both
-check and `--fix` modes reject symbolic links, hard-linked files, Windows reparse
+The EOL checker inventories and classifies the complete Skill tree before changing
+any bytes. It normalizes only explicitly allowlisted UTF-8 text types, passes through
+known binary asset types without reading them, and rejects unknown types. Both check
+and `--fix` modes also reject symbolic links, hard-linked files, Windows reparse
 points, and non-regular entries without reading or rewriting their targets.
 
 ## Validate Skill metadata

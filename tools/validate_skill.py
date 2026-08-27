@@ -9,6 +9,7 @@ import re
 import stat
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 import yaml
@@ -17,9 +18,6 @@ from yaml.constructor import ConstructorError
 
 FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
 SKILL_NAME = "make-bilingual-study-pdf"
-SKILL_INVOCATION_RE = re.compile(
-    r"(?<![\w$-])\$[A-Za-z0-9][A-Za-z0-9_-]*(?![\w-])"
-)
 OPENAI_YAML = Path("agents") / "openai.yaml"
 INTERFACE_FIELDS = {
     "display_name",
@@ -45,6 +43,47 @@ DEPENDENCY_TOOL_FIELDS = {
     "url",
 }
 WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+
+
+def is_skill_invocation_boundary(character: str) -> bool:
+    """Return whether a character can safely delimit an invocation token."""
+    if not character or character.isspace():
+        return True
+    category = unicodedata.category(character)
+    return (
+        character != "$"
+        and category[0] not in {"C", "L", "M", "N"}
+        and category not in {"Pc", "Pd"}
+    )
+
+
+def validate_skill_invocation(prompt: str) -> tuple[bool, str]:
+    """Require one exact, standalone ASCII Skill invocation in a prompt."""
+    expected = f"${SKILL_NAME}"
+    dollar_positions = [
+        index for index, character in enumerate(prompt) if character == "$"
+    ]
+    if len(dollar_positions) != 1:
+        return False, (
+            "openai.yaml interface.default_prompt must contain exactly one "
+            f"Skill invocation token {expected!r}; found {len(dollar_positions)} "
+            "dollar markers"
+        )
+
+    start = dollar_positions[0]
+    end = start + len(expected)
+    before = prompt[start - 1] if start else ""
+    after = prompt[end] if end < len(prompt) else ""
+    if (
+        prompt[start:end] != expected
+        or not is_skill_invocation_boundary(before)
+        or not is_skill_invocation_boundary(after)
+    ):
+        return False, (
+            "openai.yaml interface.default_prompt must contain exactly one "
+            f"standalone Skill invocation token {expected!r}"
+        )
+    return True, ""
 
 
 class UniqueKeyLoader(yaml.SafeLoader):
@@ -244,14 +283,9 @@ def check_openai_yaml(skill_root: Path) -> tuple[bool, str]:
     short_description = interface["short_description"]
     if not 25 <= len(short_description) <= 64:
         return False, "openai.yaml interface.short_description must be 25-64 characters"
-    invocation_tokens = SKILL_INVOCATION_RE.findall(interface["default_prompt"])
-    expected_invocation = f"${SKILL_NAME}"
-    if invocation_tokens != [expected_invocation]:
-        return False, (
-            "openai.yaml interface.default_prompt must contain exactly one "
-            f"Skill invocation token {expected_invocation!r}; found "
-            f"{invocation_tokens!r}"
-        )
+    valid, message = validate_skill_invocation(interface["default_prompt"])
+    if not valid:
+        return valid, message
     for field in ("icon_small", "icon_large"):
         valid, message = validate_icon_path(
             skill_root, interface[field], f"openai.yaml interface.{field}"

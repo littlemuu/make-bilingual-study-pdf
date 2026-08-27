@@ -483,6 +483,81 @@ class V23IrSourceTests(unittest.TestCase):
                 any("comparison cannot be fully decoded" in item for item in drifted["failures"])
             )
 
+    def test_source_audit_thresholds_fail_closed_end_to_end(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v23-ir-thresholds-") as temporary:
+            work_dir, manifest, _blocks = self.make_work(Path(temporary))
+            (work_dir / "oracle.txt").write_text(
+                "unrelated oracle words provide no matching five gram sequence\f",
+                encoding="utf-8",
+            )
+            renders = work_dir / "renders"
+            renders.mkdir()
+            Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
+            contacts = work_dir / "source-contact"
+            contacts.mkdir()
+            contact_path = contacts / "contact-001.png"
+            Image.new("RGB", (2, 3), "white").save(contact_path)
+            manifest["source_contact_sheets"] = [
+                {
+                    "path": contact_path.relative_to(work_dir).as_posix(),
+                    "sha256": sha256_file(contact_path),
+                    "first_page": 1,
+                    "last_page": 1,
+                }
+            ]
+            write_json(work_dir / "manifest.json", manifest)
+            write_json(work_dir / "document-ir.json", expected_ir(work_dir, self.profile))
+
+            invalid_profile = copy.deepcopy(self.profile)
+            invalid_profile["qa"]["minimum_global_fivegram_coverage"] = False
+            write_json(work_dir / "profile.json", invalid_profile)
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPT_DIR / "audit_source.py"), str(work_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(completed.returncode, 0)
+            report = json.loads(
+                (work_dir / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["global_fivegram_coverage"], 0.0)
+            self.assertTrue(
+                any(
+                    "minimum_global_fivegram_coverage must be a finite number"
+                    in failure
+                    for failure in report["failures"]
+                ),
+                report,
+            )
+
+            for option, value in (
+                ("--minimum-global-coverage", "nan"),
+                ("--minimum-global-coverage", "inf"),
+                ("--minimum-global-coverage", "-1"),
+                ("--minimum-global-coverage", "0"),
+                ("--warn-page-below", "1e9999"),
+            ):
+                with self.subTest(option=option, value=value):
+                    rejected = subprocess.run(
+                        [
+                            sys.executable,
+                            str(SCRIPT_DIR / "audit_source.py"),
+                            str(work_dir),
+                            option,
+                            value,
+                        ],
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+                    self.assertEqual(rejected.returncode, 2)
+                    self.assertIn(
+                        "coverage threshold must be a finite number in (0, 1]",
+                        rejected.stderr,
+                    )
+
 
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)
@@ -500,6 +575,7 @@ def main() -> None:
                     "unproved structural membership remains anchor-only",
                     "adapter evidence inputs/assets/dispositions freeze the IR",
                     "manual source review remains an explicit nonpassed audit status",
+                    "Profile and CLI source-audit thresholds fail closed end to end",
                 ],
             },
             ensure_ascii=False,

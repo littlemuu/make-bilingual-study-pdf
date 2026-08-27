@@ -28,7 +28,12 @@ from common import (
     write_json,
 )
 from document_ir import load_adapter_source_evidence, validate_ir_against_sources
-from profile import canonical_profile_sha256, load_work_profile, profile_contract
+from profile import (
+    canonical_profile_sha256,
+    load_work_profile,
+    profile_contract,
+    validate_unit_interval_number,
+)
 
 
 def page_overlap(oracle: str, extracted: str) -> tuple[int, int, float]:
@@ -51,6 +56,13 @@ def _fully_decode_image(path: Path) -> tuple[int, int, str]:
         width, height = image.size
         image.load()
     return width, height, Image.MIME.get(image_format, "application/octet-stream")
+
+
+def _coverage_threshold_argument(value: str) -> float:
+    try:
+        return validate_unit_interval_number(float(value), "coverage threshold")
+    except (OverflowError, ValueError) as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
 def _safe_adapter_artifact_path(work_dir: Path, value: object) -> Path:
@@ -572,8 +584,8 @@ def main() -> None:
         description="Audit extracted source blocks against an independent Poppler text oracle."
     )
     parser.add_argument("work_dir", type=Path)
-    parser.add_argument("--minimum-global-coverage", type=float)
-    parser.add_argument("--warn-page-below", type=float)
+    parser.add_argument("--minimum-global-coverage", type=_coverage_threshold_argument)
+    parser.add_argument("--warn-page-below", type=_coverage_threshold_argument)
     args = parser.parse_args()
 
     work_dir = args.work_dir.expanduser().resolve()
