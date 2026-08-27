@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "skill": "make-bilingual-study-pdf",
+  "version": "2.3.0",
+  "hash_algorithm": "sha256",
+  "tree_sha256": "c351b56e0b1edf411e16dd4ecce934c9ecd076ce5b35fc4376c4f5ff20d19b55",
+  "files": [
+    {
+      "path": "SKILL.md",
+      "size": 14055,
+      "sha256": "7bf2e80195451e144cb796041e44aec85eb6db616936e0ee889c0d51ea18154c"
+    },
+    {
+      "path": "VERSION",
+      "size": 6,
+      "sha256": "a42caf4a54bbbe27aa45b6efbc6356c5e299b19763e728b6cdb7201b02ebbe36"
+    },
+    {
+      "path": "agents/openai.yaml",
+      "size": 500,
+      "sha256": "d5c65ffe4f89d3da89c3c77c7be17031de53680d842871f7e9833090c9a07c66"
+    },
+    {
+      "path": "assets/bilingual-template.tex",
+      "size": 2358,
+      "sha256": "c6ef376e5b43570b7aa2eaa99ce90dc0277ad11a3fff47106d423b6c9e1eda92"
+    },
+    {
+      "path": "assets/icon.svg",
+      "size": 1017,
+      "sha256": "c1e7bf8c39dfc2d52062a42da6679f958f0e125496b162e7d68ac2a65ecc96d6"
+    },
+    {
+      "path": "profiles/academic-paper-en-zh.json",
+      "size": 8374,
+      "sha256": "25e6d0f11b142b368691f43cf1ed5ab876d5917545bd9f1e9be75ab45e77df54"
+    },
+    {
+      "path": "profiles/assignment-en-zh.json",
+      "size": 1894,
+      "sha256": "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2"
+    },
+    {
+      "path": "profiles/lecture-notes-en-zh.json",
+      "size": 11747,
+      "sha256": "1843329bb0065460c5ed2965f48a4950160df4fb92a899277b9374eaca36a5cd"
+    },
+    {
+      "path": "references/backend-options.md",
+      "size": 4105,
+      "sha256": "e0a520a11c945681f3d726f8bb175d863241652d0552325c9ca2d9f95b12790a"
+    },
+    {
+      "path": "references/format-spec.md",
+      "size": 8981,
+      "sha256": "10681450dfd00e96979c66a4d96fc7667c3ffae5390839d7b7a88ba9f2abd600"
+    },
+    {
+      "path": "references/profile-ir.md",
+      "size": 6982,
+      "sha256": "d27a93eb2507ffdc260a7dbf354968bb3895270456623d6e6d35a8f6b3dadfcd"
+    },
+    {
+      "path": "references/qa-rules.md",
+      "size": 8170,
+      "sha256": "96bb4d6e18e24267144d4c5ed189b80bd64479f74c598271e5a08c343a42e624"
+    },
+    {
+      "path": "references/translation-protocol.md",
+      "size": 1537,
+      "sha256": "b9f8e6a76d385fd61fca8878401d2a0ed09e434d2bf5894b9c5e9a8d7b4e161d"
+    },
+    {
+      "path": "requirements.txt",
+      "size": 223,
+      "sha256": "4f7327febfbde9665b39a447c2e29de39871af7561ce7d0f396407c05a1c8c8c"
+    },
+    {
+      "path": "scripts/adapters/__init__.py",
+      "size": 569,
+      "sha256": "752b4bc7bcc761c9482c798922b9e324cd5a6743563acc96eee9b011e2188172"
+    },
+    {
+      "path": "scripts/adapters/base.py",
+      "size": 667,
+      "sha256": "6d8621b1d0851f99fc7ac6d3725b8d2c511c7c5458380a373b53b2df175fc1a0"
+    },
+    {
+      "path": "scripts/adapters/mineru.py",
+      "size": 67272,
+      "sha256": "8d11484f5d6986af892a183e167e8134e2428af6c78a22a24bc87f5b96adca75"
+    },
+    {
+      "path": "scripts/adapters/native_pdf.py",
+      "size": 160,
+      "sha256": "069b1e95e431e36a63bfdb9e2855abf94e48b3291bfe0f93269be7a12610c107"
+    },
+    {
+      "path": "scripts/audit_docx.py",
+      "size": 65345,
+      "sha256": "d76e39406a298012854e0af76e94cc654d2a59d3723e9fa6670d482ca1c0645f"
+    },
+    {
+      "path": "scripts/audit_outputs.py",
+      "size": 49541,
+      "sha256": "ea179621d0d71893d4bf673377307d4a5b31b5c680b553fa262190fae2d2801e"
+    },
+    {
+      "path": "scripts/audit_source.py",
+      "size": 74222,
+      "sha256": "2af8322155f5acbce6273f6673e16d1645233c050f703e603badc6a5816343bb"
+    },
+    {
+      "path": "scripts/audit_translation.py",
+      "size": 33933,
+      "sha256": "c195d7222016ccd297b64945f8c2fa29c59c68fdda977a9e31680e01dbbd2800"
+    },
+    {
+      "path": "scripts/build_docx.py",
+      "size": 32871,
+      "sha256": "02baa2edf4a0ece47e7ce8702b5e945fef7b6942540ccbbc3d6419625f8eb6f5"
+    },
+    {
+      "path": "scripts/build_outputs.py",
+      "size": 46375,
+      "sha256": "212816ced92fc9b3fcaa4e36f552ab5f6626a2a3e7fcc8029de7db5e8c68f5e8"
+    },
+    {
+      "path": "scripts/common.py",
+      "size": 6491,
+      "sha256": "f5cb28dcb8850281e4fa107aa2daeebe639c7949d86b5c38e5c6dea3c91bad6f"
+    },
+    {
+      "path": "scripts/compile_docx_pdf.py",
+      "size": 32260,
+      "sha256": "55c4b784657e57116d7bd5e2365a618e596c9b95513f2c8cbba4370e861f644d"
+    },
+    {
+      "path": "scripts/compile_pdf.py",
+      "size": 18287,
+      "sha256": "916ef343bb97aad8c0ad23becdfebcda996c4e8f4ee53df84e14d5ed245e48bd"
+    },
+    {
+      "path": "scripts/document_ir.py",
+      "size": 27885,
+      "sha256": "88ccbc135e4453138fbdd3d04789fcdcbd6e4a075b6e319b4a8d5d7af26b5587"
+    },
+    {
+      "path": "scripts/docx_ast.py",
+      "size": 23616,
+      "sha256": "2fc134e389945db190e01f1f4782ad1b16751412c03fe46a586890a1ce5f7efa"
+    },
+    {
+      "path": "scripts/docx_style.py",
+      "size": 30593,
+      "sha256": "094aca7faa3be805d1b512b5a639e6373954c1baf712f5a55e9a363b838ff516"
+    },
+    {
+      "path": "scripts/extract_pdf.py",
+      "size": 39948,
+      "sha256": "76eceb28294ae3634037859d6ab4cf8c21e8fb0239b4a1e4ce0fe37e30ca9eee"
+    },
+    {
+      "path": "scripts/finalize_qa.py",
+      "size": 12586,
+      "sha256": "86caf0afea50cc4a8719e59e8beabc761703110c4052ef74100c0f413486a3e0"
+    },
+    {
+      "path": "scripts/html_table.py",
+      "size": 4397,
+      "sha256": "76b4ac163022227a92b1c58937381072a3ea33fc6b0206fd7f0fb572ca27412d"
+    },
+    {
+      "path": "scripts/import_mineru.py",
+      "size": 1169,
+      "sha256": "5b1541744392650d4a6fac327e92e1d7319d8145969ed4fc632a4cfd0b5a1e46"
+    },
+    {
+      "path": "scripts/init_glossary.py",
+      "size": 3851,
+      "sha256": "54f50ea5bbd4de59fdfb28201aafd25164114e835a4aae2ca59b95cf346afcf4"
+    },
+    {
+      "path": "scripts/pipeline.py",
+      "size": 29540,
+      "sha256": "fb0ca59fd1ef510414b537032c219f86977ba4b2a1ecb97922f692d22e45a482"
+    },
+    {
+      "path": "scripts/prepare_translation.py",
+      "size": 17029,
+      "sha256": "19c05583d3274b85ef8aa402bbd95aa605654d9c8dde01f704cf049f54bb21af"
+    },
+    {
+      "path": "scripts/profile.py",
+      "size": 37064,
+      "sha256": "4cfb4f2fecc3b69d66d8bb3efc7a703998836916a501b54ff6b18600edbc6f6e"
+    },
+    {
+      "path": "scripts/record_visual_review.py",
+      "size": 8081,
+      "sha256": "e1008c07aba50f99f99677a2b6b62c086e478d9df64dc250670304c3af4fb59c"
+    },
+    {
+      "path": "scripts/release_check.py",
+      "size": 37038,
+      "sha256": "8218beab771d22b0cc9c96ebf39130e35318f3f73b626f1cb638fcdd353c4a32"
+    },
+    {
+      "path": "scripts/safe_artifacts.py",
+      "size": 43647,
+      "sha256": "81e4bf953cfda9217d521b13bf5ab202ffe853e40307681ebcff5751ef022122"
+    },
+    {
+      "path": "scripts/self_test.py",
+      "size": 35014,
+      "sha256": "d7dd591095c81c506e1a1ac85c076c47730a5e9e3a8aa22826c3054f1ec91487"
+    },
+    {
+      "path": "scripts/semantic_registry.py",
+      "size": 3881,
+      "sha256": "653f3e02f65f513c81531d3a1ca1658f1c0add63210726f2d6673f3be6145144"
+    },
+    {
+      "path": "scripts/translation_utils.py",
+      "size": 6907,
+      "sha256": "b9e6ed771e8e984d2694f16582263ccb760ebbf66bff119a8b56c0ff453d46f7"
+    },
+    {
+      "path": "scripts/visual_utils.py",
+      "size": 12213,
+      "sha256": "ff54c1f786e39d65be0f3afabaa0489b4bc33fcb5a01ee0447d1e3c7b24b380f"
+    }
+  ]
+}

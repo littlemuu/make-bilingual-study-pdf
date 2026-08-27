@@ -9,14 +9,58 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: baseline-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  SKILL_PATH: skills/make-bilingual-study-pdf
+
 jobs:
-  self-test:
+  workflow-lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
 
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run pinned actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          set -euo pipefail
+          ARCHIVE="$RUNNER_TEMP/actionlint.tar.gz"
+          BIN_DIR="$RUNNER_TEMP/actionlint-bin"
+          curl --fail --location --silent --show-error \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output "$ARCHIVE"
+          printf '%s  %s\n' "$ACTIONLINT_SHA256" "$ARCHIVE" | sha256sum --check
+          mkdir -p "$BIN_DIR"
+          tar -xzf "$ARCHIVE" -C "$BIN_DIR"
+          "$BIN_DIR/actionlint" -color
+
+  self-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out pinned OpenAI Skill validator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 49f948faa9258a0c61caceaf225e179651397431
+          path: .ci/openai-skill-creator
+          sparse-checkout: skills/.system/skill-creator
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -25,12 +69,12 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
-            requirements.txt
+            skills/make-bilingual-study-pdf/requirements.txt
 
-      - name: Install Poppler
+      - name: Install document toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends poppler-utils
+          sudo apt-get install --yes --no-install-recommends pandoc poppler-utils
 
       - name: Install Python dependencies
         run: |
@@ -45,16 +89,273 @@ jobs:
 
       - name: Run deterministic baseline
         run: |
-          python scripts/self_test.py
-          python scripts/v23_profile_test.py
-          python scripts/v23_mineru_test.py
-          python scripts/v23_ir_source_test.py
-          python scripts/v23_output_test.py
-          python scripts/v23_docx_test.py
-          python scripts/v23_visual_gate_test.py
-          python scripts/pipeline.py validate-profile assignment-en-zh
-          python scripts/pipeline.py validate-profile academic-paper-en-zh
-          python scripts/pipeline.py validate-profile lecture-notes-en-zh
+          python tools/check_skill_eol.py
+          python tools/build_release_manifest.py --check
+          python "$SKILL_PATH/scripts/release_check.py"
+          python tools/repository_release_check.py
+          python tools/validate_skill.py "$SKILL_PATH" \
+            --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
+          python tests/skill_validator_test.py \
+            --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
+          python tests/check_skill_eol_test.py
+          python tests/release_check_test.py
+          python tests/repository_release_check_test.py
+          python tests/profile_binding_test.py
+          python tests/safe_artifacts_test.py
+          python tests/macos_path_alias_test.py
+          python tests/work_artifact_boundary_test.py
+          python tests/translation_artifact_boundary_test.py
+          python tests/output_artifact_boundary_test.py
+          python tests/docx_artifact_boundary_test.py
+          python tests/compile_final_artifact_boundary_test.py
+          python "$SKILL_PATH/scripts/self_test.py"
+          python tests/v23_profile_test.py
+          python tests/v23_mineru_test.py
+          python tests/v23_ir_source_test.py
+          python tests/v23_output_test.py
+          python tests/v23_docx_test.py
+          python tests/v23_visual_gate_test.py
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile assignment-en-zh
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile academic-paper-en-zh
+          python "$SKILL_PATH/scripts/pipeline.py" validate-profile lecture-notes-en-zh
+
+  windows-filesystem:
+    runs-on: windows-2025
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m pip check
+
+      - name: Run Windows EOL filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/check_skill_eol_test.py
+
+      - name: Run Windows installed-release filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/release_check_test.py
+
+      - name: Run Windows repository-release filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/repository_release_check_test.py
+
+      - name: Run Windows Profile binding filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/profile_binding_test.py
+
+      - name: Run Windows work-artifact filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python tests/safe_artifacts_test.py
+          python tests/work_artifact_boundary_test.py
+          python tests/translation_artifact_boundary_test.py
+          python tests/output_artifact_boundary_test.py
+          python tests/docx_artifact_boundary_test.py
+          python tests/compile_final_artifact_boundary_test.py
+
+  macos-filesystem:
+    runs-on: macos-15
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r "$SKILL_PATH/requirements.txt"
+          python -m pip check
+
+      - name: Run real APFS path-alias regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/macos_path_alias_test.py
+
+  installer-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: self-test
+    env:
+      INSTALL_REPO: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+      INSTALL_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      INSTALL_GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.ref || github.ref_name }}
+      INSTALL_GIT_REF_KIND: ${{ github.event_name == 'pull_request' && 'heads' || github.ref_type == 'tag' && 'tags' || 'heads' }}
+
+    steps:
+      - name: Check out exact event head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Check out pinned OpenAI skill installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 1131cea7b17214e5a96300a5a72c94642346ef34
+          path: .ci/openai-skills
+          sparse-checkout: skills/.system/skill-installer
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+
+      - name: Require named Git ref to match the exact event head
+        run: |
+          set -euo pipefail
+          REMOTE_REF="refs/$INSTALL_GIT_REF_KIND/$INSTALL_GIT_REF"
+          REMOTE_URL="https://github.com/$INSTALL_REPO.git"
+          if ! REMOTE_OUTPUT=$(GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            ls-remote --exit-code --refs "$REMOTE_URL" "$REMOTE_REF"); then
+            echo "cannot resolve the named Git ref anonymously" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_OUTPUT" == *$'\n'* ]]; then
+            echo "named Git ref lookup returned more than one record" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r REMOTE_SHA OBSERVED_REF EXTRA <<< "$REMOTE_OUTPUT"
+          if [[ ! "$REMOTE_SHA" =~ ^[0-9a-f]{40}$ || "$OBSERVED_REF" != "$REMOTE_REF" || -n "${EXTRA:-}" ]]; then
+            echo "named Git ref lookup returned an unexpected record" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_SHA" != "$INSTALL_SHA" ]]; then
+            echo "named Git ref moved after this event; the newer run supersedes this one" >&2
+            exit 1
+          fi
+
+      - name: Install through forced and automatic real installer paths
+        env:
+          WORKFLOW_GITHUB_TOKEN: ${{ github.token }}
+          INVALID_GITHUB_TOKEN: github-actions-intentional-invalid-token
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          GIT_DEST="$RUNNER_TEMP/skill-git"
+          AUTO_DEST="$RUNNER_TEMP/skill-auto"
+          FALLBACK_DEST="$RUNNER_TEMP/skill-auto-fallback"
+          AUTO_GIT_TRACE="$RUNNER_TEMP/skill-auto-git-trace.json"
+          FALLBACK_GIT_TRACE="$RUNNER_TEMP/skill-auto-fallback-git-trace.json"
+          INSTALLER=.ci/openai-skills/skills/.system/skill-installer/scripts/install-skill-from-github.py
+          if [[ "$INSTALL_REPO" == "$GITHUB_REPOSITORY" ]]; then
+            export GITHUB_TOKEN="$WORKFLOW_GITHUB_TOKEN"
+          else
+            unset GITHUB_TOKEN GH_TOKEN WORKFLOW_GITHUB_TOKEN
+          fi
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_SHA" --method download --dest "$DOWNLOAD_DEST"
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_GIT_REF" --method git --dest "$GIT_DEST"
+          GIT_TRACE2_EVENT="$AUTO_GIT_TRACE" \
+            python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_SHA" --dest "$AUTO_DEST"
+          if [[ -e "$AUTO_GIT_TRACE" ]]; then
+            echo "default auto installation unexpectedly produced a Git trace" >&2
+            exit 1
+          fi
+          GITHUB_TOKEN="$INVALID_GITHUB_TOKEN" GH_TOKEN='' GIT_TRACE2_EVENT="$FALLBACK_GIT_TRACE" \
+            python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_GIT_REF" --dest "$FALLBACK_DEST"
+          if [[ ! -s "$FALLBACK_GIT_TRACE" ]]; then
+            echo "authentication-triggered auto fallback produced no Git trace" >&2
+            exit 1
+          fi
+          python -c 'import json, sys; events = (json.loads(line) for line in open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if any(event.get("event") == "cmd_name" and event.get("name") == "clone" for event in events) else 1)' "$FALLBACK_GIT_TRACE" || {
+            echo "authentication-triggered auto fallback did not execute git clone" >&2
+            exit 1
+          }
+
+      - name: Recheck named Git ref after installation
+        run: |
+          set -euo pipefail
+          REMOTE_REF="refs/$INSTALL_GIT_REF_KIND/$INSTALL_GIT_REF"
+          REMOTE_URL="https://github.com/$INSTALL_REPO.git"
+          if ! REMOTE_OUTPUT=$(GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            ls-remote --exit-code --refs "$REMOTE_URL" "$REMOTE_REF"); then
+            echo "cannot re-resolve the named Git ref anonymously" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_OUTPUT" == *$'\n'* ]]; then
+            echo "named Git ref recheck returned more than one record" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r REMOTE_SHA OBSERVED_REF EXTRA <<< "$REMOTE_OUTPUT"
+          if [[ ! "$REMOTE_SHA" =~ ^[0-9a-f]{40}$ || "$OBSERVED_REF" != "$REMOTE_REF" || -n "${EXTRA:-}" ]]; then
+            echo "named Git ref recheck returned an unexpected record" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_SHA" != "$INSTALL_SHA" ]]; then
+            echo "named Git ref moved during installer validation" >&2
+            exit 1
+          fi
+
+      - name: Verify exact installed payloads
+        run: |
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          GIT_DEST="$RUNNER_TEMP/skill-git"
+          AUTO_DEST="$RUNNER_TEMP/skill-auto"
+          FALLBACK_DEST="$RUNNER_TEMP/skill-auto-fallback"
+          DOWNLOAD_SKILL="$DOWNLOAD_DEST/make-bilingual-study-pdf"
+          GIT_SKILL="$GIT_DEST/make-bilingual-study-pdf"
+          AUTO_SKILL="$AUTO_DEST/make-bilingual-study-pdf"
+          FALLBACK_SKILL="$FALLBACK_DEST/make-bilingual-study-pdf"
+          python "$DOWNLOAD_SKILL/scripts/release_check.py"
+          python "$GIT_SKILL/scripts/release_check.py"
+          python "$AUTO_SKILL/scripts/release_check.py"
+          python "$FALLBACK_SKILL/scripts/release_check.py"
+          python tests/compare_install_trees.py "$SKILL_PATH" "$DOWNLOAD_SKILL"
+          python tests/compare_install_trees.py "$DOWNLOAD_SKILL" "$GIT_SKILL"
+          python tests/compare_install_trees.py "$DOWNLOAD_SKILL" "$AUTO_SKILL"
+          python tests/compare_install_trees.py "$DOWNLOAD_SKILL" "$FALLBACK_SKILL"
+
+      - name: Verify a clean installed environment
+        run: |
+          AUTO_DEST="$RUNNER_TEMP/skill-auto"
+          CLEAN_VENV="$RUNNER_TEMP/skill-clean-venv"
+          AUTO_SKILL="$AUTO_DEST/make-bilingual-study-pdf"
+          python -m venv "$CLEAN_VENV"
+          "$CLEAN_VENV/bin/python" -m pip install --disable-pip-version-check -r "$AUTO_SKILL/requirements.txt"
+          "$CLEAN_VENV/bin/python" -m pip check
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/self_test.py"
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile assignment-en-zh
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile academic-paper-en-zh
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile lecture-notes-en-zh
 
   automated-forward:
     runs-on: ubuntu-24.04
@@ -64,6 +365,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
@@ -72,7 +375,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             requirements-dev.txt
-            requirements.txt
+            skills/make-bilingual-study-pdf/requirements.txt
 
       - name: Install document toolchain
         run: |
@@ -101,7 +404,7 @@ jobs:
           fc-match --format '%{family}\n%{file}\n' 'Noto Sans CJK SC'
 
       - name: Run both V2.3 automated forward chains
-        run: python scripts/v23_e2e_test.py artifacts/v23-e2e
+        run: python tests/v23_e2e_test.py artifacts/v23-e2e
 
       - name: Upload forward-test evidence
         if: always()
