@@ -23,13 +23,19 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(TOOLS))
 
 from build_release_manifest import valid_payload_path  # noqa: E402
-from release_check import SEMVER_RE, valid_manifest_path  # noqa: E402
+from release_check import (  # noqa: E402
+    SEMVER_RE,
+    valid_manifest_path,
+    validate_yaml_quoted_strings,
+)
 
 
 class ReleaseCheckTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory(prefix="release-check-test-")
-        self.root = Path(self.temporary.name) / "make-bilingual-study-pdf"
+        self.repository = Path(self.temporary.name) / "repository"
+        self.root = self.repository / "skills" / "make-bilingual-study-pdf"
+        self.root.parent.mkdir(parents=True)
         shutil.copytree(
             SKILL_ROOT,
             self.root,
@@ -60,24 +66,30 @@ class ReleaseCheckTests(unittest.TestCase):
         return process, report
 
     def regenerate(self) -> None:
-        subprocess.run(
+        process = subprocess.run(
             [sys.executable, str(self.generator), "--skill-root", str(self.root)],
             cwd=self.root,
-            check=True,
+            check=False,
             capture_output=True,
             text=True,
         )
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
 
     def run_generator(self, *arguments: str) -> subprocess.CompletedProcess[str]:
+        return self.run_generator_for(self.root, *arguments)
+
+    def run_generator_for(
+        self, root: Path, *arguments: str
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [
                 sys.executable,
                 str(self.generator),
                 "--skill-root",
-                str(self.root),
+                str(root),
                 *arguments,
             ],
-            cwd=self.root,
+            cwd=REPOSITORY,
             check=False,
             capture_output=True,
             text=True,
@@ -122,6 +134,16 @@ class ReleaseCheckTests(unittest.TestCase):
         self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
         self.assertEqual(report["status"], "passed")
         self.assertGreater(report["manifest_file_count"], 40)
+
+    def test_manifest_builder_can_create_initial_manifest(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        manifest.unlink()
+        process = self.run_generator()
+        self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+        self.assertTrue(manifest.is_file())
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+        self.assertEqual(payload["skill"], "make-bilingual-study-pdf")
+        self.assertGreater(len(payload["files"]), 40)
 
     def test_wrong_tag_fails(self) -> None:
         process, report = self.run_check("--tag", "v9.9.9")
@@ -310,6 +332,70 @@ class ReleaseCheckTests(unittest.TestCase):
                 finally:
                     path.unlink()
 
+    @unittest.skipIf(os.name == "nt", "POSIX ancestor-symlink regression")
+    def test_manifest_builder_rejects_skills_ancestor_symlink(self) -> None:
+        skills = self.repository / "skills"
+        outside_skills = Path(self.temporary.name) / "outside-skills"
+        skills.rename(outside_skills)
+        outside_manifest = (
+            outside_skills / "make-bilingual-study-pdf" / "release-manifest.json"
+        )
+        original = outside_manifest.read_bytes()
+        os.symlink(outside_skills, skills, target_is_directory=True)
+        try:
+            process = self.run_generator_for(
+                skills / "make-bilingual-study-pdf"
+            )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("symbolic links are not allowed", process.stdout)
+            self.assertIn("skills directory", process.stdout)
+            self.assertEqual(outside_manifest.read_bytes(), original)
+        finally:
+            skills.unlink()
+
+    @unittest.skipIf(os.name == "nt", "POSIX repository-symlink regression")
+    def test_manifest_builder_rejects_repository_symlink(self) -> None:
+        original = (self.root / "release-manifest.json").read_bytes()
+        linked_repository = Path(self.temporary.name) / "repository-link"
+        os.symlink(self.repository, linked_repository, target_is_directory=True)
+        try:
+            process = self.run_generator_for(
+                linked_repository / "skills" / "make-bilingual-study-pdf"
+            )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("symbolic links are not allowed", process.stdout)
+            self.assertIn("repository root", process.stdout)
+            self.assertEqual((self.root / "release-manifest.json").read_bytes(), original)
+        finally:
+            linked_repository.unlink()
+
+    @unittest.skipIf(os.name == "nt", "POSIX repository-ancestor regression")
+    def test_manifest_builder_rejects_repository_ancestor_symlink(self) -> None:
+        real_parent = Path(self.temporary.name) / "real-parent"
+        real_parent.mkdir()
+        actual_repository = real_parent / "repository"
+        self.repository.rename(actual_repository)
+        actual_root = (
+            actual_repository / "skills" / "make-bilingual-study-pdf"
+        )
+        outside_manifest = actual_root / "release-manifest.json"
+        original = outside_manifest.read_bytes()
+        linked_parent = Path(self.temporary.name) / "parent-link"
+        os.symlink(real_parent, linked_parent, target_is_directory=True)
+        try:
+            process = self.run_generator_for(
+                linked_parent
+                / "repository"
+                / "skills"
+                / "make-bilingual-study-pdf"
+            )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("symbolic links are not allowed", process.stdout)
+            self.assertIn("repository ancestor", process.stdout)
+            self.assertEqual(outside_manifest.read_bytes(), original)
+        finally:
+            linked_parent.unlink()
+
     def test_skill_frontmatter_rejects_malformed_non_string_and_duplicates(self) -> None:
         path = self.root / "SKILL.md"
         original = path.read_text(encoding="utf-8")
@@ -370,6 +456,177 @@ class ReleaseCheckTests(unittest.TestCase):
                 )
                 path.write_text(original, encoding="utf-8", newline="\n")
 
+    def test_yaml_metadata_rejects_surrogates_and_preserves_non_bmp(self) -> None:
+        skill_path = self.root / "SKILL.md"
+        openai_path = self.root / "agents" / "openai.yaml"
+        original_skill = skill_path.read_text(encoding="utf-8")
+        original_openai = openai_path.read_text(encoding="utf-8")
+        description_line = next(
+            line
+            for line in original_skill.splitlines()
+            if line.startswith("description:")
+        )
+
+        invalid_skill_values = {
+            "high surrogate": 'description: "\\uD800"',
+            "low surrogate": 'description: "\\uDFFF"',
+            "surrogate pair code units": 'description: "\\uD83D\\uDE00"',
+            "eight-digit surrogate": 'description: "\\U0000D800"',
+        }
+        for label, replacement in invalid_skill_values.items():
+            with self.subTest(document="SKILL.md", case=label):
+                skill_path.write_text(
+                    original_skill.replace(description_line, replacement, 1),
+                    encoding="utf-8",
+                    newline="\n",
+                )
+                self.regenerate()
+                process, report = self.run_check()
+                self.assertNotEqual(process.returncode, 0, process.stderr)
+                self.assert_failed_with(report, "surrogate code points")
+        skill_path.write_text(original_skill, encoding="utf-8", newline="\n")
+
+        invalid_openai_values = {
+            "interface value": original_openai.replace(
+                'display_name: "双语学习 PDF"', 'display_name: "\\uD800"', 1
+            ),
+            "nested value": original_openai.replace(
+                '- "chatgpt"', '- "\\uDFFF"', 1
+            ),
+            "surrogate pair code units": original_openai.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: "\\uD83D\\uDE00"',
+                1,
+            ),
+            "eight-digit surrogate": original_openai.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: "\\U0000D800"',
+                1,
+            ),
+            "mapping key": original_openai.replace(
+                "  display_name:", '  "\\uD800":', 1
+            ),
+            "flow mapping key without separation": (
+                original_openai + '\nscanner_probe: {"\\uD800":"safe"}\n'
+            ),
+            "nested flow value without separation": (
+                original_openai
+                + '\nscanner_probe: {"outer":{"value":"\\uD800"}}\n'
+            ),
+            "anchor property before scalar": original_openai.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: &display "\\uD800"',
+                1,
+            ),
+            "tag property before scalar": original_openai.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: !!str "\\uD800"',
+                1,
+            ),
+            "flow anchor property before scalar": (
+                original_openai
+                + '\nscanner_probe: {"outer":&display "\\uD800"}\n'
+            ),
+        }
+        for label, content in invalid_openai_values.items():
+            with self.subTest(document="openai.yaml", case=label):
+                openai_path.write_text(content, encoding="utf-8", newline="\n")
+                self.regenerate()
+                process, report = self.run_check()
+                self.assertNotEqual(process.returncode, 0, process.stderr)
+                self.assert_failed_with(report, "surrogate code points")
+        openai_path.write_text(original_openai, encoding="utf-8", newline="\n")
+
+        valid_cases = (
+            (
+                original_skill.replace(
+                    description_line, 'description: "Valid 😀 metadata"', 1
+                ),
+                original_openai.replace(
+                    '"双语学习 PDF"', '"😀 双语学习 PDF"', 1
+                ),
+            ),
+            (
+                original_skill.replace(
+                    description_line,
+                    'description: "Valid \\U0001F600 metadata"',
+                    1,
+                ),
+                original_openai.replace(
+                    '"双语学习 PDF"', '"\\U0001F600 双语学习 PDF"', 1
+                ),
+            ),
+            (
+                original_skill.replace(
+                    description_line,
+                    'description: "Literal \\\\uD800 text is safe"',
+                    1,
+                ),
+                original_openai.replace(
+                    '"双语学习 PDF"', '"Literal \\\\uD800 text"', 1
+                ),
+            ),
+            (
+                original_skill.replace(
+                    description_line,
+                    "description: Don't reject a plain apostrophe",
+                    1,
+                ),
+                original_openai.replace(
+                    '"双语学习 PDF"', '"Don\'t reject \\"quoted\\" text"', 1
+                ),
+            ),
+            (
+                original_skill.replace(
+                    description_line,
+                    "description: Visit https://example.com/a:b and keep "
+                    'embedded "\\uD800" literal',
+                    1,
+                ),
+                original_openai.replace(
+                    'display_name: "双语学习 PDF"',
+                    'display_name: "Valid multiline\n      😀 metadata"',
+                    1,
+                ),
+            ),
+        )
+        for index, (skill_content, openai_content) in enumerate(valid_cases):
+            with self.subTest(valid_yaml_case=index):
+                skill_path.write_text(
+                    skill_content, encoding="utf-8", newline="\n"
+                )
+                openai_path.write_text(
+                    openai_content, encoding="utf-8", newline="\n"
+                )
+                self.regenerate()
+                process, report = self.run_check()
+                self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+                self.assertEqual(report["status"], "passed")
+
+    def test_yaml_scanner_distinguishes_flow_tokens_from_plain_scalars(self) -> None:
+        invalid = (
+            r'probe: {"\uD800":"safe"}',
+            r'probe: {"outer":{"nested":"\uDFFF"}}',
+            r'probe: {"outer":!!str "\uD800"}',
+            r'probe: {"outer":&value "\uDFFF"}',
+            'anchor: &name "key"\n' + r'probe: {*name:"\uD800"}',
+            '\ufeff' + r'{"interface":{"display_name":"\uD800"}}',
+            r'--- {"interface":{"display_name":"\uDFFF"}}',
+        )
+        for content in invalid:
+            with self.subTest(invalid=content):
+                with self.assertRaisesRegex(ValueError, "surrogate code points"):
+                    validate_yaml_quoted_strings(content, label="probe")
+
+        valid = (
+            r'probe: {url: https://example.com/a:b, note: plain "\uD800" text}',
+            "description: Don't reject plain apostrophes or \"quotes\"",
+            'anchor: &name "safe"\nprobe: *name',
+        )
+        for content in valid:
+            with self.subTest(valid=content):
+                validate_yaml_quoted_strings(content, label="probe")
+
     def test_empty_skill_markdown_fails(self) -> None:
         path = self.root / "SKILL.md"
         path.write_bytes(b"")
@@ -411,6 +668,36 @@ class ReleaseCheckTests(unittest.TestCase):
             if os.path.lexists(junction):
                 os.rmdir(junction)
         self.assertTrue(secret.is_file())
+
+    @unittest.skipUnless(os.name == "nt", "junction regression is Windows-specific")
+    def test_manifest_builder_rejects_skills_ancestor_junction(self) -> None:
+        skills = self.repository / "skills"
+        outside_skills = Path(self.temporary.name) / "outside-skills"
+        skills.rename(outside_skills)
+        outside_manifest = (
+            outside_skills / "make-bilingual-study-pdf" / "release-manifest.json"
+        )
+        original = outside_manifest.read_bytes()
+        created = subprocess.run(
+            ["cmd.exe", "/d", "/c", "mklink", "/J", str(skills), str(outside_skills)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if created.returncode != 0:
+            self.skipTest(f"junctions unavailable: {created.stdout}{created.stderr}")
+        try:
+            process = self.run_generator_for(
+                skills / "make-bilingual-study-pdf"
+            )
+            self.assertNotEqual(process.returncode, 0)
+            self.assertIn("reparse points are not allowed", process.stdout)
+            self.assertIn("skills directory", process.stdout)
+            self.assertEqual(outside_manifest.read_bytes(), original)
+        finally:
+            if os.path.lexists(skills):
+                os.rmdir(skills)
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation is unavailable")
     def test_non_regular_fifo_fails_closed(self) -> None:

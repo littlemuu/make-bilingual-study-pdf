@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -88,7 +89,7 @@ def run_script(script: str, *arguments: str) -> None:
 
 
 def report_status(work_dir: Path) -> dict:
-    work_dir = work_dir.resolve()
+    work_dir = Path(os.path.abspath(work_dir.expanduser()))
     artifacts = {
         "profile": work_dir / "profile.json",
         "manifest": work_dir / "manifest.json",
@@ -423,7 +424,7 @@ def main() -> None:
         print(json.dumps(report_status(args.work_dir), ensure_ascii=False, indent=2))
         return
 
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = Path(os.path.abspath(args.work_dir.expanduser()))
     if args.command == "source-audit":
         run_script("document_ir.py", str(work_dir), "--check")
         run_script("audit_source.py", str(work_dir))

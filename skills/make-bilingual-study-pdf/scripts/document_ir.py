@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -11,11 +12,13 @@ from typing import Any
 
 from common import read_json, read_jsonl, sha256_file, sha256_text, write_json
 from profile import (
-    bind_profile,
+    _bind_validated_profile,
     canonical_profile_sha256,
+    load_profile,
     load_work_profile,
     profile_contract,
     semantic_match,
+    validate_profile_binding_target,
 )
 
 
@@ -628,20 +631,27 @@ def write_document_ir(work_dir: Path, profile: dict[str, Any]) -> Path:
 def migrate_work_dir(
     work_dir: Path, profile_reference: str | Path | None, *, force: bool = False
 ) -> Path:
-    work_dir = work_dir.resolve()
+    work_dir = Path(os.path.abspath(work_dir.expanduser()))
     manifest_path = work_dir / "manifest.json"
     blocks_path = work_dir / "blocks.jsonl"
     for path in (manifest_path, blocks_path):
         if not path.is_file():
             raise ValueError(f"missing required source artifact: {path}")
-    profile = bind_profile(work_dir, profile_reference, force=force)
     manifest = read_json(manifest_path)
+    validate_profile_binding_target(work_dir)
+    requested_profile = load_profile(profile_reference)
+    requested_binding = {
+        "id": requested_profile["id"],
+        "sha256": canonical_profile_sha256(requested_profile),
+    }
+    if manifest.get("profile") not in (None, requested_binding) and not force:
+        raise ValueError("manifest is bound to a different profile")
+
+    profile = _bind_validated_profile(work_dir, requested_profile, force=force)
     profile_binding = {
         "id": profile["id"],
         "sha256": canonical_profile_sha256(profile),
     }
-    if manifest.get("profile") not in (None, profile_binding) and not force:
-        raise ValueError("manifest is bound to a different profile")
     manifest["profile"] = profile_binding
     manifest.setdefault("artifacts", {})["profile"] = "profile.json"
     manifest["artifacts"]["document_ir"] = IR_FILENAME
@@ -659,13 +669,18 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = Path(os.path.abspath(args.work_dir.expanduser()))
     if args.check:
-        profile = load_work_profile(work_dir, args.profile)
-        failures = validate_ir_against_sources(work_dir, profile)
+        try:
+            profile = load_work_profile(work_dir, args.profile)
+            profile_id = profile["id"]
+            failures = validate_ir_against_sources(work_dir, profile)
+        except (KeyError, ValueError) as exc:
+            profile_id = None
+            failures = [f"invalid profile binding: {exc}"]
         report = {
             "status": "failed" if failures else "passed",
-            "profile": profile["id"],
+            "profile": profile_id,
             "ir": str(work_dir / IR_FILENAME),
             "failures": failures,
         }

@@ -16,6 +16,9 @@ from pathlib import Path
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 VALIDATOR = REPOSITORY_ROOT / "tools" / "validate_skill.py"
 SKILL_ROOT = REPOSITORY_ROOT / "skills" / "make-bilingual-study-pdf"
+sys.path.insert(0, str(REPOSITORY_ROOT / "tools"))
+
+from validate_skill import check_duplicate_keys, check_openai_yaml  # noqa: E402
 
 
 def parse_args(argv: list[str]) -> tuple[Path, list[str]]:
@@ -29,6 +32,21 @@ UPSTREAM_VALIDATOR, UNITTEST_ARGS = parse_args(sys.argv[1:])
 
 
 class SkillValidatorTest(unittest.TestCase):
+    def run_repository_checks(
+        self, skill_md: str, openai_yaml: str
+    ) -> tuple[tuple[bool, str], tuple[bool, str]]:
+        with tempfile.TemporaryDirectory(prefix="skill-metadata-check-") as temp_dir:
+            root = Path(temp_dir)
+            (root / "SKILL.md").write_text(
+                skill_md, encoding="utf-8", newline="\n"
+            )
+            (root / "agents").mkdir()
+            (root / "agents" / "openai.yaml").write_text(
+                openai_yaml, encoding="utf-8", newline="\n"
+            )
+            shutil.copytree(SKILL_ROOT / "assets", root / "assets")
+            return check_duplicate_keys(root), check_openai_yaml(root)
+
     def run_validator(
         self,
         skill_md: str,
@@ -260,6 +278,93 @@ class SkillValidatorTest(unittest.TestCase):
             with self.subTest(case=label):
                 result = self.run_validator(skill_md, openai_yaml=content)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_yaml_surrogates_fail_closed_and_non_bmp_text_survives(self) -> None:
+        skill_md = (SKILL_ROOT / "SKILL.md").read_text(encoding="utf-8")
+        openai_yaml = (SKILL_ROOT / "agents" / "openai.yaml").read_text(
+            encoding="utf-8"
+        )
+        description_line = next(
+            line for line in skill_md.splitlines() if line.startswith("description:")
+        )
+        skill_cases = {
+            "high surrogate": skill_md.replace(
+                description_line, 'description: "\\uD800"', 1
+            ),
+            "low surrogate": skill_md.replace(
+                description_line, 'description: "\\uDFFF"', 1
+            ),
+            "surrogate pair code units": skill_md.replace(
+                description_line, 'description: "\\uD83D\\uDE00"', 1
+            ),
+            "surrogate mapping key": skill_md.replace(
+                description_line,
+                '"\\uD800": "metadata"\n' + description_line,
+                1,
+            ),
+        }
+        for label, content in skill_cases.items():
+            with self.subTest(document="SKILL.md", case=label):
+                skill_result, _ = self.run_repository_checks(content, openai_yaml)
+                self.assertFalse(skill_result[0], skill_result[1])
+                self.assertIn("surrogate code points", skill_result[1])
+
+        openai_cases = {
+            "interface value": openai_yaml.replace(
+                'display_name: "双语学习 PDF"', 'display_name: "\\uD800"', 1
+            ),
+            "nested list value": openai_yaml.replace(
+                '- "chatgpt"', '- "\\uDFFF"', 1
+            ),
+            "surrogate pair code units": openai_yaml.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: "\\uD83D\\uDE00"',
+                1,
+            ),
+            "eight-digit surrogate": openai_yaml.replace(
+                'display_name: "双语学习 PDF"',
+                'display_name: "\\U0000D800"',
+                1,
+            ),
+            "mapping key": openai_yaml.replace(
+                "  display_name:", '  "\\uD800":', 1
+            ),
+        }
+        for label, content in openai_cases.items():
+            with self.subTest(document="openai.yaml", case=label):
+                _, openai_result = self.run_repository_checks(skill_md, content)
+                self.assertFalse(openai_result[0], openai_result[1])
+                self.assertIn("surrogate code points", openai_result[1])
+
+        valid_skill_values = (
+            skill_md.replace(description_line, 'description: "Valid 😀 metadata"', 1),
+            skill_md.replace(
+                description_line, 'description: "Valid \\U0001F600 metadata"', 1
+            ),
+            skill_md.replace(
+                description_line,
+                'description: "Literal \\\\uD800 text is safe"',
+                1,
+            ),
+        )
+        valid_openai_values = (
+            openai_yaml.replace('"双语学习 PDF"', '"😀 双语学习 PDF"', 1),
+            openai_yaml.replace(
+                '"双语学习 PDF"', '"\\U0001F600 双语学习 PDF"', 1
+            ),
+            openai_yaml.replace(
+                '"双语学习 PDF"', '"Literal \\\\uD800 text"', 1
+            ),
+        )
+        for index, (skill_value, openai_value) in enumerate(
+            zip(valid_skill_values, valid_openai_values, strict=True)
+        ):
+            with self.subTest(valid_non_bmp=index):
+                skill_result, openai_result = self.run_repository_checks(
+                    skill_value, openai_value
+                )
+                self.assertTrue(skill_result[0], skill_result[1])
+                self.assertTrue(openai_result[0], openai_result[1])
 
 
 if __name__ == "__main__":

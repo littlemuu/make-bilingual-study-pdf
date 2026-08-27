@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import os
 import stat
+import tempfile
 from pathlib import Path, PurePosixPath
 
 
-REPOSITORY = Path(__file__).resolve().parents[1]
+REPOSITORY = Path(os.path.abspath(__file__)).parent.parent
 SKILL_ROOT = REPOSITORY / "skills" / "make-bilingual-study-pdf"
+SKILL_DIRECTORY = "make-bilingual-study-pdf"
 TEXT_SUFFIXES = {
     ".json",
     ".md",
@@ -32,6 +34,7 @@ PASSTHROUGH_BINARY_SUFFIXES = {
     ".webp",
 }
 WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+DirectoryChain = tuple[tuple[Path, os.stat_result], ...]
 
 
 def is_reparse_point(status: os.stat_result) -> bool:
@@ -73,12 +76,79 @@ def metadata_matches(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
-def iter_safe_files(
+def directory_identity_matches(left: os.stat_result, right: os.stat_result) -> bool:
+    return os.path.samestat(left, right) and stat.S_IFMT(left.st_mode) == stat.S_IFMT(
+        right.st_mode
+    )
+
+
+def lexical_absolute(path: Path) -> Path:
+    """Make a path absolute without resolving links or reparse points."""
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def repository_directory_paths(repository: Path) -> tuple[tuple[Path, str], ...]:
+    """Return every lexical directory from the filesystem anchor to the repo."""
+    repository = lexical_absolute(repository)
+    if not repository.anchor:
+        raise ValueError(f"repository root must be absolute: {repository}")
+    anchor = Path(repository.anchor)
+    paths: list[tuple[Path, str]] = [(anchor, "filesystem anchor")]
+    current = anchor
+    for part in repository.relative_to(anchor).parts:
+        current /= part
+        label = (
+            "repository root"
+            if current == repository
+            else f"repository ancestor: {current}"
+        )
+        paths.append((current, label))
+    return tuple(paths)
+
+
+def validate_skill_root_chain(
+    repository: Path,
     root: Path,
+    expected: DirectoryChain | None = None,
+) -> DirectoryChain:
+    """Validate the repository, skills ancestor, and Skill root in that order."""
+    repository = lexical_absolute(repository)
+    root = lexical_absolute(root)
+    skills = repository / "skills"
+    expected_root = skills / SKILL_DIRECTORY
+    if root != expected_root:
+        raise ValueError(
+            f"Skill root must be the canonical repository subtree: {expected_root}"
+        )
+    paths = repository_directory_paths(repository) + (
+        (skills, "skills directory"),
+        (root, "Skill root"),
+    )
+    if expected is not None and tuple(path for path, _ in expected) != tuple(
+        path for path, _ in paths
+    ):
+        raise ValueError("Skill directory chain changed after validation")
+
+    observed: list[tuple[Path, os.stat_result]] = []
+    for index, (path, label) in enumerate(paths):
+        status = os.lstat(path)
+        reject_unsafe_status(status, label, require_directory=True)
+        if expected is not None and not directory_identity_matches(
+            expected[index][1], status
+        ):
+            raise ValueError(f"Skill directory changed after validation: {label}")
+        observed.append((path, status))
+    return tuple(observed)
+
+
+def iter_safe_files(
+    repository: Path,
+    root: Path,
+    expected_chain: DirectoryChain,
 ) -> list[tuple[Path, PurePosixPath, os.stat_result]]:
     """Inventory the complete tree without following links or reparse points."""
-    root_status = os.lstat(root)
-    reject_unsafe_status(root_status, str(root), require_directory=True)
+    chain = validate_skill_root_chain(repository, root, expected_chain)
+    root_status = chain[-1][1]
     files: list[tuple[Path, PurePosixPath, os.stat_result]] = []
 
     def visit(
@@ -109,20 +179,39 @@ def iter_safe_files(
     return files
 
 
-def ensure_safe_parent_chain(root: Path, path: Path) -> None:
+def ensure_safe_parent_chain(
+    repository: Path,
+    root: Path,
+    path: Path,
+    expected_chain: DirectoryChain,
+    expected_parents: DirectoryChain | None = None,
+) -> DirectoryChain:
+    chain = validate_skill_root_chain(repository, root, expected_chain)
     try:
         relative = path.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"Skill path escapes root: {path}") from exc
+    observed: list[tuple[Path, os.stat_result]] = list(chain)
     current = root
-    reject_unsafe_status(os.lstat(current), str(current), require_directory=True)
     for part in relative.parts[:-1]:
         current /= part
+        status = os.lstat(current)
         reject_unsafe_status(
-            os.lstat(current),
-            current.relative_to(root).as_posix(),
-            require_directory=True,
+            status, current.relative_to(root).as_posix(), require_directory=True
         )
+        observed.append((current, status))
+    result = tuple(observed)
+    if expected_parents is not None:
+        if tuple(path for path, _ in expected_parents) != tuple(
+            path for path, _ in result
+        ):
+            raise ValueError(f"Skill parent chain changed: {path}")
+        for (parent, expected_status), (_, current_status) in zip(
+            expected_parents, result
+        ):
+            if not directory_identity_matches(expected_status, current_status):
+                raise ValueError(f"Skill parent directory changed: {parent}")
+    return result
 
 
 def open_descriptor(path: Path, *, writable: bool) -> int:
@@ -172,14 +261,16 @@ def open_descriptor(path: Path, *, writable: bool) -> int:
 
 
 def open_regular_fd(
+    repository: Path,
     root: Path,
     path: Path,
     label: str,
     expected_status: os.stat_result,
+    expected_chain: DirectoryChain,
     *,
     writable: bool,
 ) -> tuple[int, os.stat_result]:
-    ensure_safe_parent_chain(root, path)
+    ensure_safe_parent_chain(repository, root, path, expected_chain)
     before = os.lstat(path)
     reject_unsafe_status(before, label)
     if not metadata_matches(expected_status, before):
@@ -202,13 +293,21 @@ def open_regular_fd(
 
 
 def read_regular_bytes(
+    repository: Path,
     root: Path,
     path: Path,
     label: str,
     expected_status: os.stat_result,
+    expected_chain: DirectoryChain,
 ) -> bytes:
     descriptor, opened = open_regular_fd(
-        root, path, label, expected_status, writable=False
+        repository,
+        root,
+        path,
+        label,
+        expected_status,
+        expected_chain,
+        writable=False,
     )
     try:
         chunks: list[bytes] = []
@@ -227,7 +326,10 @@ def read_regular_bytes(
             raise ValueError(f"Skill file changed while reading: {label}")
         return payload
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def write_all(descriptor: int, payload: bytes) -> None:
@@ -239,50 +341,159 @@ def write_all(descriptor: int, payload: bytes) -> None:
         view = view[written:]
 
 
+def best_effort_fsync_directory(directory: Path) -> None:
+    """Persist a completed rename where directory fsync is supported."""
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(directory, flags)
+    except OSError:
+        return
+    try:
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            pass
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
 def normalize_regular_file(
+    repository: Path,
     root: Path,
     path: Path,
     label: str,
     expected_status: os.stat_result,
     expected_payload: bytes,
     normalized: bytes,
+    expected_chain: DirectoryChain,
 ) -> None:
-    descriptor, opened = open_regular_fd(
-        root, path, label, expected_status, writable=True
+    current_payload = read_regular_bytes(
+        repository,
+        root,
+        path,
+        label,
+        expected_status,
+        expected_chain,
     )
-    try:
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            chunks.append(chunk)
-        current_payload = b"".join(chunks)
-        before_write = os.fstat(descriptor)
-        current_path = os.lstat(path)
-        reject_unsafe_status(before_write, label)
-        reject_unsafe_status(current_path, label)
-        if (
-            current_payload != expected_payload
-            or not metadata_matches(opened, before_write)
-            or not metadata_matches(before_write, current_path)
-        ):
-            raise ValueError(f"Skill file changed before normalization: {label}")
+    if current_payload != expected_payload:
+        raise ValueError(f"Skill file changed before normalization: {label}")
 
-        os.lseek(descriptor, 0, os.SEEK_SET)
+    parent_chain = ensure_safe_parent_chain(
+        repository, root, path, expected_chain
+    )
+    temporary_path: Path | None = None
+    temporary_identity: os.stat_result | None = None
+    descriptor: int | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{path.name}.eol-", dir=path.parent
+        )
+        temporary_path = Path(temporary_name)
+        ensure_safe_parent_chain(
+            repository,
+            root,
+            path,
+            expected_chain,
+            expected_parents=parent_chain,
+        )
+        temporary_identity = os.fstat(descriptor)
+        temporary_path_status = os.lstat(temporary_path)
+        reject_unsafe_status(temporary_identity, f"temporary file for {label}")
+        reject_unsafe_status(temporary_path_status, f"temporary file for {label}")
+        if not directory_identity_matches(temporary_identity, temporary_path_status):
+            raise ValueError(f"temporary Skill file changed after creation: {label}")
+
         write_all(descriptor, normalized)
-        os.ftruncate(descriptor, len(normalized))
+        os.fsync(descriptor)
+        mode = stat.S_IMODE(expected_status.st_mode)
+        if hasattr(os, "fchmod"):
+            os.fchmod(descriptor, mode)
+        else:
+            os.chmod(temporary_path, mode)
         os.fsync(descriptor)
 
         finished = os.fstat(descriptor)
-        final_path = os.lstat(path)
-        reject_unsafe_status(finished, label)
-        reject_unsafe_status(final_path, label)
+        reject_unsafe_status(finished, f"temporary file for {label}")
         if (
-            not os.path.samestat(opened, finished)
-            or not os.path.samestat(finished, final_path)
+            not directory_identity_matches(temporary_identity, finished)
             or finished.st_size != len(normalized)
         ):
-            raise ValueError(f"Skill file changed while normalizing: {label}")
-    finally:
+            raise ValueError(f"temporary Skill file changed while writing: {label}")
+        temporary_identity = finished
         os.close(descriptor)
+        descriptor = None
+
+        current_payload = read_regular_bytes(
+            repository,
+            root,
+            path,
+            label,
+            expected_status,
+            expected_chain,
+        )
+        if current_payload != expected_payload:
+            raise ValueError(f"Skill file changed before atomic replacement: {label}")
+        ensure_safe_parent_chain(
+            repository,
+            root,
+            path,
+            expected_chain,
+            expected_parents=parent_chain,
+        )
+        temporary_payload = read_regular_bytes(
+            repository,
+            root,
+            temporary_path,
+            f"temporary file for {label}",
+            temporary_identity,
+            expected_chain,
+        )
+        if temporary_payload != normalized:
+            raise ValueError(f"temporary Skill file changed before replacement: {label}")
+
+        os.replace(temporary_path, path)
+        temporary_path = None
+        best_effort_fsync_directory(path.parent)
+    finally:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary_path is not None:
+            try:
+                ensure_safe_parent_chain(
+                    repository,
+                    root,
+                    path,
+                    expected_chain,
+                    expected_parents=parent_chain,
+                )
+                try:
+                    current_temporary = os.lstat(temporary_path)
+                except FileNotFoundError:
+                    current_temporary = None
+                if current_temporary is not None:
+                    reject_unsafe_status(
+                        current_temporary, f"temporary file for {label}"
+                    )
+                    if temporary_identity is None or not directory_identity_matches(
+                        temporary_identity, current_temporary
+                    ):
+                        raise ValueError(
+                            f"temporary Skill file changed before cleanup: {label}"
+                        )
+                    try:
+                        temporary_path.unlink()
+                    except PermissionError:
+                        os.chmod(temporary_path, stat.S_IREAD | stat.S_IWRITE)
+                        temporary_path.unlink()
+            except (OSError, ValueError):
+                # Preserve the primary failure; never follow or delete a replaced path.
+                pass
 
 
 def display_path(root: Path, path: Path) -> str:
@@ -314,9 +525,11 @@ def validate_text_payload(payload: bytes, label: str) -> None:
 
 
 def find_changes(
+    repository: Path,
     root: Path,
+    expected_chain: DirectoryChain,
 ) -> list[tuple[Path, str, os.stat_result, bytes, bytes]]:
-    files = iter_safe_files(root)
+    files = iter_safe_files(repository, root, expected_chain)
     classifications = [
         (path, relative, status, classify_payload(relative))
         for path, relative, status in files
@@ -326,7 +539,9 @@ def find_changes(
         if payload_type == "binary":
             continue
         label = relative.as_posix()
-        payload = read_regular_bytes(root, path, label, status)
+        payload = read_regular_bytes(
+            repository, root, path, label, status, expected_chain
+        )
         validate_text_payload(payload, label)
         normalized = payload.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         if normalized != payload:
@@ -342,13 +557,22 @@ def main() -> int:
         "--fix", action="store_true", help="Rewrite non-LF line endings in place."
     )
     args = parser.parse_args()
-    root = Path(os.path.abspath(SKILL_ROOT))
+    repository = lexical_absolute(REPOSITORY)
+    root = lexical_absolute(SKILL_ROOT)
     try:
-        changes = find_changes(root)
+        chain = validate_skill_root_chain(repository, root)
+        changes = find_changes(repository, root, chain)
         if args.fix:
             for path, relative, status, payload, normalized in changes:
                 normalize_regular_file(
-                    root, path, relative, status, payload, normalized
+                    repository,
+                    root,
+                    path,
+                    relative,
+                    status,
+                    payload,
+                    normalized,
+                    chain,
                 )
     except (OSError, ValueError) as exc:
         print(f"Skill EOL check failed: {exc}")

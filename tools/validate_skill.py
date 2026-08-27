@@ -125,6 +125,38 @@ UniqueKeyLoader.add_constructor(
 )
 
 
+def reject_yaml_surrogates(value: object, *, label: str) -> None:
+    """Reject surrogate code points in every parsed YAML string."""
+    active_container_ids: set[int] = set()
+
+    def visit(item: object) -> None:
+        if isinstance(item, str):
+            if any(0xD800 <= ord(character) <= 0xDFFF for character in item):
+                raise ValueError(
+                    f"{label} strings must not contain surrogate code points"
+                )
+            return
+        if not isinstance(item, (dict, list, tuple, set, frozenset)):
+            return
+
+        container_id = id(item)
+        if container_id in active_container_ids:
+            raise ValueError(f"{label} must not contain recursive YAML aliases")
+        active_container_ids.add(container_id)
+        try:
+            if isinstance(item, dict):
+                for key, child in item.items():
+                    visit(key)
+                    visit(child)
+            else:
+                for child in item:
+                    visit(child)
+        finally:
+            active_container_ids.remove(container_id)
+
+    visit(value)
+
+
 def check_duplicate_keys(skill_root: Path) -> tuple[bool, str]:
     skill_md = skill_root / "SKILL.md"
     try:
@@ -137,8 +169,9 @@ def check_duplicate_keys(skill_root: Path) -> tuple[bool, str]:
         return False, "SKILL.md does not contain closed LF-delimited frontmatter"
 
     try:
-        yaml.load(match.group(1), Loader=UniqueKeyLoader)
-    except yaml.YAMLError as exc:
+        data = yaml.load(match.group(1), Loader=UniqueKeyLoader)
+        reject_yaml_surrogates(data, label="SKILL.md frontmatter")
+    except (yaml.YAMLError, ValueError) as exc:
         return False, f"invalid or ambiguous SKILL.md frontmatter: {exc}"
     return True, "SKILL.md frontmatter has unique keys"
 
@@ -251,7 +284,8 @@ def check_openai_yaml(skill_root: Path) -> tuple[bool, str]:
     try:
         data = yaml.load(content, Loader=UniqueKeyLoader)
         node = yaml.compose(content, Loader=yaml.SafeLoader)
-    except yaml.YAMLError as exc:
+        reject_yaml_surrogates(data, label=OPENAI_YAML.as_posix())
+    except (yaml.YAMLError, ValueError) as exc:
         return False, f"invalid or ambiguous {OPENAI_YAML.as_posix()}: {exc}"
     if node is None:
         return False, f"{OPENAI_YAML.as_posix()} must not be empty"

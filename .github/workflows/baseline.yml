@@ -100,6 +100,7 @@ jobs:
           python tests/check_skill_eol_test.py
           python tests/release_check_test.py
           python tests/repository_release_check_test.py
+          python tests/profile_binding_test.py
           python "$SKILL_PATH/scripts/self_test.py"
           python tests/v23_profile_test.py
           python tests/v23_mineru_test.py
@@ -140,6 +141,11 @@ jobs:
         env:
           PYTHONDONTWRITEBYTECODE: "1"
         run: python tests/repository_release_check_test.py
+
+      - name: Run Windows Profile binding filesystem regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/profile_binding_test.py
 
   installer-parity:
     runs-on: ubuntu-24.04

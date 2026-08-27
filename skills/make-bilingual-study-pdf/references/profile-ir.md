@@ -20,6 +20,21 @@ copy into the manifest, document IR, translation plan, and output manifest. The 
 separate byte-level stale-input hash where needed. Never read
 a newer installed Profile in place of the bound copy during a resumed job.
 
+`bind_profile` is the only creation path. Every runtime consumer requires the bound
+copy even when a Profile reference is supplied; a supplied reference verifies that it
+matches the bound bytes and is never a fallback. A missing binding therefore stops a
+new, resumed, or frozen work directory until the explicit new-task or migration path
+binds one.
+
+Treat the binding as a filesystem security boundary. Reject symbolic links, Windows
+reparse points (including junctions), hard-linked or non-regular `profile.json`
+entries, and any symbolic-link/reparse-point ancestor of `WORK_DIR`. Recheck the full
+directory identity chain around each read or publication. New work directories are
+created one lexical component at a time only after validating the existing parent
+chain; never call recursive directory creation through an unchecked ancestor.
+`--force` may recover only a safe regular target and publishes through a same-directory
+temporary file plus atomic replacement; it must never rewrite an external link target.
+
 Implemented adapters are `native-text-pdf` and `mineru-import`. The latter consumes
 only frozen stable MinerU 3.x `pipeline` legacy output; it does not execute MinerU.
 Adapter, style, and constraint IDs are registry-backed and unknown IDs fail closed.
@@ -59,7 +74,8 @@ may share one style without losing separate inventory counts.
 
 ## Compatibility and migration
 
-Legacy work directories remain readable. Migrate one explicitly with:
+Legacy work directories without a binding require explicit migration. Migration first
+creates the safe bound copy, then rebuilds the IR:
 
 ```bash
 python3 "$SKILL_DIR/scripts/pipeline.py" ir "$WORK_DIR"

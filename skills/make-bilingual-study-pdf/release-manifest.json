@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "606dd9bf944e6341bbeb2128268e3ba85dc7fd3f4adbf5fa0164f840276e536c",
+  "tree_sha256": "196343e2c6e78b6ce110862d565fb51ef54f3770b562fd793b0ec6b6bcd5b6d7",
   "files": [
     {
       "path": "SKILL.md",
@@ -57,8 +57,8 @@
     },
     {
       "path": "references/profile-ir.md",
-      "size": 4911,
-      "sha256": "4126fb38d2bdbbfdb7a413b2465659a2e57c741b2dd925ea447bbcef4b50db38"
+      "size": 5999,
+      "sha256": "2105eced2c4db13368ef4f17783fcbe3f669c68ca0eddfdd78a538edae5a0ef7"
     },
     {
       "path": "references/qa-rules.md",
@@ -87,8 +87,8 @@
     },
     {
       "path": "scripts/adapters/mineru.py",
-      "size": 61919,
-      "sha256": "eb49a1c0d0fca25d48358104773a831faf7a39123746d0d1f5ac33aa0b8d5bfd"
+      "size": 62235,
+      "sha256": "8190f98d43673d5167cfb6a1f51a9ae67ecb071f353a0ebd3addbbe10242d765"
     },
     {
       "path": "scripts/adapters/native_pdf.py",
@@ -107,8 +107,8 @@
     },
     {
       "path": "scripts/audit_source.py",
-      "size": 39520,
-      "sha256": "020d81ccbe971aa57357321d62931bac9183b8ccddb227bff9bdf5e3a6a458fc"
+      "size": 39393,
+      "sha256": "24c406311e3c7ab3be0c63170e46261ddb35b0f8bf9791545dadf98809c47f76"
     },
     {
       "path": "scripts/audit_translation.py",
@@ -142,8 +142,8 @@
     },
     {
       "path": "scripts/document_ir.py",
-      "size": 25811,
-      "sha256": "aa98a5c77141c44b8f9e2fee22be286d53ddd2e6784b4da9bc9bda06488b86de"
+      "size": 26368,
+      "sha256": "1478eebf4b1035760af242067b78d4f879f1221643f52eff9656b615612452f8"
     },
     {
       "path": "scripts/docx_ast.py",
@@ -157,8 +157,8 @@
     },
     {
       "path": "scripts/extract_pdf.py",
-      "size": 36190,
-      "sha256": "530f40011fc72e0d773cfe6afd3c62e542b067040721d85b87797fb0ea7d39c9"
+      "size": 36430,
+      "sha256": "c60c17dbbd38aa18543dc05012624640dc7ed96fdb3992f5c83f7bfef2886091"
     },
     {
       "path": "scripts/finalize_qa.py",
@@ -182,8 +182,8 @@
     },
     {
       "path": "scripts/pipeline.py",
-      "size": 21849,
-      "sha256": "1ad437eef46248320b6e81e99421b029eb07eefdd06b4c21fa1563bbd9ff485e"
+      "size": 21898,
+      "sha256": "ebf563fd860bfac363ad4c91764785dc5ac8bbeda0701cc887e3cbe193636004"
     },
     {
       "path": "scripts/prepare_translation.py",
@@ -192,8 +192,8 @@
     },
     {
       "path": "scripts/profile.py",
-      "size": 22092,
-      "sha256": "4c6bc7f4137ffd57d8e0cab87711f8e0e3bc63992855f1d028de33b8b4189670"
+      "size": 34327,
+      "sha256": "2f796d13c89ed44092d49e05abf6f180365337c25f76904a4fd83e6aa5435579"
     },
     {
       "path": "scripts/record_visual_review.py",
@@ -202,8 +202,8 @@
     },
     {
       "path": "scripts/release_check.py",
-      "size": 27153,
-      "sha256": "82f664e94241ca5360df33aff41481369635018de5eb841d6be39a32b8203a9c"
+      "size": 37038,
+      "sha256": "8218beab771d22b0cc9c96ebf39130e35318f3f73b626f1cb638fcdd353c4a32"
     },
     {
       "path": "scripts/self_test.py",

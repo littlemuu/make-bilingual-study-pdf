@@ -27,7 +27,13 @@ from common import (
     write_jsonl,
 )
 from document_ir import write_document_ir
-from profile import bind_profile, canonical_profile_sha256, load_profile
+from profile import (
+    bind_profile,
+    canonical_profile_sha256,
+    load_profile,
+    prepare_profile_work_directory,
+    validate_profile_binding_target,
+)
 from visual_utils import make_contact_sheets
 
 
@@ -678,7 +684,11 @@ def margin_repetitions(raw_pages: list[list[dict[str, Any]]]) -> set[str]:
 
 
 def prepare_output(work_dir: Path, force: bool) -> None:
-    work_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        work_dir = prepare_profile_work_directory(work_dir)
+        validate_profile_binding_target(work_dir)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     collisions = [
         work_dir / "profile.json",
         work_dir / "document-ir.json",
@@ -693,7 +703,7 @@ def prepare_output(work_dir: Path, force: bool) -> None:
         names = ", ".join(path.name for path in existing)
         raise SystemExit(f"refusing to overwrite existing artifacts: {names}; use --force")
     if force:
-        for generated in (work_dir / "profile.json", work_dir / "document-ir.json"):
+        for generated in (work_dir / "document-ir.json",):
             if generated.is_file():
                 generated.unlink()
         for directory, pattern in (
@@ -721,7 +731,7 @@ def main() -> None:
     args = parser.parse_args()
 
     pdf_path = args.pdf.expanduser().resolve()
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = Path(os.path.abspath(args.work_dir.expanduser()))
     if not pdf_path.is_file():
         raise SystemExit(f"PDF does not exist: {pdf_path}")
     if pdf_path.suffix.lower() != ".pdf":
@@ -739,7 +749,7 @@ def main() -> None:
     pdftoppm = require_command("pdftoppm")
     prepare_output(work_dir, args.force)
     try:
-        profile = bind_profile(work_dir, args.profile)
+        profile = bind_profile(work_dir, args.profile, force=args.force)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -588,7 +589,7 @@ def main() -> None:
     parser.add_argument("--warn-page-below", type=_coverage_threshold_argument)
     args = parser.parse_args()
 
-    work_dir = args.work_dir.expanduser().resolve()
+    work_dir = Path(os.path.abspath(args.work_dir.expanduser()))
     manifest_path = work_dir / "manifest.json"
     blocks_path = work_dir / "blocks.jsonl"
     oracle_path = work_dir / "oracle.txt"
@@ -608,23 +609,22 @@ def main() -> None:
     profile = None
     ir_role_counts: dict[str, int] = {}
     ir_role_inventory: dict[str, dict] = {}
-    if manifest.get("profile"):
-        try:
-            profile = load_work_profile(work_dir)
-            expected_binding = {
-                "id": profile["id"],
-                "sha256": canonical_profile_sha256(profile),
-            }
-            if manifest.get("profile") != expected_binding:
-                failures.append("manifest profile binding is stale or mismatched")
-            failures.extend(validate_ir_against_sources(work_dir, profile))
-            ir_path = work_dir / "document-ir.json"
-            if ir_path.is_file():
-                inventories = read_json(ir_path).get("inventories", {})
-                ir_role_counts = inventories.get("semantic_role_counts", {})
-                ir_role_inventory = inventories.get("role_inventory", {})
-        except (ValueError, KeyError, FileNotFoundError) as exc:
-            failures.append(f"invalid profile binding: {exc}")
+    try:
+        profile = load_work_profile(work_dir)
+        expected_binding = {
+            "id": profile["id"],
+            "sha256": canonical_profile_sha256(profile),
+        }
+        if manifest.get("profile") != expected_binding:
+            failures.append("manifest profile binding is stale or mismatched")
+        failures.extend(validate_ir_against_sources(work_dir, profile))
+        ir_path = work_dir / "document-ir.json"
+        if ir_path.is_file():
+            inventories = read_json(ir_path).get("inventories", {})
+            ir_role_counts = inventories.get("semantic_role_counts", {})
+            ir_role_inventory = inventories.get("role_inventory", {})
+    except (ValueError, KeyError, FileNotFoundError) as exc:
+        failures.append(f"invalid profile binding: {exc}")
     if profile and profile.get("schema_version") == 2:
         contract = profile_contract(profile)
         for role, policy in contract["role_inventory"].items():
@@ -861,9 +861,7 @@ def main() -> None:
         "source_blocks_sha256": sha256_file(blocks_path),
         "profile_sha256": canonical_profile_sha256(profile) if profile else None,
         "profile_file_sha256": (
-            sha256_file(work_dir / "profile.json")
-            if (work_dir / "profile.json").is_file()
-            else None
+            sha256_file(work_dir / "profile.json") if profile else None
         ),
         "document_ir_sha256": (
             sha256_file(work_dir / "document-ir.json")

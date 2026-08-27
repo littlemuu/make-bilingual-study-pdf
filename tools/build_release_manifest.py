@@ -13,10 +13,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-REPOSITORY = Path(__file__).resolve().parents[1]
+REPOSITORY = Path(os.path.abspath(__file__)).parent.parent
 DEFAULT_SKILL_ROOT = REPOSITORY / "skills" / "make-bilingual-study-pdf"
 MANIFEST_NAME = "release-manifest.json"
 SKILL_NAME = "make-bilingual-study-pdf"
+SKILL_DIRECTORY = "make-bilingual-study-pdf"
 WINDOWS_RESERVED_STEMS = {
     "con",
     "conin$",
@@ -35,6 +36,7 @@ WINDOWS_RESERVED_STEMS = {
 }
 WINDOWS_FORBIDDEN_CHARACTERS = set('<>:"|?*')
 WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+DirectoryChain = tuple[tuple[Path, os.stat_result], ...]
 
 
 def is_reparse_point(status: os.stat_result) -> bool:
@@ -67,12 +69,88 @@ def reject_unsafe_status(
         )
 
 
+def directory_identity_matches(left: os.stat_result, right: os.stat_result) -> bool:
+    return os.path.samestat(left, right) and stat.S_IFMT(left.st_mode) == stat.S_IFMT(
+        right.st_mode
+    )
+
+
+def lexical_absolute(path: Path) -> Path:
+    """Make a path absolute without resolving links or reparse points."""
+    return Path(os.path.abspath(os.fspath(path)))
+
+
+def repository_directory_paths(repository: Path) -> tuple[tuple[Path, str], ...]:
+    """Return every lexical directory from the filesystem anchor to the repo."""
+    repository = lexical_absolute(repository)
+    if not repository.anchor:
+        raise ValueError(f"repository root must be absolute: {repository}")
+    anchor = Path(repository.anchor)
+    paths: list[tuple[Path, str]] = [(anchor, "filesystem anchor")]
+    current = anchor
+    for part in repository.relative_to(anchor).parts:
+        current /= part
+        label = (
+            "repository root"
+            if current == repository
+            else f"repository ancestor: {current}"
+        )
+        paths.append((current, label))
+    return tuple(paths)
+
+
+def repository_for_skill_root(root: Path) -> Path:
+    root = lexical_absolute(root)
+    default_root = lexical_absolute(DEFAULT_SKILL_ROOT)
+    if root == default_root:
+        return lexical_absolute(REPOSITORY)
+    if root.name != SKILL_DIRECTORY or root.parent.name != "skills":
+        raise ValueError(
+            "custom Skill root must use the repository/skills/"
+            f"{SKILL_DIRECTORY} layout: {root}"
+        )
+    return root.parent.parent
+
+
+def validate_skill_root_chain(
+    root: Path,
+    expected: DirectoryChain | None = None,
+) -> DirectoryChain:
+    """Validate the repository, skills ancestor, and Skill root in that order."""
+    root = lexical_absolute(root)
+    repository = repository_for_skill_root(root)
+    skills = repository / "skills"
+    expected_root = skills / SKILL_DIRECTORY
+    if root != expected_root:
+        raise ValueError(f"Skill root must be the canonical subtree: {expected_root}")
+    paths = repository_directory_paths(repository) + (
+        (skills, "skills directory"),
+        (root, "Skill root"),
+    )
+    if expected is not None and tuple(path for path, _ in expected) != tuple(
+        path for path, _ in paths
+    ):
+        raise ValueError("payload directory chain changed after validation")
+
+    observed: list[tuple[Path, os.stat_result]] = []
+    for index, (path, label) in enumerate(paths):
+        status = os.lstat(path)
+        reject_unsafe_status(status, label, require_directory=True)
+        if expected is not None and not directory_identity_matches(
+            expected[index][1], status
+        ):
+            raise ValueError(f"payload directory changed after validation: {label}")
+        observed.append((path, status))
+    return tuple(observed)
+
+
 def iter_safe_entries(
     root: Path,
+    expected_chain: DirectoryChain,
 ) -> list[tuple[Path, PurePosixPath, os.stat_result]]:
     """Walk without following symlinks, junctions, or other reparse points."""
-    root_status = os.lstat(root)
-    reject_unsafe_status(root_status, str(root), require_directory=True)
+    chain = validate_skill_root_chain(root, expected_chain)
+    root_status = chain[-1][1]
     observed: list[tuple[Path, PurePosixPath, os.stat_result]] = []
 
     def visit(
@@ -99,20 +177,38 @@ def iter_safe_entries(
     return observed
 
 
-def ensure_safe_parent_chain(root: Path, path: Path) -> None:
+def ensure_safe_parent_chain(
+    root: Path,
+    path: Path,
+    expected_chain: DirectoryChain,
+    expected_parents: DirectoryChain | None = None,
+) -> DirectoryChain:
+    chain = validate_skill_root_chain(root, expected_chain)
     try:
         relative = path.relative_to(root)
     except ValueError as exc:
         raise ValueError(f"payload path escapes root: {path}") from exc
+    observed: list[tuple[Path, os.stat_result]] = list(chain)
     current = root
-    reject_unsafe_status(os.lstat(current), str(current), require_directory=True)
     for part in relative.parts[:-1]:
         current /= part
+        status = os.lstat(current)
         reject_unsafe_status(
-            os.lstat(current),
-            current.relative_to(root).as_posix(),
-            require_directory=True,
+            status, current.relative_to(root).as_posix(), require_directory=True
         )
+        observed.append((current, status))
+    result = tuple(observed)
+    if expected_parents is not None:
+        if tuple(path for path, _ in expected_parents) != tuple(
+            path for path, _ in result
+        ):
+            raise ValueError(f"payload parent chain changed: {path}")
+        for (parent, expected_status), (_, current_status) in zip(
+            expected_parents, result
+        ):
+            if not directory_identity_matches(expected_status, current_status):
+                raise ValueError(f"payload parent directory changed: {parent}")
+    return result
 
 
 def metadata_matches(left: os.stat_result, right: os.stat_result) -> bool:
@@ -123,8 +219,13 @@ def metadata_matches(left: os.stat_result, right: os.stat_result) -> bool:
     )
 
 
-def open_regular_fd(root: Path, path: Path, label: str) -> tuple[int, os.stat_result]:
-    ensure_safe_parent_chain(root, path)
+def open_regular_fd(
+    root: Path,
+    path: Path,
+    label: str,
+    expected_chain: DirectoryChain,
+) -> tuple[int, os.stat_result]:
+    ensure_safe_parent_chain(root, path, expected_chain)
     before = os.lstat(path)
     reject_unsafe_status(before, label)
     flags = (
@@ -147,8 +248,13 @@ def open_regular_fd(root: Path, path: Path, label: str) -> tuple[int, os.stat_re
         raise
 
 
-def read_regular_bytes(root: Path, path: Path, label: str) -> bytes:
-    fd, opened = open_regular_fd(root, path, label)
+def read_regular_bytes(
+    root: Path,
+    path: Path,
+    label: str,
+    expected_chain: DirectoryChain,
+) -> bytes:
+    fd, opened = open_regular_fd(root, path, label, expected_chain)
     with os.fdopen(fd, "rb") as handle:
         payload = handle.read()
         finished = os.fstat(handle.fileno())
@@ -157,8 +263,13 @@ def read_regular_bytes(root: Path, path: Path, label: str) -> bytes:
     return payload
 
 
-def hash_regular_file(root: Path, path: Path, label: str) -> tuple[int, str]:
-    fd, opened = open_regular_fd(root, path, label)
+def hash_regular_file(
+    root: Path,
+    path: Path,
+    label: str,
+    expected_chain: DirectoryChain,
+) -> tuple[int, str]:
+    fd, opened = open_regular_fd(root, path, label, expected_chain)
     digest = hashlib.sha256()
     total = 0
     with os.fdopen(fd, "rb") as handle:
@@ -209,11 +320,13 @@ def portable_path_key(value: str) -> str:
     return "/".join(unicodedata.normalize("NFC", part).casefold() for part in path.parts)
 
 
-def payload_records(root: Path) -> list[dict[str, Any]]:
+def payload_records(
+    root: Path, expected_chain: DirectoryChain
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     casefolded: dict[str, str] = {}
     manifest_key = portable_path_key(MANIFEST_NAME)
-    for path, relative, status in iter_safe_entries(root):
+    for path, relative, status in iter_safe_entries(root, expected_chain):
         link_kind = unsafe_link_kind(status)
         if link_kind:
             raise ValueError(f"{link_kind} are not allowed in payload: {relative}")
@@ -236,16 +349,20 @@ def payload_records(root: Path) -> list[dict[str, Any]]:
                 f"case-insensitive payload path collision: {casefolded[folded]!r}, {name!r}"
             )
         casefolded[folded] = name
-        size, digest = hash_regular_file(root, path, name)
+        size, digest = hash_regular_file(root, path, name, expected_chain)
         records.append({"path": name, "size": size, "sha256": digest})
     records.sort(key=lambda record: record["path"])
     return records
 
 
-def build_manifest(root: Path) -> dict[str, Any]:
+def build_manifest(root: Path, expected_chain: DirectoryChain) -> dict[str, Any]:
     version_path = root / "VERSION"
-    version = read_regular_bytes(root, version_path, "VERSION").decode("utf-8").strip()
-    records = payload_records(root)
+    version = (
+        read_regular_bytes(root, version_path, "VERSION", expected_chain)
+        .decode("utf-8")
+        .strip()
+    )
+    records = payload_records(root, expected_chain)
     return {
         "schema_version": 1,
         "skill": SKILL_NAME,
@@ -256,9 +373,14 @@ def build_manifest(root: Path) -> dict[str, Any]:
     }
 
 
-def encoded_manifest(root: Path) -> bytes:
+def encoded_manifest(root: Path, expected_chain: DirectoryChain) -> bytes:
     return (
-        json.dumps(build_manifest(root), ensure_ascii=False, indent=2, sort_keys=False)
+        json.dumps(
+            build_manifest(root, expected_chain),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=False,
+        )
         + "\n"
     ).encode("utf-8")
 
@@ -277,10 +399,11 @@ def main() -> int:
         help="Fail if the committed manifest differs instead of rewriting it.",
     )
     args = parser.parse_args()
-    root = Path(os.path.abspath(args.skill_root))
+    root = lexical_absolute(args.skill_root)
     target = root / MANIFEST_NAME
     try:
-        manifest = build_manifest(root)
+        chain = validate_skill_root_chain(root)
+        manifest = build_manifest(root, chain)
         expected = (
             json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=False) + "\n"
         ).encode("utf-8")
@@ -289,7 +412,7 @@ def main() -> int:
         return 1
     if args.check:
         try:
-            actual = read_regular_bytes(root, target, MANIFEST_NAME)
+            actual = read_regular_bytes(root, target, MANIFEST_NAME, chain)
         except (OSError, ValueError) as exc:
             print(f"manifest check failed: {exc}")
             return 1
@@ -299,25 +422,83 @@ def main() -> int:
         print(f"manifest check passed: {len(manifest['files'])} files")
         return 0
     temporary_path: Path | None = None
+    temporary_identity: os.stat_result | None = None
+    temporary_descriptor: int | None = None
     try:
-        fd, temporary_name = tempfile.mkstemp(
+        parent_chain = ensure_safe_parent_chain(root, target, chain)
+        temporary_descriptor, temporary_name = tempfile.mkstemp(
             prefix=f".{MANIFEST_NAME}.", dir=root
         )
         temporary_path = Path(temporary_name)
-        with os.fdopen(fd, "wb") as handle:
+        temporary_identity = os.fstat(temporary_descriptor)
+        temporary_path_status = os.lstat(temporary_path)
+        reject_unsafe_status(temporary_identity, "temporary manifest")
+        reject_unsafe_status(temporary_path_status, "temporary manifest")
+        if (
+            temporary_identity.st_nlink != 1
+            or temporary_path_status.st_nlink != 1
+            or not directory_identity_matches(
+                temporary_identity, temporary_path_status
+            )
+        ):
+            raise ValueError("temporary manifest changed after creation")
+        ensure_safe_parent_chain(
+            root, target, chain, expected_parents=parent_chain
+        )
+        handle = os.fdopen(temporary_descriptor, "wb")
+        temporary_descriptor = None
+        with handle:
             handle.write(expected)
             handle.flush()
             os.fsync(handle.fileno())
+            temporary_identity = os.fstat(handle.fileno())
+        ensure_safe_parent_chain(
+            root, target, chain, expected_parents=parent_chain
+        )
+        temporary_path_status = os.lstat(temporary_path)
+        reject_unsafe_status(temporary_path_status, "temporary manifest")
+        if (
+            temporary_identity.st_nlink != 1
+            or temporary_path_status.st_nlink != 1
+            or not directory_identity_matches(
+                temporary_identity, temporary_path_status
+            )
+        ):
+            raise ValueError("temporary manifest changed before replacement")
+        try:
+            current_target = os.lstat(target)
+        except FileNotFoundError:
+            current_target = None
+        if current_target is not None:
+            reject_unsafe_status(current_target, MANIFEST_NAME)
         os.replace(temporary_path, target)
         temporary_path = None
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(f"manifest write failed: {exc}")
         return 1
     finally:
+        if temporary_descriptor is not None:
+            try:
+                os.close(temporary_descriptor)
+            except OSError:
+                pass
         if temporary_path is not None:
             try:
-                temporary_path.unlink()
-            except FileNotFoundError:
+                ensure_safe_parent_chain(
+                    root, target, chain, expected_parents=parent_chain
+                )
+                try:
+                    current_temporary = os.lstat(temporary_path)
+                except FileNotFoundError:
+                    current_temporary = None
+                if current_temporary is not None:
+                    reject_unsafe_status(current_temporary, "temporary manifest")
+                    if temporary_identity is None or not directory_identity_matches(
+                        temporary_identity, current_temporary
+                    ):
+                        raise ValueError("temporary manifest changed before cleanup")
+                    temporary_path.unlink()
+            except (OSError, ValueError):
                 pass
     print(f"wrote {MANIFEST_NAME}: {len(manifest['files'])} files")
     return 0

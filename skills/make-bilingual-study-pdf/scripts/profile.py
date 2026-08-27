@@ -4,11 +4,14 @@ from __future__ import annotations
 import copy
 import json
 import math
+import os
 import re
+import stat
+import tempfile
 from pathlib import Path
 from typing import Any
 
-from common import read_json, sha256_text, validate_json_value, write_json
+from common import json_loads_strict, read_json, sha256_text, validate_json_value
 from semantic_registry import (
     AUXILIARY_ROLES,
     GROUPING_MODES,
@@ -33,6 +36,291 @@ DOCX_FIELDS = (
     "header_label",
     "footer_label",
 )
+FROZEN_WORK_ARTIFACTS = ("manifest.json", "document-ir.json", "source-audit.json")
+WINDOWS_REPARSE_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400)
+
+
+def _is_reparse_point(status: os.stat_result) -> bool:
+    return bool(
+        getattr(status, "st_file_attributes", 0) & WINDOWS_REPARSE_ATTRIBUTE
+        or getattr(status, "st_reparse_tag", 0)
+    )
+
+
+def _reject_unsafe_work_status(
+    status: os.stat_result, label: str, *, require_directory: bool = False
+) -> None:
+    if stat.S_ISLNK(status.st_mode):
+        raise ValueError(f"symbolic links are not allowed for Profile binding: {label}")
+    if _is_reparse_point(status):
+        raise ValueError(f"reparse points are not allowed for Profile binding: {label}")
+    if require_directory:
+        if not stat.S_ISDIR(status.st_mode):
+            raise ValueError(f"Profile work path must be a regular directory: {label}")
+        return
+    if not stat.S_ISREG(status.st_mode):
+        raise ValueError(
+            f"Profile binding requires a regular file or absent target: {label}"
+        )
+    if status.st_nlink != 1:
+        raise ValueError(
+            f"multiply linked files are not allowed for Profile binding: {label}"
+        )
+
+
+def _same_directory_identity(left: os.stat_result, right: os.stat_result) -> bool:
+    return os.path.samestat(left, right) and stat.S_IFMT(left.st_mode) == stat.S_IFMT(
+        right.st_mode
+    )
+
+
+def _same_file_metadata(left: os.stat_result, right: os.stat_result) -> bool:
+    return (
+        os.path.samestat(left, right)
+        and stat.S_IFMT(left.st_mode) == stat.S_IFMT(right.st_mode)
+        and left.st_size == right.st_size
+        and left.st_mtime_ns == right.st_mtime_ns
+        and left.st_ctime_ns == right.st_ctime_ns
+        and left.st_nlink == right.st_nlink
+    )
+
+
+def _absolute_work_path(work_dir: Path) -> Path:
+    return Path(os.path.abspath(work_dir.expanduser()))
+
+
+def _work_directory_paths(work_dir: Path) -> tuple[Path, ...]:
+    parts = work_dir.parts
+    return tuple(Path(*parts[:index]) for index in range(1, len(parts) + 1))
+
+
+def _inspect_work_directory(
+    work_dir: Path,
+) -> tuple[Path, tuple[tuple[Path, os.stat_result], ...]]:
+    work_dir = _absolute_work_path(work_dir)
+    identities: list[tuple[Path, os.stat_result]] = []
+    try:
+        for current in _work_directory_paths(work_dir):
+            status = os.lstat(current)
+            _reject_unsafe_work_status(status, str(current), require_directory=True)
+            identities.append((current, status))
+    except OSError as exc:
+        raise ValueError(f"cannot inspect Profile work directory: {exc}") from exc
+    return work_dir, tuple(identities)
+
+
+def prepare_profile_work_directory(work_dir: Path) -> Path:
+    """Create WORK without following a symbolic-link or reparse-point ancestor."""
+    work_dir = _absolute_work_path(work_dir)
+    identities: list[tuple[Path, os.stat_result]] = []
+    for current in _work_directory_paths(work_dir):
+        try:
+            status = os.lstat(current)
+        except FileNotFoundError:
+            _recheck_work_directory(tuple(identities))
+            try:
+                os.mkdir(current)
+            except FileExistsError:
+                pass
+            except OSError as exc:
+                raise ValueError(
+                    f"cannot create Profile work directory safely: {exc}"
+                ) from exc
+            try:
+                status = os.lstat(current)
+            except OSError as exc:
+                raise ValueError(
+                    f"cannot inspect created Profile work directory: {exc}"
+                ) from exc
+        except OSError as exc:
+            raise ValueError(f"cannot inspect Profile work directory: {exc}") from exc
+        _reject_unsafe_work_status(status, str(current), require_directory=True)
+        identities.append((current, status))
+        _recheck_work_directory(tuple(identities))
+    return work_dir
+
+
+def _recheck_work_directory(
+    identities: tuple[tuple[Path, os.stat_result], ...],
+) -> None:
+    for path, expected_status in identities:
+        try:
+            current_status = os.lstat(path)
+            _reject_unsafe_work_status(
+                current_status, str(path), require_directory=True
+            )
+        except OSError as exc:
+            raise ValueError(f"Profile work directory changed: {exc}") from exc
+        if not _same_directory_identity(expected_status, current_status):
+            raise ValueError("Profile work directory identity changed during binding")
+
+
+def _profile_target_status(path: Path) -> os.stat_result | None:
+    try:
+        status = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError(f"cannot inspect Profile binding target: {exc}") from exc
+    _reject_unsafe_work_status(status, str(path))
+    return status
+
+
+def validate_profile_binding_target(work_dir: Path) -> Path:
+    """Validate WORK/profile.json without reading or following its directory entry."""
+    work_dir, directory_identities = _inspect_work_directory(work_dir)
+    _profile_target_status(work_dir / "profile.json")
+    _recheck_work_directory(directory_identities)
+    return work_dir
+
+
+def _open_profile_descriptor(path: Path) -> int:
+    if os.name == "nt":
+        import ctypes
+        import msvcrt
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = (
+            ctypes.c_wchar_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_void_p,
+        )
+        create_file.restype = ctypes.c_void_p
+        handle = create_file(
+            str(path),
+            0x80000000,
+            0x00000001,
+            None,
+            3,
+            0x00200000,
+            None,
+        )
+        if handle == ctypes.c_void_p(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
+        except BaseException:
+            kernel32.CloseHandle(ctypes.c_void_p(handle))
+            raise
+
+    flags = os.O_RDONLY
+    for optional_flag in ("O_CLOEXEC", "O_NOINHERIT", "O_NOFOLLOW", "O_NONBLOCK"):
+        flags |= getattr(os, optional_flag, 0)
+    return os.open(path, flags)
+
+
+def _read_bound_profile(
+    path: Path, expected_status: os.stat_result
+) -> dict[str, Any]:
+    before = _profile_target_status(path)
+    if before is None or not _same_file_metadata(expected_status, before):
+        raise ValueError("Profile binding changed before it could be read")
+    try:
+        descriptor = _open_profile_descriptor(path)
+    except OSError as exc:
+        raise ValueError(f"cannot open bound Profile safely: {exc}") from exc
+    try:
+        opened = os.fstat(descriptor)
+        after_open = _profile_target_status(path)
+        if after_open is None:
+            raise ValueError("Profile binding disappeared while opening")
+        _reject_unsafe_work_status(opened, str(path))
+        if not (
+            _same_file_metadata(before, opened)
+            and _same_file_metadata(opened, after_open)
+        ):
+            raise ValueError("Profile binding changed while opening")
+        chunks: list[bytes] = []
+        while chunk := os.read(descriptor, 1024 * 1024):
+            chunks.append(chunk)
+        finished = os.fstat(descriptor)
+        after_read = _profile_target_status(path)
+        if after_read is None or not (
+            _same_file_metadata(opened, finished)
+            and _same_file_metadata(finished, after_read)
+        ):
+            raise ValueError("Profile binding changed while reading")
+    finally:
+        os.close(descriptor)
+    try:
+        payload = b"".join(chunks).decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("bound Profile is not valid UTF-8") from exc
+    return validate_profile(json_loads_strict(payload))
+
+
+def _write_all(descriptor: int, payload: bytes) -> None:
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written <= 0:
+            raise OSError("failed to write bound Profile")
+        remaining = remaining[written:]
+
+
+def _atomic_replace_profile(
+    work_dir: Path,
+    path: Path,
+    payload: bytes,
+    expected_status: os.stat_result | None,
+    directory_identities: tuple[tuple[Path, os.stat_result], ...],
+) -> None:
+    descriptor = -1
+    temp_path: Path | None = None
+    temp_status: os.stat_result | None = None
+    try:
+        descriptor, raw_temp_path = tempfile.mkstemp(
+            prefix=".profile-", suffix=".tmp", dir=work_dir
+        )
+        temp_path = Path(raw_temp_path)
+        temp_status = os.fstat(descriptor)
+        _reject_unsafe_work_status(temp_status, str(temp_path))
+        _write_all(descriptor, payload)
+        os.fsync(descriptor)
+        finished = os.fstat(descriptor)
+        if finished.st_size != len(payload) or not os.path.samestat(
+            temp_status, finished
+        ):
+            raise ValueError("temporary Profile changed while writing")
+        os.close(descriptor)
+        descriptor = -1
+
+        current_temp = _profile_target_status(temp_path)
+        if current_temp is None or not _same_file_metadata(finished, current_temp):
+            raise ValueError("temporary Profile changed before publication")
+        _recheck_work_directory(directory_identities)
+        current_target = _profile_target_status(path)
+        if expected_status is None:
+            if current_target is not None:
+                raise ValueError("Profile binding target appeared during publication")
+        elif current_target is None or not _same_file_metadata(
+            expected_status, current_target
+        ):
+            raise ValueError("Profile binding changed before publication")
+
+        os.replace(temp_path, path)
+        published = _profile_target_status(path)
+        if published is None or not os.path.samestat(finished, published):
+            raise ValueError("published Profile identity does not match temporary file")
+        _recheck_work_directory(directory_identities)
+        temp_path = None
+    except OSError as exc:
+        raise ValueError(f"cannot publish bound Profile safely: {exc}") from exc
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if temp_path is not None and temp_status is not None:
+            try:
+                current_temp = os.lstat(temp_path)
+                if os.path.samestat(temp_status, current_temp):
+                    os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
 
 
 def canonical_profile_sha256(profile: dict[str, Any]) -> str:
@@ -456,37 +744,76 @@ def load_profile(reference: str | Path | None = None) -> dict[str, Any]:
     return validate_profile(read_json(path))
 
 
+def _bind_validated_profile(
+    work_dir: Path, requested: dict[str, Any], *, force: bool
+) -> dict[str, Any]:
+    work_dir, directory_identities = _inspect_work_directory(work_dir)
+    path = work_dir / "profile.json"
+    existing_status = _profile_target_status(path)
+    if existing_status is not None and not force:
+        existing = _read_bound_profile(path, existing_status)
+        _recheck_work_directory(directory_identities)
+        if canonical_profile_sha256(existing) == canonical_profile_sha256(requested):
+            return existing
+        raise ValueError(
+            "work directory is bound to a different profile; use --force only when "
+            "intentionally invalidating downstream artifacts"
+        )
+    payload = (
+        json.dumps(requested, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
+    ).encode("utf-8")
+    _atomic_replace_profile(
+        work_dir,
+        path,
+        payload,
+        existing_status,
+        directory_identities,
+    )
+    return requested
+
+
 def bind_profile(
     work_dir: Path, reference: str | Path | None = None, *, force: bool = False
 ) -> dict[str, Any]:
-    work_dir = work_dir.resolve()
-    path = work_dir / "profile.json"
-    requested = load_profile(reference)
-    if path.is_file():
-        existing = validate_profile(read_json(path))
-        if canonical_profile_sha256(existing) == canonical_profile_sha256(requested):
-            return existing
-        if not force:
-            raise ValueError(
-                "work directory is bound to a different profile; use --force only when "
-                "intentionally invalidating downstream artifacts"
-            )
-    write_json(path, requested)
-    return requested
+    work_dir = validate_profile_binding_target(work_dir)
+    return _bind_validated_profile(work_dir, load_profile(reference), force=force)
 
 
 def load_work_profile(
     work_dir: Path, reference: str | Path | None = None
 ) -> dict[str, Any]:
-    bound_path = work_dir.resolve() / "profile.json"
-    if reference is None and bound_path.is_file():
-        return validate_profile(read_json(bound_path))
-    requested = load_profile(reference)
-    if bound_path.is_file():
-        bound = validate_profile(read_json(bound_path))
-        if canonical_profile_sha256(bound) != canonical_profile_sha256(requested):
-            raise ValueError("profile override does not match the work directory binding")
-    return requested
+    work_dir, directory_identities = _inspect_work_directory(work_dir)
+    bound_path = work_dir / "profile.json"
+    bound_status = _profile_target_status(bound_path)
+    if bound_status is not None:
+        bound = _read_bound_profile(bound_path, bound_status)
+        _recheck_work_directory(directory_identities)
+        if reference is not None:
+            requested = load_profile(reference)
+            if canonical_profile_sha256(bound) != canonical_profile_sha256(requested):
+                raise ValueError(
+                    "profile override does not match the work directory binding"
+                )
+        return bound
+
+    frozen_artifacts: list[str] = []
+    for name in FROZEN_WORK_ARTIFACTS:
+        try:
+            os.lstat(work_dir / name)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise ValueError(f"cannot inspect frozen work artifacts: {exc}") from exc
+        frozen_artifacts.append(name)
+    _recheck_work_directory(directory_identities)
+    if frozen_artifacts:
+        raise ValueError(
+            "frozen work directory is missing profile.json "
+            f"(artifacts present: {', '.join(frozen_artifacts)})"
+        )
+    raise ValueError(
+        "work directory is not bound to a Profile; bind one explicitly for a new task"
+    )
 
 
 def target_text_pattern(profile: dict[str, Any]) -> re.Pattern[str]:

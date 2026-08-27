@@ -500,6 +500,270 @@ def read_release_version(failures: list[str]) -> str:
     return version
 
 
+YAML_SIMPLE_ESCAPES = {
+    "0": "\0",
+    "a": "\x07",
+    "b": "\b",
+    "t": "\t",
+    "n": "\n",
+    "v": "\x0b",
+    "f": "\f",
+    "r": "\r",
+    "e": "\x1b",
+    " ": " ",
+    '"': '"',
+    "/": "/",
+    "\\": "\\",
+    "N": "\x85",
+    "_": "\xa0",
+    "L": "\u2028",
+    "P": "\u2029",
+}
+
+
+def _decode_yaml_double_quoted(
+    text: str, start: int, *, label: str
+) -> tuple[str, int]:
+    """Decode one strict YAML double-quoted scalar without third-party code."""
+    if start >= len(text) or text[start] != '"':
+        raise ValueError(f"{label} has an invalid double-quoted string")
+    decoded: list[str] = []
+    index = start + 1
+    while index < len(text):
+        character = text[index]
+        if character == '"':
+            return "".join(decoded), index + 1
+        if character in "\r\n":
+            if (
+                character == "\r"
+                and index + 1 < len(text)
+                and text[index + 1] == "\n"
+            ):
+                index += 2
+            else:
+                index += 1
+            decoded.append("\n")
+            continue
+        if character != "\\":
+            if 0xD800 <= ord(character) <= 0xDFFF:
+                raise ValueError(
+                    f"{label} strings must not contain surrogate code points"
+                )
+            decoded.append(character)
+            index += 1
+            continue
+
+        index += 1
+        if index >= len(text):
+            raise ValueError(f"{label} has an unterminated escape sequence")
+        escape = text[index]
+        if escape in "\r\n":
+            if (
+                escape == "\r"
+                and index + 1 < len(text)
+                and text[index + 1] == "\n"
+            ):
+                index += 2
+            else:
+                index += 1
+            while index < len(text) and text[index] in " \t":
+                index += 1
+            continue
+        if escape in YAML_SIMPLE_ESCAPES:
+            decoded.append(YAML_SIMPLE_ESCAPES[escape])
+            index += 1
+            continue
+        widths = {"x": 2, "u": 4, "U": 8}
+        width = widths.get(escape)
+        if width is None:
+            raise ValueError(f"{label} has an invalid YAML escape sequence")
+        digits = text[index + 1 : index + 1 + width]
+        if len(digits) != width or not re.fullmatch(r"[0-9A-Fa-f]+", digits):
+            raise ValueError(f"{label} has an invalid Unicode escape sequence")
+        code_point = int(digits, 16)
+        if code_point > 0x10FFFF:
+            raise ValueError(f"{label} has an out-of-range Unicode escape")
+        if 0xD800 <= code_point <= 0xDFFF:
+            raise ValueError(
+                f"{label} strings must not contain surrogate code points"
+            )
+        decoded.append(chr(code_point))
+        index += width + 1
+    raise ValueError(f"{label} has an unterminated double-quoted string")
+
+
+def _skip_yaml_single_quoted(text: str, start: int, *, label: str) -> int:
+    """Return the first index after one YAML single-quoted scalar."""
+    index = start + 1
+    while index < len(text):
+        if text[index] != "'":
+            index += 1
+            continue
+        if index + 1 < len(text) and text[index + 1] == "'":
+            index += 2
+            continue
+        return index + 1
+    raise ValueError(f"{label} has an unterminated single-quoted string")
+
+
+def _yaml_indicator_has_separation(text: str, index: int) -> bool:
+    """Return whether a potential YAML indicator ends at a token boundary."""
+    next_index = index + 1
+    return (
+        next_index == len(text)
+        or text[next_index].isspace()
+        or text[next_index] in "[]{},"
+    )
+
+
+def _skip_yaml_node_property(text: str, start: int, *, label: str) -> int:
+    """Skip one anchor or tag property while leaving its node unconsumed."""
+    indicator = text[start]
+    if indicator == "!" and text.startswith("!<", start):
+        end = text.find(">", start + 2)
+        if end < 0:
+            raise ValueError(f"{label} has an unterminated verbatim tag")
+        return end + 1
+
+    index = start + 1
+    while (
+        index < len(text)
+        and not text[index].isspace()
+        and text[index] not in "[]{},"
+    ):
+        index += 1
+    if indicator == "&" and index == start + 1:
+        raise ValueError(f"{label} has an empty anchor property")
+    return index
+
+
+def _skip_yaml_alias(
+    text: str, start: int, *, label: str, flow_context: bool
+) -> int:
+    """Skip one alias node, which is itself a complete scalar-like node."""
+    index = start + 1
+    while (
+        index < len(text)
+        and not text[index].isspace()
+        and text[index] not in "[]{},"
+        and not (flow_context and text[index] == ":")
+    ):
+        index += 1
+    if index == start + 1:
+        raise ValueError(f"{label} has an empty alias")
+    return index
+
+
+def validate_yaml_quoted_strings(text: str, *, label: str) -> None:
+    """Validate strings that begin at YAML scalar-token boundaries."""
+    if any(0xD800 <= ord(character) <= 0xDFFF for character in text):
+        raise ValueError(f"{label} strings must not contain surrogate code points")
+
+    index = 0
+    flow_depth = 0
+    expects_token = True
+    plain_scalar_active = False
+    while index < len(text):
+        character = text[index]
+        if index == 0 and character == "\ufeff":
+            index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if character in "\r\n":
+            if (
+                character == "\r"
+                and index + 1 < len(text)
+                and text[index + 1] == "\n"
+            ):
+                index += 2
+            else:
+                index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if character in " \t":
+            index += 1
+            continue
+        if character == "#" and (index == 0 or text[index - 1].isspace()):
+            newline = text.find("\n", index + 1)
+            index = len(text) if newline < 0 else newline + 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if (
+            expects_token
+            and text.startswith("---", index)
+            and (
+                index + 3 == len(text)
+                or text[index + 3].isspace()
+            )
+        ):
+            index += 3
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if expects_token and character == "'":
+            index = _skip_yaml_single_quoted(text, index, label=label)
+            expects_token = False
+            plain_scalar_active = False
+            continue
+        if expects_token and character == '"':
+            _, index = _decode_yaml_double_quoted(text, index, label=label)
+            expects_token = False
+            plain_scalar_active = False
+            continue
+        if expects_token and character in "&!":
+            index = _skip_yaml_node_property(text, index, label=label)
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if expects_token and character == "*":
+            index = _skip_yaml_alias(
+                text, index, label=label, flow_context=bool(flow_depth)
+            )
+            expects_token = False
+            plain_scalar_active = False
+            continue
+        if expects_token and character in "[{":
+            flow_depth += 1
+            index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if flow_depth and character in "]}":
+            flow_depth -= 1
+            index += 1
+            expects_token = False
+            plain_scalar_active = False
+            continue
+        if flow_depth and character == ",":
+            index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if character == ":" and (
+            _yaml_indicator_has_separation(text, index)
+            or (flow_depth and not plain_scalar_active)
+        ):
+            index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        if (
+            expects_token
+            and character in "-?"
+            and _yaml_indicator_has_separation(text, index)
+        ):
+            index += 1
+            expects_token = True
+            plain_scalar_active = False
+            continue
+        expects_token = False
+        plain_scalar_active = True
+        index += 1
+
+
 def parse_string_scalar(raw: str, *, key: str, failures: list[str]) -> str:
     value = raw.strip()
     if not value:
@@ -517,12 +781,21 @@ def parse_string_scalar(raw: str, *, key: str, failures: list[str]) -> str:
             parsed = inner.replace("''", "'")
         else:
             try:
-                parsed = json.loads(value)
-            except json.JSONDecodeError:
+                parsed, end = _decode_yaml_double_quoted(
+                    value, 0, label=f"SKILL.md frontmatter {key}"
+                )
+                if end != len(value):
+                    raise ValueError("trailing content after quoted string")
+            except ValueError:
                 failures.append(f"SKILL.md frontmatter {key} has an invalid string")
                 return ""
         if not isinstance(parsed, str) or not parsed:
             failures.append(f"SKILL.md frontmatter {key} must be a non-empty string")
+            return ""
+        if any(0xD800 <= ord(character) <= 0xDFFF for character in parsed):
+            failures.append(
+                f"SKILL.md frontmatter {key} must not contain surrogate code points"
+            )
             return ""
         return parsed
     lowered = value.casefold()
@@ -552,6 +825,11 @@ def parse_string_scalar(raw: str, *, key: str, failures: list[str]) -> str:
     ):
         failures.append(f"SKILL.md frontmatter {key} must be a string scalar")
         return ""
+    if any(0xD800 <= ord(character) <= 0xDFFF for character in value):
+        failures.append(
+            f"SKILL.md frontmatter {key} must not contain surrogate code points"
+        )
+        return ""
     return value
 
 
@@ -575,6 +853,12 @@ def read_skill_metadata(failures: list[str]) -> tuple[str, str]:
     if not match:
         failures.append("SKILL.md has no valid leading YAML frontmatter block")
         return "", ""
+    try:
+        validate_yaml_quoted_strings(
+            match.group(1), label="SKILL.md frontmatter"
+        )
+    except ValueError as exc:
+        failures.append(str(exc))
     entries: dict[str, list[str]] = {"name": [], "description": []}
     for line_number, line in enumerate(match.group(1).splitlines(), start=2):
         if not line.strip() or line.lstrip().startswith("#"):
@@ -603,6 +887,20 @@ def read_skill_metadata(failures: list[str]) -> tuple[str, str]:
         else:
             parsed[key] = parse_string_scalar(values[0], key=key, failures=failures)
     return parsed["name"], parsed["description"]
+
+
+def validate_openai_metadata_unicode(failures: list[str]) -> None:
+    relative = "agents/openai.yaml"
+    failure_count = len(failures)
+    text = read_regular_utf8(relative, failures)
+    if text == "":
+        if len(failures) == failure_count:
+            failures.append(f"{relative} must not be empty")
+        return
+    try:
+        validate_yaml_quoted_strings(text, label=relative)
+    except ValueError as exc:
+        failures.append(str(exc))
 
 
 def github_tag_from_environment() -> str | None:
@@ -705,6 +1003,7 @@ def main() -> int:
         failures.append(f"expected version {args.expected_version!r}, got {version!r}")
 
     skill_name, _skill_description = read_skill_metadata(failures)
+    validate_openai_metadata_unicode(failures)
     if skill_name and skill_name != SKILL_NAME:
         failures.append(
             f"SKILL.md name mismatch: expected {SKILL_NAME!r}, got {skill_name!r}"

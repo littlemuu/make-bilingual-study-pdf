@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
@@ -1024,6 +1025,16 @@ def discover_inputs(source_pdf: Path, output_dir: Path) -> dict[str, Path | list
 
 
 def _prepare_work_dir(work_dir: Path, force: bool) -> None:
+    from profile import (
+        prepare_profile_work_directory,
+        validate_profile_binding_target,
+    )
+
+    try:
+        work_dir = prepare_profile_work_directory(work_dir)
+        validate_profile_binding_target(work_dir)
+    except ValueError as exc:
+        raise AdapterError(str(exc)) from exc
     collisions = [
         work_dir / "profile.json",
         work_dir / "manifest.json",
@@ -1039,10 +1050,9 @@ def _prepare_work_dir(work_dir: Path, force: bool) -> None:
             + ", ".join(path.name for path in existing)
             + "; use --force"
         )
-    work_dir.mkdir(parents=True, exist_ok=True)
     if force:
         for path in collisions:
-            if path.is_file():
+            if path.name != "profile.json" and path.is_file():
                 path.unlink()
         for directory in (
             "adapter-inputs",
@@ -1157,7 +1167,7 @@ def import_mineru(
 
     source_pdf = source_pdf.expanduser().resolve()
     output_dir = output_dir.expanduser().resolve()
-    work_dir = work_dir.expanduser().resolve()
+    work_dir = Path(os.path.abspath(work_dir.expanduser()))
     if not source_pdf.is_file() or source_pdf.suffix.lower() != ".pdf":
         raise AdapterError(f"input is not an existing PDF: {source_pdf}")
     if not 72 <= render_dpi <= 300:

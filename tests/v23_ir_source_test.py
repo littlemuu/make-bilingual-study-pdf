@@ -16,7 +16,12 @@ sys.path.insert(0, str(SCRIPTS))
 import pymupdf as fitz
 from PIL import Image
 
-from adapters.mineru import LARGE_RASTER_PAGE_AREA_RATIO, RASTER_COVERAGE_METHOD
+from adapters.base import AdapterError
+from adapters.mineru import (
+    LARGE_RASTER_PAGE_AREA_RATIO,
+    RASTER_COVERAGE_METHOD,
+    _prepare_work_dir,
+)
 from audit_source import audit_adapter_source
 from common import sha256_file, sha256_text, write_json, write_jsonl
 from document_ir import (
@@ -25,6 +30,7 @@ from document_ir import (
     expected_ir,
     validate_ir_against_sources,
 )
+from extract_pdf import prepare_output
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -111,6 +117,27 @@ class V23IrSourceTests(unittest.TestCase):
             profile_contract(self.profile),
         )
         self.assertEqual(byline["role"], "author-affiliation")
+
+    def test_source_callers_do_not_create_work_below_linked_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v23-work-link-") as temporary:
+            root = Path(temporary)
+            outside = root / "outside"
+            outside.mkdir()
+            linked = root / "linked"
+            try:
+                linked.symlink_to(outside, target_is_directory=True)
+            except OSError as exc:
+                self.skipTest(f"directory symbolic links unavailable: {exc}")
+
+            extract_work = linked / "extract-work"
+            with self.assertRaisesRegex(SystemExit, "symbolic links"):
+                prepare_output(extract_work, force=False)
+            self.assertFalse((outside / "extract-work").exists())
+
+            mineru_work = linked / "mineru-work"
+            with self.assertRaisesRegex(AdapterError, "symbolic links"):
+                _prepare_work_dir(mineru_work, force=False)
+            self.assertFalse((outside / "mineru-work").exists())
 
     def make_work(self, root: Path, *, manual: bool = False) -> tuple[Path, dict, list[dict]]:
         work_dir = root / "work"
@@ -558,6 +585,77 @@ class V23IrSourceTests(unittest.TestCase):
                         rejected.stderr,
                     )
 
+    def test_frozen_work_missing_bound_profile_fails_ir_and_source_audit(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="v23-ir-missing-profile-") as temporary:
+            work_dir, manifest, _blocks = self.make_work(Path(temporary))
+            (work_dir / "oracle.txt").write_text(
+                "Title Abstract Introduction Body paragraph References\f",
+                encoding="utf-8",
+            )
+            renders = work_dir / "renders"
+            renders.mkdir()
+            Image.new("RGB", (2, 3), "white").save(renders / "page-1.png")
+            contacts = work_dir / "source-contact"
+            contacts.mkdir()
+            contact_path = contacts / "contact-001.png"
+            Image.new("RGB", (2, 3), "white").save(contact_path)
+            manifest["source_contact_sheets"] = [
+                {
+                    "path": contact_path.relative_to(work_dir).as_posix(),
+                    "sha256": sha256_file(contact_path),
+                    "first_page": 1,
+                    "last_page": 1,
+                }
+            ]
+            write_json(work_dir / "manifest.json", manifest)
+            write_json(
+                work_dir / "document-ir.json", expected_ir(work_dir, self.profile)
+            )
+            (work_dir / "profile.json").unlink()
+
+            checked = subprocess.run(
+                [
+                    sys.executable,
+                    str(SCRIPT_DIR / "document_ir.py"),
+                    str(work_dir),
+                    "--profile",
+                    "academic-paper-en-zh",
+                    "--check",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(checked.returncode, 0, checked.stdout)
+            ir_report = json.loads(checked.stdout)
+            self.assertEqual(ir_report["status"], "failed")
+            self.assertIsNone(ir_report["profile"])
+            self.assertTrue(
+                any("missing profile.json" in item for item in ir_report["failures"]),
+                ir_report,
+            )
+
+            audited = subprocess.run(
+                [sys.executable, str(SCRIPT_DIR / "audit_source.py"), str(work_dir)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(audited.returncode, 0, audited.stdout)
+            source_report = json.loads(
+                (work_dir / "source-audit.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(source_report["status"], "failed")
+            self.assertIsNone(source_report["profile_sha256"])
+            self.assertIsNone(source_report["profile_file_sha256"])
+            self.assertTrue(
+                any(
+                    "missing profile.json" in item
+                    for item in source_report["failures"]
+                ),
+                source_report,
+            )
+
 
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)
@@ -572,10 +670,13 @@ def main() -> None:
                 "results": [
                     "schema V2 selector semantics and complete membership are deterministic",
                     "specific semantic patterns outrank generic paragraph/heading fallbacks",
+                    "source callers reject linked ancestors before creating WORK",
                     "unproved structural membership remains anchor-only",
                     "adapter evidence inputs/assets/dispositions freeze the IR",
                     "manual source review remains an explicit nonpassed audit status",
                     "Profile and CLI source-audit thresholds fail closed end to end",
+                    "frozen work cannot pass IR or source audit without its "
+                    "bound Profile",
                 ],
             },
             ensure_ascii=False,
