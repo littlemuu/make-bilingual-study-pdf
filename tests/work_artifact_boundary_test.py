@@ -447,7 +447,14 @@ class WorkArtifactBoundaryTests(unittest.TestCase):
                     env=environment,
                 )
                 self.assertNotEqual(extracted.returncode, 0)
-                self.assertIn("unsafe PDF input", extracted.stdout + extracted.stderr)
+                expected_extract_error = (
+                    "unsafe PDF input"
+                    if kind == "hardlink"
+                    else "unsafe source PDF or WORK path"
+                )
+                self.assertIn(
+                    expected_extract_error, extracted.stdout + extracted.stderr
+                )
                 self.assertFalse(os.path.lexists(root / "extract-work"))
                 self.assertEqual(outside.read_bytes(), payload)
 
