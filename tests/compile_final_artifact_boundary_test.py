@@ -32,6 +32,7 @@ from audit_docx import (  # noqa: E402
 from document_ir import expected_ir  # noqa: E402
 import compile_pdf as compile_pdf_module  # noqa: E402
 import pipeline as pipeline_module  # noqa: E402
+from job_state import evaluate_job  # noqa: E402
 from profile import canonical_profile_sha256, load_profile, profile_contract  # noqa: E402
 
 
@@ -1788,6 +1789,84 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             report = json.loads((output / "compile-audit.json").read_text(encoding="utf-8"))
             self.assertEqual(report["stage"], "docx-audit")
             self.assertEqual(paths["outside"].read_bytes(), outside)
+
+    def test_job_state_v1_and_v2_finalize_freeze_same_snapshot(self) -> None:
+        for schema, maker in (
+            ("v1", self.make_finalizable_work),
+            ("v2", self.make_docx_finalizable_work),
+        ):
+            with self.subTest(schema=schema), tempfile.TemporaryDirectory(
+                prefix=f"job-state-{schema}-"
+            ) as temp:
+                work, _compile = maker(Path(temp))
+                before = {
+                    path: path.read_bytes() for path in work.rglob("*") if path.is_file()
+                }
+                state = evaluate_job(work)
+                self.assertEqual(state.final_report["status"], "passed")
+                self.assertEqual(
+                    before,
+                    {
+                        path: path.read_bytes()
+                        for path in work.rglob("*")
+                        if path.is_file()
+                    },
+                )
+
+                completed = self.run_script("finalize_qa.py", work)
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                qa = json.loads(
+                    (work / "output" / "qa-report.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(qa, state.final_report)
+                self.assertEqual(
+                    evaluate_job(work).status_report["gate_statuses"]["qa_report"],
+                    "passed",
+                )
+
+    def test_job_state_changed_deliverable_stales_and_refinalizes_failed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-deliverable-") as temp:
+            work, compile_report = self.make_finalizable_work(Path(temp))
+            first = self.run_script("finalize_qa.py", work)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            (work / "output" / compile_report["pdf"]).write_bytes(b"changed")
+
+            state = evaluate_job(work)
+            self.assertEqual(
+                state.status_report["gate_statuses"]["visual_review"], "stale"
+            )
+            self.assertEqual(state.status_report["gate_statuses"]["qa_report"], "stale")
+            self.assertEqual(state.final_report["status"], "failed")
+
+            second = self.run_script("finalize_qa.py", work)
+            self.assertNotEqual(second.returncode, 0)
+            qa = json.loads(
+                (work / "output" / "qa-report.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(qa, state.final_report)
+
+    def test_job_state_missing_docx_and_compile_status_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-missing-docx-") as temp:
+            work, _compile = self.make_docx_finalizable_work(Path(temp))
+            (work / "output" / "docx-audit.json").unlink()
+            state = evaluate_job(work)
+            self.assertIsNone(state.status_report["gate_statuses"]["docx_audit"])
+            self.assertIn(
+                f"missing docx gate: {Path('output') / 'docx-audit.json'}",
+                state.final_report["failures"],
+            )
+
+        with tempfile.TemporaryDirectory(prefix="job-state-missing-status-") as temp:
+            work, _compile = self.make_finalizable_work(Path(temp))
+            path = work / "output" / "compile-audit.json"
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report.pop("automated_status")
+            path.write_text(json.dumps(report), encoding="utf-8")
+            state = evaluate_job(work)
+            self.assertEqual(
+                state.status_report["gate_statuses"]["compile_audit"], "invalid"
+            )
+            self.assertEqual(state.final_report["status"], "failed")
 
 
 if __name__ == "__main__":
