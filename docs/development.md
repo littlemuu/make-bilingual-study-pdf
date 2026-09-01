@@ -4,6 +4,29 @@ The repository targets Python 3.11.7 through `.python-version`. Runtime code has
 canonical location: `skills/make-bilingual-study-pdf/`. Repository tests import that
 subtree directly; do not copy runtime modules back to the repository root.
 
+## Current simplification boundary
+
+The approved architecture direction is documented in
+[`architecture-simplification.md`](architecture-simplification.md). Its first phase is
+behavior-preserving deduplication: one shared Job/Gate evaluator, one runtime artifact
+safety layer, one repository payload helper, and a staged CI/ruleset migration.
+
+This document still describes the **currently active** commands and gates. Until the
+corresponding implementation PRs merge and repository rulesets are migrated explicitly:
+
+- every existing required check remains required;
+- no workflow job or check context may be removed merely because the target CI design is
+  lighter;
+- Profile schema, output bytes, runtime dependencies, VERSION, release metadata, tag and
+  Release state must remain unchanged;
+- changes to live branch/tag rulesets require a separate, explicitly authorized settings
+  operation with recorded old values, new values, and rollback steps.
+
+A simplification PR must identify which duplicated implementation it removes and prove
+that content-integrity, freeze-chain, source-review, font, render and visual-review gates
+remain equivalent. It must not treat reduced test frequency as permission to weaken the
+release-candidate evidence.
+
 ## Create the environment
 
 On Linux or macOS:
@@ -90,9 +113,9 @@ current Skill, malformed/non-string/duplicate `SKILL.md` metadata, and invalid,
 duplicate, unquoted, mistyped, tokenless, or unsafe/missing-resource interface
 metadata, including policy and MCP dependency cases.
 
-## Run the quick baseline
+## Run the current full baseline
 
-After running the metadata gate above, run the remaining quick baseline from the
+After running the metadata gate above, run the remaining current baseline from the
 repository root:
 
 ```bash
@@ -128,6 +151,11 @@ Profile-binding plus unified work-artifact suites. Those suites exercise real
 junction/reparse-point and hard-link cases in addition to symbolic-link cases when the
 runner grants that privilege. A missing Python module or external executable is an
 environment failure, not a product pass.
+
+During the simplification phase, this full matrix remains the regression oracle even
+when the eventual PR fast lane will run a smaller subset. A refactor may add focused
+differential tests, but it may not delete an existing regression before its behavior is
+covered by the consolidated implementation.
 
 ## Installer parity gate
 
@@ -167,14 +195,20 @@ All four installed directories must:
 - leave the default automatic installation able to pass `pip check`, `self_test.py`,
   and all three Profile validations in a new venv outside the installed Skill.
 
-The GitHub Actions `Baseline` workflow runs the quick baseline, installer parity, and
-both schema V2 automated forward chains for pull requests and pushes to `main`. A
-separate Windows 2025 job runs the EOL, Profile-binding, installed-release,
+The GitHub Actions `Baseline` workflow currently runs the full baseline, installer
+parity, and both schema V2 automated forward chains for pull requests and pushes to
+`main`. A separate Windows 2025 job runs the EOL, Profile-binding, installed-release,
 repository-release, and generated work-artifact filesystem suites so hard-link and
 junction/reparse-point regressions are exercised on Windows. A focused macOS 15 job
 uses the hosted APFS filesystem to prove that case-only and NFC/NFD aliases are detected
 by physical directory identity before native or MinerU preflight can mutate `WORK`.
 The workflow does not use tag pushes as a release gate.
+
+The target layered design moves the expensive four-path installer proof and APFS alias
+suite away from every PR, but only after equivalent `main`, scheduled/manual, and
+release-candidate coverage exists and the required-check rulesets have been migrated
+without a gap. See the architecture simplification document for the approved trigger
+matrix.
 
 ## Default-branch release path
 

@@ -8,6 +8,24 @@
 安装路径。发布目标版本由
 [`VERSION`](skills/make-bilingual-study-pdf/VERSION) 唯一确定。
 
+## 当前工程路线
+
+2026-09-01 的架构复审确认：内容完整性、冻结绑定、扫描页人工门禁和逐页视觉复核
+属于产品核心，不得以“简化”为由削弱；当前需要减重的是重复状态评估、重复文件系统
+实现、V1/V2 兼容成本和过高频率的完整供应链验证。
+
+下一阶段先做**行为保持型减重**：统一 `status/finalize` 的 gate evaluator，收敛运行时
+与仓库维护工具的文件系统 helper，并把 CI 拆分为 PR 快车、`main` 完整车、定时/手动
+安全车和显式 release candidate。该阶段不迁移 Profile schema、不改变任何可见成品、
+不修改运行时依赖，也不创建 tag 或 Release。
+
+完整决策、不变量、施工包、非目标和完成定义见
+[`docs/architecture-simplification.md`](docs/architecture-simplification.md)。现有
+[`.github/PROJECT_HANDOFF.md`](.github/PROJECT_HANDOFF.md) 与
+[`.github/V2.3_ACCEPTANCE.md`](.github/V2.3_ACCEPTANCE.md) 继续保留为 V2.3 历史
+实施与验收证据；在减重实现合并前，当前 CI 和发布门禁仍按
+[`docs/development.md`](docs/development.md) 执行。
+
 ## 交付能力
 
 - 完整的中英对照 Markdown；
@@ -141,7 +159,8 @@ PDF 渲染以及逐页人工视觉复核。只有最终 `output/qa-report.json` 
 ## 仓库开发与发布校验
 
 开发、完整测试矩阵与发布门禁见
-[`docs/development.md`](docs/development.md)。V2.3 的历史验收证据保留在
+[`docs/development.md`](docs/development.md)。架构减重的当前要求见
+[`docs/architecture-simplification.md`](docs/architecture-simplification.md)。V2.3 的历史验收证据保留在
 [`.github/V2.3_ACCEPTANCE.md`](.github/V2.3_ACCEPTANCE.md)，不属于安装负载，也不参与后续版本元数据校验。
 
 从仓库根目录运行当前负载的标准库校验：
