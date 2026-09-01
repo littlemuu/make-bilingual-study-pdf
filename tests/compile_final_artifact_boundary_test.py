@@ -24,12 +24,13 @@ SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(SCRIPTS))
 
-from audit_source import current_source_audit_bindings  # noqa: E402
 from audit_docx import (  # noqa: E402
     validate_compile_docx_binding,
     validate_v2_compile_docx_binding,
 )
+from audit_source import current_source_audit_bindings  # noqa: E402
 from document_ir import expected_ir  # noqa: E402
+import compile_docx_pdf as compile_docx_pdf_module  # noqa: E402
 import compile_pdf as compile_pdf_module  # noqa: E402
 import pipeline as pipeline_module  # noqa: E402
 from job_state import evaluate_job  # noqa: E402
@@ -1867,6 +1868,73 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
                 state.status_report["gate_statuses"]["compile_audit"], "invalid"
             )
             self.assertEqual(state.final_report["status"], "failed")
+
+    def test_pipeline_status_accepts_standard_failed_compile_reports(self) -> None:
+        writers = (
+            (
+                "tex",
+                self.make_finalizable_work,
+                lambda work, path: compile_pdf_module.write_failure(
+                    path, work, "latexmk", ["synthetic compiler failure"]
+                ),
+            ),
+            (
+                "docx",
+                self.make_docx_finalizable_work,
+                lambda work, path: compile_docx_pdf_module._fail_work_binding(
+                    work,
+                    path,
+                    stage="docx-audit",
+                    message="synthetic binding failure",
+                    cause=ValueError("stale fixture"),
+                ),
+            ),
+        )
+        for backend, maker, write_failure in writers:
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory(
+                prefix=f"job-state-failed-{backend}-"
+            ) as temp:
+                work, _compile = maker(Path(temp))
+                audit = work / "output" / "compile-audit.json"
+                with redirect_stdout(io.StringIO()):
+                    if backend == "docx":
+                        with self.assertRaises(SystemExit):
+                            write_failure(work, audit)
+                    else:
+                        write_failure(work, audit)
+
+                completed = self.run_script("pipeline.py", "status", work)
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr
+                )
+                status = json.loads(completed.stdout)
+                self.assertEqual(status["gate_statuses"]["compile_audit"], "failed")
+                self.assertNotEqual(status["next_action"], "complete")
+                self.assertEqual(evaluate_job(work).final_report["status"], "failed")
+
+    def test_v1_docx_hash_marker_cannot_downgrade_to_tex_chain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-v1-docx-marker-") as temp:
+            work, _compile = self.make_docx_finalizable_work(Path(temp))
+            output = work / "output"
+            compile_path = output / "compile-audit.json"
+            compile_report = json.loads(compile_path.read_text(encoding="utf-8"))
+            compile_report.pop("docx")
+            compile_report.pop("docx_audit_bindings")
+            self.write_json(compile_path, compile_report)
+            visual_path = output / "visual-review.json"
+            visual = json.loads(visual_path.read_text(encoding="utf-8"))
+            visual["compile_audit_sha256"] = digest(compile_path.read_bytes())
+            self.write_json(visual_path, visual)
+
+            state = evaluate_job(work)
+            self.assertNotEqual(
+                state.status_report["gate_statuses"]["compile_audit"], "passed"
+            )
+            self.assertEqual(state.final_report["status"], "failed")
+            completed = self.run_script("finalize_qa.py", work)
+            self.assertNotEqual(completed.returncode, 0)
+            qa = json.loads((output / "qa-report.json").read_text(encoding="utf-8"))
+            self.assertEqual(qa["status"], "failed")
 
 
 if __name__ == "__main__":

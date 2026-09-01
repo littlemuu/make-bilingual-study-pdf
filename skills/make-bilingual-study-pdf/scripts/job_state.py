@@ -116,7 +116,8 @@ def evaluate_job(work_dir: Path) -> JobState:
         or "docx_audit_bindings" in compile_hint
     )
     requires_docx = schema_v2 or any(
-        key in compile_hint for key in ("docx", "docx_audit_bindings")
+        key in compile_hint
+        for key in ("docx", "docx_audit_sha256", "docx_audit_bindings")
     )
 
     def gate_status(name: str) -> str | None:
@@ -401,7 +402,7 @@ def evaluate_job(work_dir: Path) -> JobState:
             final_reports[label] = reports[name]
 
     compile_report = final_reports.get("compile", {})
-    if compile_report:
+    if compile_report.get("automated_status") == "passed":
         for label in ("docx", "pdf"):
             relative = compile_report.get(label)
             if relative is None and label == "docx":
