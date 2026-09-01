@@ -1936,6 +1936,35 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             qa = json.loads((output / "qa-report.json").read_text(encoding="utf-8"))
             self.assertEqual(qa["status"], "failed")
 
+    def test_pipeline_status_contains_invalid_passed_compile_metadata(self) -> None:
+        mutations = (
+            ("missing-pdf", lambda report: report.pop("pdf")),
+            ("unsafe-pdf", lambda report: report.__setitem__("pdf", "../escape.pdf")),
+            (
+                "malformed-contact",
+                lambda report: report.__setitem__("contact_sheets", [None]),
+            ),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory(
+                prefix=f"job-state-invalid-compile-{label}-"
+            ) as temp:
+                work, _compile = self.make_finalizable_work(Path(temp))
+                compile_path = work / "output" / "compile-audit.json"
+                compile_report = json.loads(compile_path.read_text(encoding="utf-8"))
+                mutate(compile_report)
+                self.write_json(compile_path, compile_report)
+
+                completed = self.run_script("pipeline.py", "status", work)
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr
+                )
+                status = json.loads(completed.stdout)
+                self.assertNotEqual(status["next_action"], "complete")
+                state = evaluate_job(work)
+                self.assertEqual(state.final_report["status"], "failed")
+                self.assertTrue(state.final_report["failures"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

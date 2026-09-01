@@ -403,45 +403,53 @@ def evaluate_job(work_dir: Path) -> JobState:
 
     compile_report = final_reports.get("compile", {})
     if compile_report.get("automated_status") == "passed":
-        for label in ("docx", "pdf"):
-            relative = compile_report.get(label)
-            if relative is None and label == "docx":
-                continue
-            path = work_relative_artifact_path(
-                output_dir, relative, label=f"compile {label} path"
-            )
-            if not _artifact_exists(path, work_dir):
-                failures.append(f"missing compiled {label}: {relative}")
-            elif (
-                not isinstance(compile_report.get(f"{label}_sha256"), str)
-                or sha256_artifact(path, boundary=work_dir)
-                != compile_report.get(f"{label}_sha256")
-            ):
-                failures.append(f"compiled {label} changed after automated compile QA")
-        contacts = compile_report.get("contact_sheets", [])
-        if isinstance(contacts, list):
-            for item in contacts:
-                if not isinstance(item, dict):
-                    raise ArtifactSafetyError(
-                        "compile contact-sheet entries must be objects"
-                    )
-                contact_path = work_relative_artifact_path(
-                    output_dir,
-                    item.get("path"),
-                    label="compile contact-sheet path",
+        try:
+            for label in ("docx", "pdf"):
+                relative = compile_report.get(label)
+                if relative is None and label == "docx":
+                    continue
+                path = work_relative_artifact_path(
+                    output_dir, relative, label=f"compile {label} path"
                 )
-                try:
-                    contact_path.relative_to(output_dir / "contact")
-                except ValueError as exc:
-                    raise ArtifactSafetyError(
-                        "compile contact-sheet paths must stay inside output/contact"
-                    ) from exc
-                if not _artifact_exists(contact_path, work_dir) or sha256_artifact(
-                    contact_path, boundary=work_dir
-                ) != item.get("sha256"):
+                if not _artifact_exists(path, work_dir):
+                    failures.append(f"missing compiled {label}: {relative}")
+                elif (
+                    not isinstance(compile_report.get(f"{label}_sha256"), str)
+                    or sha256_artifact(path, boundary=work_dir)
+                    != compile_report.get(f"{label}_sha256")
+                ):
                     failures.append(
-                        f"compiled contact sheet missing or changed: {item.get('path')}"
+                        f"compiled {label} changed after automated compile QA"
                     )
+            contacts = compile_report.get("contact_sheets", [])
+            if isinstance(contacts, list):
+                for item in contacts:
+                    if not isinstance(item, dict):
+                        raise ArtifactSafetyError(
+                            "compile contact-sheet entries must be objects"
+                        )
+                    contact_path = work_relative_artifact_path(
+                        output_dir,
+                        item.get("path"),
+                        label="compile contact-sheet path",
+                    )
+                    try:
+                        contact_path.relative_to(output_dir / "contact")
+                    except ValueError as exc:
+                        raise ArtifactSafetyError(
+                            "compile contact-sheet paths must stay inside output/contact"
+                        ) from exc
+                    if not _artifact_exists(
+                        contact_path, work_dir
+                    ) or sha256_artifact(
+                        contact_path, boundary=work_dir
+                    ) != item.get("sha256"):
+                        failures.append(
+                            "compiled contact sheet missing or changed: "
+                            f"{item.get('path')}"
+                        )
+        except (ArtifactSafetyError, KeyError, TypeError, ValueError, OSError) as exc:
+            failures.append(f"invalid compile deliverable metadata: {exc}")
 
     for label in ("source", "translation", "output", "visual"):
         report = final_reports.get(label)
