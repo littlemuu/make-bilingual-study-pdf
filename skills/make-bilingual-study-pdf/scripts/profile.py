@@ -21,6 +21,7 @@ from safe_artifacts import (
     prepare_artifact_directory,
     read_artifact_bytes,
     read_artifact_text,
+    recheck_artifact_file,
 )
 from semantic_registry import (
     AUXILIARY_ROLES,
@@ -137,7 +138,7 @@ def _profile_snapshot(work_dir: Path) -> ArtifactFileSnapshot:
 def prepare_profile_work_directory(work_dir: Path) -> Path:
     """Create WORK without following a symbolic-link or reparse-point ancestor."""
     try:
-        return prepare_artifact_directory(work_dir)
+        return prepare_artifact_directory(work_dir, mode=0o777)
     except ArtifactSafetyError as exc:
         raise _binding_error(exc) from exc
 
@@ -158,7 +159,12 @@ def _read_bound_profile(snapshot: ArtifactFileSnapshot) -> dict[str, Any]:
         payload = raw.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise ValueError("bound Profile is not valid UTF-8") from exc
-    return validate_profile(json_loads_strict(payload))
+    profile = validate_profile(json_loads_strict(payload))
+    try:
+        recheck_artifact_file(snapshot)
+    except ArtifactSafetyError as exc:
+        raise _binding_error(exc, reading=True) from exc
+    return profile
 
 
 def _atomic_replace_profile(snapshot: ArtifactFileSnapshot, payload: bytes) -> None:

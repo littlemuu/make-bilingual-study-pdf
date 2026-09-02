@@ -264,6 +264,57 @@ class ProfileBindingTests(unittest.TestCase):
         self.assertEqual(preserved.read_bytes(), original)
         self.assertEqual(profile_path.read_bytes(), b"intruder must not be read\n")
 
+    def test_post_validation_work_replacement_fails_closed(self) -> None:
+        for operation in ("load", "bind"):
+            with self.subTest(operation=operation):
+                work_dir = self.make_work(f"post-validation-{operation}")
+                profile_module.bind_profile(work_dir, "assignment-en-zh")
+                original = (work_dir / "profile.json").read_bytes()
+                moved = self.root / f"moved-post-validation-{operation}"
+                replacement = b"replacement work must remain unchanged\n"
+                real_validate = profile_module.validate_profile
+                calls = 0
+                swap_on_call = 1 if operation == "load" else 2
+
+                def replace_after_validation(value: object) -> dict:
+                    nonlocal calls
+                    validated = real_validate(value)
+                    calls += 1
+                    if calls == swap_on_call:
+                        work_dir.replace(moved)
+                        work_dir.mkdir()
+                        (work_dir / "profile.json").write_bytes(replacement)
+                    return validated
+
+                with mock.patch.object(
+                    profile_module,
+                    "validate_profile",
+                    side_effect=replace_after_validation,
+                ):
+                    with self.assertRaisesRegex(ValueError, "directory identity changed"):
+                        if operation == "load":
+                            profile_module.load_work_profile(work_dir)
+                        else:
+                            profile_module.bind_profile(
+                                work_dir, "assignment-en-zh"
+                            )
+                self.assertEqual((moved / "profile.json").read_bytes(), original)
+                self.assertEqual(
+                    (work_dir / "profile.json").read_bytes(), replacement
+                )
+
+    @unittest.skipIf(os.name == "nt", "POSIX umask regression")
+    def test_prepare_work_directory_preserves_baseline_mode(self) -> None:
+        parent = self.root / "mode-parent"
+        work_dir = parent / "work"
+        previous_umask = os.umask(0o022)
+        try:
+            profile_module.prepare_profile_work_directory(work_dir)
+        finally:
+            os.umask(previous_umask)
+        self.assertEqual(stat.S_IMODE(os.lstat(parent).st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE(os.lstat(work_dir).st_mode), 0o755)
+
     def test_profile_symlink_never_reads_or_rewrites_external_target(self) -> None:
         outside = self.root / "outside-profile.json"
         outside.write_bytes(b"outside bytes must remain unchanged\n")

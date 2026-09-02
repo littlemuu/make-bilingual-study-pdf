@@ -36,6 +36,7 @@ from safe_artifacts import (  # noqa: E402
     prepare_artifact_directory,
     read_artifact_bytes,
     read_artifact_text,
+    recheck_artifact_file,
     remove_artifact_file,
     sha256_artifact,
     validate_artifact_directory,
@@ -247,6 +248,7 @@ class SafeArtifactTests(unittest.TestCase):
         target = self.boundary / "versioned.bin"
         target.write_bytes(b"first")
         snapshot = inspect_artifact_file(target, boundary=self.boundary)
+        recheck_artifact_file(snapshot)
         self.assertEqual(
             read_artifact_bytes(
                 target, boundary=self.boundary, expected=snapshot
@@ -258,6 +260,7 @@ class SafeArtifactTests(unittest.TestCase):
         target.replace(preserved)
         target.write_bytes(b"intruder")
         for operation in (
+            lambda: recheck_artifact_file(snapshot),
             lambda: read_artifact_bytes(
                 target, boundary=self.boundary, expected=snapshot
             ),

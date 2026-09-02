@@ -483,6 +483,11 @@ def _expected_file_snapshot(
     return absolute, expected.status, expected.parents
 
 
+def recheck_artifact_file(snapshot: ArtifactFileSnapshot) -> None:
+    """Require a captured file and its ancestors to remain unchanged."""
+    _expected_file_snapshot(snapshot.path, snapshot.path.parent, snapshot)
+
+
 def _open_readonly_no_follow(path: Path) -> int:
     if os.name == "nt":
         import ctypes
