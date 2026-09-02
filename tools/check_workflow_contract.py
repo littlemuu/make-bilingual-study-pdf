@@ -140,6 +140,30 @@ def validate_contracts(root: Path = ROOT) -> None:
             raise ContractError(f"safety job {job_id} must not have a job-level if")
         if not _sequence(job.get("steps"), f"safety job {job_id} steps"):
             raise ContractError(f"safety job {job_id} must execute real steps")
+    fault_job = _mapping(safety_jobs["fault-injection"], "fault-injection job")
+    toolchain_step: dict[str, Any] | None = None
+    for step in _sequence(fault_job.get("steps"), "fault-injection steps"):
+        if isinstance(step, dict) and step.get("name") == "Install document toolchain":
+            toolchain_step = step
+            break
+    if toolchain_step is None:
+        raise ContractError("fault-injection must install its document toolchain")
+    toolchain_tokens = shlex.split(str(toolchain_step.get("run", "")))
+    if "apt-get" not in toolchain_tokens or "install" not in toolchain_tokens:
+        raise ContractError("fault-injection document toolchain must use apt-get install")
+    for package in (
+        "fontconfig",
+        "fonts-dejavu-core",
+        "fonts-noto-cjk",
+        "fonts-noto-core",
+        "libreoffice-writer",
+        "pandoc",
+        "poppler-utils",
+    ):
+        if package not in toolchain_tokens:
+            raise ContractError(
+                f"fault-injection must install its document toolchain: missing {package}"
+            )
     final_safety = _mapping(safety_jobs["safety-complete"], "safety-complete")
     if final_safety.get("name") != "safety":
         raise ContractError("safety-complete must emit the safety check context")
