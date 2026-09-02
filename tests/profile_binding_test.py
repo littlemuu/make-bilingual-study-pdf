@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import ast
+import hashlib
 import json
 import os
 import stat
@@ -34,6 +36,39 @@ class ProfileBindingTests(unittest.TestCase):
         work_dir.mkdir()
         return work_dir
 
+    def test_profile_source_has_no_low_level_filesystem_implementation(self) -> None:
+        source = (SCRIPTS / "profile.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        forbidden_imports = {"stat", "tempfile"}
+        imported = {
+            alias.name.split(".", 1)[0]
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        self.assertTrue(forbidden_imports.isdisjoint(imported), imported)
+
+        forbidden_os_calls = {
+            "lstat",
+            "open",
+            "fstat",
+            "read",
+            "write",
+            "replace",
+            "unlink",
+            "mkdir",
+        }
+        found = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "os"
+            and node.func.attr in forbidden_os_calls
+        }
+        self.assertEqual(found, set())
+
     def test_new_task_binds_before_runtime_load_and_explicit_load_cannot_fallback(
         self,
     ) -> None:
@@ -55,6 +90,24 @@ class ProfileBindingTests(unittest.TestCase):
             "assignment-en-zh",
         )
         self.assertEqual(list(work_dir.glob(".profile-*.tmp")), [])
+
+    def test_all_profiles_bind_with_frozen_exact_bytes(self) -> None:
+        expected_sha256 = {
+            "assignment-en-zh": "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2",
+            "academic-paper-en-zh": "87e6fff952d19f25fc5acc00024c68d1eb3d91556e17b194b063278c20283ed0",
+            "lecture-notes-en-zh": "06145025ddec4d301c3738225e314964b970dea7a85f6243fba3b6a13e6447bb",
+        }
+        for index, (reference, expected_hash) in enumerate(expected_sha256.items()):
+            with self.subTest(reference=reference):
+                work_dir = self.make_work(f"exact-{index}")
+                bound = profile_module.bind_profile(work_dir, reference)
+                expected = (
+                    json.dumps(bound, ensure_ascii=False, indent=2, allow_nan=False)
+                    + "\n"
+                ).encode("utf-8")
+                actual = (work_dir / "profile.json").read_bytes()
+                self.assertEqual(actual, expected)
+                self.assertEqual(hashlib.sha256(actual).hexdigest(), expected_hash)
 
     def test_each_frozen_artifact_requires_the_bound_copy(self) -> None:
         for index, artifact in enumerate(profile_module.FROZEN_WORK_ARTIFACTS):
@@ -78,6 +131,12 @@ class ProfileBindingTests(unittest.TestCase):
         profile_module.bind_profile(work_dir, "assignment-en-zh")
         profile_path = work_dir / "profile.json"
         original = profile_path.read_bytes()
+        original_status = os.lstat(profile_path)
+
+        same = profile_module.bind_profile(work_dir, "assignment-en-zh")
+        self.assertEqual(same["id"], "assignment-en-zh")
+        self.assertEqual(profile_path.read_bytes(), original)
+        self.assertTrue(os.path.samestat(original_status, os.lstat(profile_path)))
 
         with self.assertRaisesRegex(ValueError, "different profile"):
             profile_module.bind_profile(work_dir, "academic-paper-en-zh")
@@ -94,6 +153,12 @@ class ProfileBindingTests(unittest.TestCase):
         self.assertEqual(recovered["id"], "academic-paper-en-zh")
         published = json.loads(profile_path.read_text(encoding="utf-8"))
         self.assertEqual(published["id"], recovered["id"])
+        self.assertEqual(
+            profile_path.read_bytes(),
+            (json.dumps(recovered, ensure_ascii=False, indent=2) + "\n").encode(
+                "utf-8"
+            ),
+        )
         self.assertTrue(stat.S_ISREG(os.lstat(profile_path).st_mode))
         self.assertEqual(os.lstat(profile_path).st_nlink, 1)
         self.assertEqual(list(work_dir.glob(".profile-*.tmp")), [])
@@ -107,6 +172,97 @@ class ProfileBindingTests(unittest.TestCase):
         self.assertEqual(
             profile_module.load_work_profile(work_dir)["id"], "assignment-en-zh"
         )
+
+    def test_force_rejects_target_appearance_during_publication(self) -> None:
+        work_dir = self.make_work("appearing-target")
+        profile_path = work_dir / "profile.json"
+        real_create = safe_artifacts._create_temporary
+
+        def appear(target: Path, *, preserve_suffix: bool) -> tuple:
+            profile_path.write_bytes(b"intruder must remain\n")
+            return real_create(target, preserve_suffix=preserve_suffix)
+
+        with mock.patch.object(
+            safe_artifacts, "_create_temporary", side_effect=appear
+        ):
+            with self.assertRaisesRegex(ValueError, "target appeared during publication"):
+                profile_module.bind_profile(
+                    work_dir, "assignment-en-zh", force=True
+                )
+        self.assertEqual(profile_path.read_bytes(), b"intruder must remain\n")
+        self.assertEqual(list(work_dir.glob(".profile.json-*.tmp")), [])
+
+    def test_force_rejects_target_replacement_during_publication(self) -> None:
+        work_dir = self.make_work("replaced-target")
+        profile_module.bind_profile(work_dir, "assignment-en-zh")
+        profile_path = work_dir / "profile.json"
+        original = profile_path.read_bytes()
+        preserved = self.root / "preserved-profile.json"
+        real_create = safe_artifacts._create_temporary
+
+        def replace_target(target: Path, *, preserve_suffix: bool) -> tuple:
+            profile_path.replace(preserved)
+            profile_path.write_bytes(b"intruder must remain\n")
+            return real_create(target, preserve_suffix=preserve_suffix)
+
+        with mock.patch.object(
+            safe_artifacts, "_create_temporary", side_effect=replace_target
+        ):
+            with self.assertRaisesRegex(ValueError, "changed before publication"):
+                profile_module.bind_profile(
+                    work_dir, "academic-paper-en-zh", force=True
+                )
+        self.assertEqual(preserved.read_bytes(), original)
+        self.assertEqual(profile_path.read_bytes(), b"intruder must remain\n")
+        self.assertEqual(list(work_dir.glob(".profile.json-*.tmp")), [])
+
+    def test_force_rejects_work_directory_replacement_during_publication(self) -> None:
+        work_dir = self.make_work("replaced-work")
+        profile_module.bind_profile(work_dir, "assignment-en-zh")
+        original = (work_dir / "profile.json").read_bytes()
+        moved = self.root / "moved-work"
+        real_create = safe_artifacts._create_temporary
+
+        def replace_directory(target: Path, *, preserve_suffix: bool) -> tuple:
+            work_dir.replace(moved)
+            work_dir.mkdir()
+            (work_dir / "profile.json").write_bytes(b"intruder must remain\n")
+            return real_create(target, preserve_suffix=preserve_suffix)
+
+        with mock.patch.object(
+            safe_artifacts, "_create_temporary", side_effect=replace_directory
+        ):
+            with self.assertRaisesRegex(ValueError, "directory identity changed"):
+                profile_module.bind_profile(
+                    work_dir, "academic-paper-en-zh", force=True
+                )
+        self.assertEqual((moved / "profile.json").read_bytes(), original)
+        self.assertEqual(
+            (work_dir / "profile.json").read_bytes(), b"intruder must remain\n"
+        )
+        self.assertEqual(list(work_dir.glob(".profile.json-*.tmp")), [])
+
+    def test_load_rejects_binding_replacement_before_read(self) -> None:
+        work_dir = self.make_work("replaced-before-read")
+        profile_module.bind_profile(work_dir, "assignment-en-zh")
+        profile_path = work_dir / "profile.json"
+        original = profile_path.read_bytes()
+        preserved = self.root / "preserved-before-read.json"
+        real_snapshot = profile_module._profile_snapshot
+
+        def replace_after_snapshot(value: Path) -> safe_artifacts.ArtifactFileSnapshot:
+            snapshot = real_snapshot(value)
+            profile_path.replace(preserved)
+            profile_path.write_bytes(b"intruder must not be read\n")
+            return snapshot
+
+        with mock.patch.object(
+            profile_module, "_profile_snapshot", side_effect=replace_after_snapshot
+        ):
+            with self.assertRaisesRegex(ValueError, "changed before it could be read"):
+                profile_module.load_work_profile(work_dir)
+        self.assertEqual(preserved.read_bytes(), original)
+        self.assertEqual(profile_path.read_bytes(), b"intruder must not be read\n")
 
     def test_profile_symlink_never_reads_or_rewrites_external_target(self) -> None:
         outside = self.root / "outside-profile.json"

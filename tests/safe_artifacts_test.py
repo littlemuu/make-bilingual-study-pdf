@@ -29,6 +29,7 @@ from safe_artifacts import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_text,
     clear_artifact_directory,
+    inspect_artifact_file,
     lexical_absolute_path,
     lexical_paths_overlap,
     portable_artifact_basename,
@@ -241,6 +242,189 @@ class SafeArtifactTests(unittest.TestCase):
                 atomic_write_bytes(target, b"replacement", boundary=self.boundary)
         self.assertEqual(target.read_bytes(), b"original")
         self.assertFalse(list(self.boundary.glob(f".{target.name}-*.tmp")))
+
+    def test_snapshot_read_and_publish_reject_target_version_changes(self) -> None:
+        target = self.boundary / "versioned.bin"
+        target.write_bytes(b"first")
+        snapshot = inspect_artifact_file(target, boundary=self.boundary)
+        self.assertEqual(
+            read_artifact_bytes(
+                target, boundary=self.boundary, expected=snapshot
+            ),
+            b"first",
+        )
+
+        preserved = self.temp / "preserved.bin"
+        target.replace(preserved)
+        target.write_bytes(b"intruder")
+        for operation in (
+            lambda: read_artifact_bytes(
+                target, boundary=self.boundary, expected=snapshot
+            ),
+            lambda: atomic_write_bytes(
+                target, b"replacement", boundary=self.boundary, expected=snapshot
+            ),
+        ):
+            with self.subTest(operation=operation):
+                with self.assertRaisesRegex(ArtifactSafetyError, "changed after inspection"):
+                    operation()
+        self.assertEqual(preserved.read_bytes(), b"first")
+        self.assertEqual(target.read_bytes(), b"intruder")
+        self.assertFalse(list(self.boundary.glob(".versioned.bin-*.tmp")))
+
+    def test_missing_snapshot_rejects_target_appearance(self) -> None:
+        target = self.boundary / "appeared.bin"
+        snapshot = inspect_artifact_file(
+            target, boundary=self.boundary, allow_missing=True
+        )
+        self.assertFalse(snapshot.exists)
+        target.write_bytes(b"intruder")
+        with self.assertRaisesRegex(ArtifactSafetyError, "appeared after inspection"):
+            atomic_write_bytes(
+                target, b"replacement", boundary=self.boundary, expected=snapshot
+            )
+        self.assertEqual(target.read_bytes(), b"intruder")
+        self.assertFalse(list(self.boundary.glob(".appeared.bin-*.tmp")))
+
+    def test_existing_snapshot_rejects_target_disappearance(self) -> None:
+        target = self.boundary / "disappeared.bin"
+        target.write_bytes(b"original")
+        snapshot = inspect_artifact_file(target, boundary=self.boundary)
+        preserved = self.temp / "preserved-disappeared.bin"
+        target.replace(preserved)
+
+        with self.assertRaisesRegex(ArtifactSafetyError, "changed after inspection"):
+            atomic_write_bytes(
+                target, b"replacement", boundary=self.boundary, expected=snapshot
+            )
+        self.assertFalse(target.exists())
+        self.assertEqual(preserved.read_bytes(), b"original")
+        self.assertFalse(list(self.boundary.glob(".disappeared.bin-*.tmp")))
+
+    def test_publish_rechecks_target_after_temporary_fsync(self) -> None:
+        target = self.boundary / "late-change.bin"
+        target.write_bytes(b"original")
+        preserved = self.temp / "preserved-late-change.bin"
+        real_finish = safe_artifacts._finish_temporary
+
+        def change_after_finish(*args: object, **kwargs: object) -> os.stat_result:
+            finished = real_finish(*args, **kwargs)
+            target.replace(preserved)
+            target.write_bytes(b"intruder")
+            return finished
+
+        with mock.patch.object(
+            safe_artifacts, "_finish_temporary", side_effect=change_after_finish
+        ):
+            with self.assertRaisesRegex(ArtifactSafetyError, "changed before publication"):
+                atomic_write_bytes(target, b"replacement", boundary=self.boundary)
+        self.assertEqual(preserved.read_bytes(), b"original")
+        self.assertEqual(target.read_bytes(), b"intruder")
+        self.assertFalse(list(self.boundary.glob(".late-change.bin-*.tmp")))
+
+    def test_publish_rejects_temporary_identity_or_hardlink_change(self) -> None:
+        target = self.boundary / "temporary-change.bin"
+        target.write_bytes(b"original")
+        outside = self.temp / "outside.bin"
+        outside.write_bytes(b"outside")
+        outside_link = self.temp / "outside-link.bin"
+        os.link(outside, outside_link)
+        outside_status = os.lstat(outside)
+        real_status = safe_artifacts._artifact_file_status
+
+        def spoof_temporary(path: Path) -> os.stat_result | None:
+            if path.parent == self.boundary and path.name.startswith(
+                ".temporary-change.bin-"
+            ):
+                return outside_status
+            return real_status(path)
+
+        with mock.patch.object(
+            safe_artifacts, "_artifact_file_status", side_effect=spoof_temporary
+        ):
+            with self.assertRaisesRegex(ArtifactSafetyError, "temporary artifact changed"):
+                atomic_write_bytes(target, b"replacement", boundary=self.boundary)
+        self.assertEqual(target.read_bytes(), b"original")
+        self.assertEqual(outside.read_bytes(), b"outside")
+        self.assertEqual(outside_link.read_bytes(), b"outside")
+        self.assertFalse(list(self.boundary.glob(".temporary-change.bin-*.tmp")))
+
+    def test_snapshot_rejects_parent_identity_change(self) -> None:
+        nested = self.boundary / "nested"
+        nested.mkdir()
+        target = nested / "artifact.bin"
+        target.write_bytes(b"original")
+        snapshot = inspect_artifact_file(target, boundary=self.boundary)
+        moved = self.temp / "moved-nested"
+        nested.replace(moved)
+        nested.mkdir()
+        intruder = nested / "artifact.bin"
+        intruder.write_bytes(b"intruder")
+
+        with self.assertRaisesRegex(ArtifactSafetyError, "directory identity changed"):
+            atomic_write_bytes(
+                target, b"replacement", boundary=self.boundary, expected=snapshot
+            )
+        self.assertEqual((moved / "artifact.bin").read_bytes(), b"original")
+        self.assertEqual(intruder.read_bytes(), b"intruder")
+        self.assertFalse(list(nested.glob(".artifact.bin-*.tmp")))
+
+    def test_stable_read_rejects_disappearance_while_opening_or_reading(self) -> None:
+        target = self.boundary / "read-race.bin"
+        target.write_bytes(b"stable bytes")
+        real_status = safe_artifacts._artifact_file_status
+
+        for missing_call, phrase in ((2, "while opening"), (3, "while reading")):
+            with self.subTest(phase=phrase):
+                calls = 0
+
+                def disappear(path: Path) -> os.stat_result | None:
+                    nonlocal calls
+                    if path == target:
+                        calls += 1
+                        if calls == missing_call:
+                            return None
+                    return real_status(path)
+
+                with mock.patch.object(
+                    safe_artifacts,
+                    "_artifact_file_status",
+                    side_effect=disappear,
+                ):
+                    with self.assertRaisesRegex(ArtifactSafetyError, phrase):
+                        read_artifact_bytes(target, boundary=self.boundary)
+                self.assertEqual(target.read_bytes(), b"stable bytes")
+
+    def test_short_writes_complete_and_no_progress_preserves_original(self) -> None:
+        target = self.boundary / "short-write.bin"
+        target.write_bytes(b"original")
+        payload = b"replacement-payload"
+        real_write = os.write
+
+        def short_write(descriptor: int, data: object) -> int:
+            view = memoryview(data)
+            return real_write(descriptor, view[: max(1, len(view) // 2)])
+
+        with mock.patch.object(safe_artifacts.os, "write", side_effect=short_write):
+            atomic_write_bytes(target, payload, boundary=self.boundary)
+        self.assertEqual(target.read_bytes(), payload)
+
+        with mock.patch.object(safe_artifacts.os, "write", return_value=0):
+            with self.assertRaisesRegex(ArtifactSafetyError, "made no progress"):
+                atomic_write_bytes(target, b"never-published", boundary=self.boundary)
+        self.assertEqual(target.read_bytes(), payload)
+        self.assertFalse(list(self.boundary.glob(".short-write.bin-*.tmp")))
+
+    def test_fsync_failure_preserves_original_and_cleans_temp(self) -> None:
+        target = self.boundary / "fsync.bin"
+        target.write_bytes(b"original")
+        with mock.patch.object(
+            safe_artifacts.os, "fsync", side_effect=OSError("injected fsync failure")
+        ):
+            with self.assertRaisesRegex(ArtifactSafetyError, "cannot publish"):
+                atomic_write_bytes(target, b"replacement", boundary=self.boundary)
+        self.assertEqual(target.read_bytes(), b"original")
+        self.assertFalse(list(self.boundary.glob(".fsync.bin-*.tmp")))
 
     def test_atomic_copy_hash_and_size_use_validated_streams(self) -> None:
         source = self.temp / "source.bin"
