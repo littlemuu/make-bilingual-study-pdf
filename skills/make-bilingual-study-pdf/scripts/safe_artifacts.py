@@ -48,6 +48,19 @@ class _EntrySnapshot:
     status: os.stat_result
 
 
+@dataclass(frozen=True)
+class ArtifactFileSnapshot:
+    """Opaque file and ancestor identities captured for a later safe operation."""
+
+    path: Path
+    status: os.stat_result | None
+    parents: tuple[_EntrySnapshot, ...]
+
+    @property
+    def exists(self) -> bool:
+        return self.status is not None
+
+
 def lexical_absolute_path(path: str | os.PathLike[str]) -> Path:
     """Return an expanded absolute path without following filesystem links."""
     return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
@@ -436,6 +449,45 @@ def validate_artifact_file(
     return absolute
 
 
+def inspect_artifact_file(
+    path: str | os.PathLike[str],
+    *,
+    boundary: str | os.PathLike[str] | None = None,
+    allow_missing: bool = False,
+) -> ArtifactFileSnapshot:
+    """Capture a regular file and its ancestors for a later read or publication."""
+    absolute, status, parents = _inspect_file(
+        path, boundary=boundary, allow_missing=allow_missing
+    )
+    return ArtifactFileSnapshot(absolute, status, parents)
+
+
+def _expected_file_snapshot(
+    path: str | os.PathLike[str],
+    boundary: str | os.PathLike[str] | None,
+    expected: ArtifactFileSnapshot,
+) -> tuple[Path, os.stat_result | None, tuple[_EntrySnapshot, ...]]:
+    if not isinstance(expected, ArtifactFileSnapshot):
+        raise TypeError("expected artifact version must be an ArtifactFileSnapshot")
+    absolute, _ = _bounded_path(path, boundary, allow_boundary=False)
+    if absolute != expected.path:
+        raise ArtifactSafetyError("artifact snapshot belongs to a different path")
+    _recheck_directories(expected.parents)
+    current = _artifact_file_status(absolute)
+    if expected.status is None:
+        if current is not None:
+            raise ArtifactSafetyError("artifact target appeared after inspection")
+    elif current is None or not _same_file(expected.status, current):
+        raise ArtifactSafetyError("artifact target changed after inspection")
+    _recheck_directories(expected.parents)
+    return absolute, expected.status, expected.parents
+
+
+def recheck_artifact_file(snapshot: ArtifactFileSnapshot) -> None:
+    """Require a captured file and its ancestors to remain unchanged."""
+    _expected_file_snapshot(snapshot.path, snapshot.path.parent, snapshot)
+
+
 def _open_readonly_no_follow(path: Path) -> int:
     if os.name == "nt":
         import ctypes
@@ -480,13 +532,21 @@ def _consume_artifact_chunks(
     path: str | os.PathLike[str],
     *,
     boundary: str | os.PathLike[str] | None = None,
+    expected: ArtifactFileSnapshot | None = None,
     consume: Callable[[bytes], None],
 ) -> int:
     """Feed stable file chunks to an internal consumer and return total bytes."""
-    absolute, expected, parent_identities = _inspect_file(
-        path, boundary=boundary, allow_missing=False
-    )
-    assert expected is not None
+    if expected is None:
+        absolute, expected_status, parent_identities = _inspect_file(
+            path, boundary=boundary, allow_missing=False
+        )
+    else:
+        absolute, expected_status, parent_identities = _expected_file_snapshot(
+            path, boundary, expected
+        )
+        if expected_status is None:
+            raise ArtifactSafetyError(f"artifact file does not exist: {absolute}")
+    assert expected_status is not None
     try:
         descriptor = _open_readonly_no_follow(absolute)
     except OSError as exc:
@@ -496,7 +556,7 @@ def _consume_artifact_chunks(
         _require_regular_file(opened, absolute)
         after_open = _artifact_file_status(absolute)
         if after_open is None or not (
-            _same_file(expected, opened) and _same_file(opened, after_open)
+            _same_file(expected_status, opened) and _same_file(opened, after_open)
         ):
             raise ArtifactSafetyError("artifact file changed while opening")
         size = 0
@@ -519,10 +579,13 @@ def read_artifact_bytes(
     path: str | os.PathLike[str],
     *,
     boundary: str | os.PathLike[str] | None = None,
+    expected: ArtifactFileSnapshot | None = None,
 ) -> bytes:
     """Read a validated file while detecting entry replacement during the read."""
     chunks: list[bytes] = []
-    _consume_artifact_chunks(path, boundary=boundary, consume=chunks.append)
+    _consume_artifact_chunks(
+        path, boundary=boundary, expected=expected, consume=chunks.append
+    )
     return b"".join(chunks)
 
 
@@ -531,10 +594,13 @@ def read_artifact_text(
     *,
     boundary: str | os.PathLike[str] | None = None,
     encoding: str = "utf-8",
+    expected: ArtifactFileSnapshot | None = None,
 ) -> str:
     """Read and decode a validated artifact file."""
     try:
-        return read_artifact_bytes(path, boundary=boundary).decode(encoding)
+        return read_artifact_bytes(
+            path, boundary=boundary, expected=expected
+        ).decode(encoding)
     except UnicodeError as exc:
         raise ArtifactSafetyError(
             f"artifact file is not valid {encoding}: {exc}"
@@ -595,8 +661,12 @@ def _fsync_directory(path: Path, expected: os.stat_result) -> None:
 
 
 def _prepare_publication(
-    path: str | os.PathLike[str], boundary: str | os.PathLike[str]
+    path: str | os.PathLike[str],
+    boundary: str | os.PathLike[str],
+    expected: ArtifactFileSnapshot | None = None,
 ) -> tuple[Path, os.stat_result | None, tuple[_EntrySnapshot, ...]]:
+    if expected is not None:
+        return _expected_file_snapshot(path, boundary, expected)
     absolute, _ = _bounded_path(path, boundary, allow_boundary=False)
     _, parent_identities = _inspect_directory(absolute.parent, boundary=boundary)
     expected_target = _artifact_file_status(absolute)
@@ -704,13 +774,14 @@ def atomic_write_bytes(
     payload: bytes | bytearray | memoryview,
     *,
     boundary: str | os.PathLike[str],
+    expected: ArtifactFileSnapshot | None = None,
 ) -> Path:
     """Fsync a same-directory temporary file and atomically replace a target."""
     if not isinstance(payload, (bytes, bytearray, memoryview)):
         raise TypeError("artifact payload must be bytes-like")
     data = bytes(payload)
     absolute, expected_target, parent_identities = _prepare_publication(
-        path, boundary
+        path, boundary, expected
     )
 
     descriptor = -1

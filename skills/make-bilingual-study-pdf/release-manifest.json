@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "afcf1ca3c62dc52a6c51853d3160a57a04625c879cb98d8a70df621ccdde5c99",
+  "tree_sha256": "23d186edbb495d7afd9d07d557c57a42155870e90fe827e15669a92c384d4eee",
   "files": [
     {
       "path": "SKILL.md",
@@ -197,8 +197,8 @@
     },
     {
       "path": "scripts/profile.py",
-      "size": 37064,
-      "sha256": "4cfb4f2fecc3b69d66d8bb3efc7a703998836916a501b54ff6b18600edbc6f6e"
+      "size": 31110,
+      "sha256": "69d1d8c56e9943c80e35e63366cd986638882555e444f8dea893a57da2e768be"
     },
     {
       "path": "scripts/record_visual_review.py",
@@ -212,8 +212,8 @@
     },
     {
       "path": "scripts/safe_artifacts.py",
-      "size": 43647,
-      "sha256": "81e4bf953cfda9217d521b13bf5ab202ffe853e40307681ebcff5751ef022122"
+      "size": 46385,
+      "sha256": "2788db7dc45e6a9eaf6f730b7b5cf3eb9ed4076bf726999e5fc00ed9f29a5c50"
     },
     {
       "path": "scripts/self_test.py",
