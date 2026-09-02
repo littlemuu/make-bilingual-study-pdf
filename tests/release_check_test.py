@@ -2,6 +2,9 @@
 """Focused regressions for the exact installable-payload release gate."""
 from __future__ import annotations
 
+import ast
+import contextlib
+import io
 import json
 import os
 import re
@@ -12,6 +15,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Callable
+from unittest import mock
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -22,12 +26,15 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(TOOLS))
 
-from build_release_manifest import valid_payload_path  # noqa: E402
+import _payload_fs as payload_fs  # noqa: E402
+import build_release_manifest as manifest_builder  # noqa: E402
 from release_check import (  # noqa: E402
     SEMVER_RE,
     valid_manifest_path,
     validate_yaml_quoted_strings,
 )
+
+valid_payload_path = manifest_builder.valid_payload_path
 
 
 class ReleaseCheckTests(unittest.TestCase):
@@ -96,6 +103,19 @@ class ReleaseCheckTests(unittest.TestCase):
             timeout=5,
         )
 
+    def run_generator_in_process(self) -> tuple[int, str]:
+        output = io.StringIO()
+        with (
+            mock.patch.object(
+                sys,
+                "argv",
+                ["build_release_manifest.py", "--skill-root", str(self.root)],
+            ),
+            contextlib.redirect_stdout(output),
+        ):
+            result = manifest_builder.main()
+        return result, output.getvalue()
+
     def assert_failed_with(self, report: dict, fragment: str) -> None:
         self.assertEqual(report["status"], "failed")
         self.assertTrue(
@@ -144,6 +164,125 @@ class ReleaseCheckTests(unittest.TestCase):
         payload = json.loads(manifest.read_text(encoding="utf-8"))
         self.assertEqual(payload["skill"], "make-bilingual-study-pdf")
         self.assertGreater(len(payload["files"]), 40)
+
+    def test_manifest_builder_preserves_committed_bytes_exactly(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        original = manifest.read_bytes()
+
+        result, output = self.run_generator_in_process()
+
+        self.assertEqual(result, 0, output)
+        self.assertEqual(manifest.read_bytes(), original)
+
+    def test_manifest_partial_write_failure_preserves_original_and_cleans_up(
+        self,
+    ) -> None:
+        manifest = self.root / "release-manifest.json"
+        original = manifest.read_bytes()
+
+        def fail_after_partial_write(descriptor: int, payload: bytes) -> None:
+            os.write(descriptor, payload[:7])
+            raise OSError("simulated manifest write failure")
+
+        with mock.patch.object(
+            payload_fs, "write_all", side_effect=fail_after_partial_write
+        ):
+            result, output = self.run_generator_in_process()
+
+        self.assertNotEqual(result, 0, output)
+        self.assertIn("simulated manifest write failure", output)
+        self.assertEqual(manifest.read_bytes(), original)
+        self.assertEqual(list(self.root.glob(".release-manifest.json.*")), [])
+
+    def test_manifest_target_swap_is_not_overwritten_and_temp_is_cleaned(
+        self,
+    ) -> None:
+        manifest = self.root / "release-manifest.json"
+        replacement = self.root / "replacement-manifest.json"
+        intruder = b"concurrent replacement\n"
+        replacement.write_bytes(intruder)
+        real_atomic_replace = manifest_builder.atomic_replace_bytes
+
+        def replace_then_publish(*args: object, **kwargs: object) -> None:
+            os.replace(replacement, manifest)
+            real_atomic_replace(*args, **kwargs)
+
+        with mock.patch.object(
+            manifest_builder,
+            "atomic_replace_bytes",
+            side_effect=replace_then_publish,
+        ):
+            result, output = self.run_generator_in_process()
+
+        self.assertNotEqual(result, 0, output)
+        self.assertIn("changed after inventory", output)
+        self.assertEqual(manifest.read_bytes(), intruder)
+        self.assertEqual(list(self.root.glob(".release-manifest.json.*")), [])
+
+    def test_payload_helper_is_the_only_low_level_owner(self) -> None:
+        forbidden_definitions = {
+            "atomic_replace_bytes",
+            "best_effort_fsync_directory",
+            "directory_identity_matches",
+            "ensure_safe_parent_chain",
+            "hash_regular_file",
+            "is_reparse_point",
+            "iter_safe_files",
+            "lexical_absolute",
+            "metadata_matches",
+            "open_descriptor",
+            "open_read_descriptor",
+            "open_regular_fd",
+            "portable_path_key",
+            "reject_unsafe_status",
+            "repository_directory_paths",
+            "unsafe_link_kind",
+            "valid_payload_path",
+            "validate_directory_components",
+            "write_all",
+        }
+        callers = (
+            TOOLS / "check_skill_eol.py",
+            TOOLS / "build_release_manifest.py",
+            TOOLS / "repository_release_check.py",
+        )
+        for caller in callers:
+            with self.subTest(caller=caller.name):
+                tree = ast.parse(caller.read_text(encoding="utf-8"))
+                imports_helper = any(
+                    isinstance(node, ast.ImportFrom)
+                    and node.module == "_payload_fs"
+                    for node in tree.body
+                )
+                definitions = {
+                    node.name
+                    for node in tree.body
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                }
+                self.assertTrue(imports_helper)
+                self.assertEqual(definitions & forbidden_definitions, set())
+
+    def test_manifest_builder_rejects_hardlink_without_touching_target(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        original_manifest = manifest.read_bytes()
+        outside = Path(self.temporary.name) / "outside-hardlink-target.txt"
+        outside.write_bytes(b"outside\r\n")
+        link = self.root / "outside-hardlink.txt"
+        try:
+            os.link(outside, link)
+        except OSError as exc:
+            self.skipTest(f"hard links unavailable: {exc}")
+
+        process = self.run_generator()
+
+        self.assertNotEqual(process.returncode, 0)
+        self.assertIn(
+            "multiply linked files are not allowed",
+            process.stdout + process.stderr,
+        )
+        self.assertEqual(outside.read_bytes(), b"outside\r\n")
+        self.assertEqual(link.read_bytes(), b"outside\r\n")
+        self.assertEqual(manifest.read_bytes(), original_manifest)
 
     def test_wrong_tag_fails(self) -> None:
         process, report = self.run_check("--tag", "v9.9.9")

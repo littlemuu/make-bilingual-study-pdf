@@ -18,6 +18,7 @@ CHECKER = REPOSITORY / "tools" / "repository_release_check.py"
 SKILL_PATH = Path("skills") / "make-bilingual-study-pdf"
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(REPOSITORY / "tools"))
+import _payload_fs as payload_fs  # noqa: E402
 import repository_release_check as checker_module  # noqa: E402
 
 
@@ -326,6 +327,7 @@ class RepositoryReleaseCheckTests(unittest.TestCase):
         tools = self.root / "tools"
         tools.mkdir()
         shutil.copy2(CHECKER, tools / CHECKER.name)
+        shutil.copy2(REPOSITORY / "tools" / "_payload_fs.py", tools / "_payload_fs.py")
         linked_root = Path(self.temporary.name) / "repository-link"
         junction_created = False
         if os.name == "nt":
@@ -383,7 +385,7 @@ class RepositoryReleaseCheckTests(unittest.TestCase):
         path = self.root / "README.md"
         replacement = self.root / "README-replacement.md"
         replacement.write_text("replacement", encoding="utf-8")
-        real_open = checker_module.open_read_descriptor
+        real_open = payload_fs.open_read_descriptor
 
         def replace_then_open(candidate: Path) -> int:
             os.replace(replacement, path)
@@ -391,7 +393,7 @@ class RepositoryReleaseCheckTests(unittest.TestCase):
 
         failures: list[str] = []
         with mock.patch.object(
-            checker_module, "open_read_descriptor", side_effect=replace_then_open
+            payload_fs, "open_read_descriptor", side_effect=replace_then_open
         ):
             result = checker_module.read_regular_utf8(path, "repository README.md", failures)
         self.assertIsNone(result)

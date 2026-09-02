@@ -24,6 +24,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(REPOSITORY / "tools"))
 
 import check_skill_eol  # noqa: E402
+import _payload_fs as payload_fs  # noqa: E402
 
 
 JPEG_WITH_PIXEL_SIGNIFICANT_CR = base64.b64decode(
@@ -100,7 +101,7 @@ class CheckSkillEolTests(unittest.TestCase):
             raise OSError("simulated temporary write failure")
 
         with mock.patch.object(
-            check_skill_eol, "write_all", side_effect=fail_after_partial_write
+            payload_fs, "write_all", side_effect=fail_after_partial_write
         ):
             result, output = self.run_main(fix=True)
 
@@ -115,7 +116,7 @@ class CheckSkillEolTests(unittest.TestCase):
         path.write_bytes(original)
 
         with mock.patch.object(
-            check_skill_eol.os,
+            payload_fs.os,
             "replace",
             side_effect=OSError("simulated atomic replace failure"),
         ):

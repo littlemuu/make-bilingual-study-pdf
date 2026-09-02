@@ -4,14 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import shlex
-import stat
 from pathlib import Path
 
+from _payload_fs import (
+    lexical_absolute,
+    read_regular_utf8,
+    validate_directory_components,
+)
 
-DEFAULT_REPOSITORY_ROOT = Path(os.path.abspath(__file__)).parent.parent
+
+DEFAULT_REPOSITORY_ROOT = lexical_absolute(Path(__file__)).parent.parent
 REPOSITORY = "littlemuu/make-bilingual-study-pdf"
 INSTALL_PATH = "skills/make-bilingual-study-pdf"
 
@@ -27,171 +31,6 @@ SEMVER_RE = re.compile(rf"^{SEMVER_PATTERN}$")
 FENCE_OPEN_RE = re.compile(
     r"^(?P<indent> {0,3})(?P<fence>`{3,}|~{3,})(?P<info>[^\r\n]*)$"
 )
-
-
-def is_reparse_point(file_stat: os.stat_result) -> bool:
-    attributes = getattr(file_stat, "st_file_attributes", 0)
-    reparse_attribute = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
-    return bool(attributes & reparse_attribute)
-
-
-def file_identity(file_stat: os.stat_result) -> tuple[int, int]:
-    return file_stat.st_dev, file_stat.st_ino
-
-
-def file_snapshot(file_stat: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    return (
-        file_stat.st_dev,
-        file_stat.st_ino,
-        stat.S_IFMT(file_stat.st_mode),
-        file_stat.st_size,
-        file_stat.st_mtime_ns,
-        file_stat.st_ctime_ns,
-    )
-
-
-def open_read_descriptor(path: Path) -> int:
-    if os.name == "nt":
-        import ctypes
-        import msvcrt
-
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        create_file = kernel32.CreateFileW
-        create_file.argtypes = (
-            ctypes.c_wchar_p,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_void_p,
-            ctypes.c_uint32,
-            ctypes.c_uint32,
-            ctypes.c_void_p,
-        )
-        create_file.restype = ctypes.c_void_p
-        handle = create_file(
-            str(path),
-            0x80000000,
-            0x00000001,
-            None,
-            3,
-            0x00200000,
-            None,
-        )
-        invalid_handle = ctypes.c_void_p(-1).value
-        if handle == invalid_handle:
-            raise ctypes.WinError(ctypes.get_last_error())
-        try:
-            return msvcrt.open_osfhandle(handle, os.O_RDONLY | os.O_BINARY)
-        except BaseException:
-            kernel32.CloseHandle(ctypes.c_void_p(handle))
-            raise
-
-    flags = os.O_RDONLY
-    for optional_flag in ("O_CLOEXEC", "O_NONBLOCK", "O_NOFOLLOW"):
-        flags |= getattr(os, optional_flag, 0)
-    return os.open(path, flags)
-
-
-def validate_directory_components(
-    path: Path, label: str, failures: list[str]
-) -> bool:
-    absolute = Path(os.path.abspath(path))
-    current = Path(absolute.anchor)
-    try:
-        for part in absolute.parts[1:]:
-            current /= part
-            component = current.lstat()
-            if stat.S_ISLNK(component.st_mode) or is_reparse_point(component):
-                failures.append(
-                    f"{label} contains a symbolic link or reparse component: {current}"
-                )
-                return False
-            if not stat.S_ISDIR(component.st_mode):
-                failures.append(f"{label} component is not a directory: {current}")
-                return False
-    except OSError as exc:
-        failures.append(f"cannot safely inspect {label}: {exc}")
-        return False
-    return True
-
-
-def read_regular_utf8(
-    path: Path, label: str, failures: list[str]
-) -> str | None:
-    descriptor: int | None = None
-    try:
-        before = path.lstat()
-        if stat.S_ISLNK(before.st_mode) or is_reparse_point(before):
-            failures.append(f"{label} must not be a symbolic link or reparse point")
-            return None
-        if not stat.S_ISREG(before.st_mode):
-            failures.append(f"{label} must be a regular file")
-            return None
-
-        descriptor = open_read_descriptor(path)
-        opened = os.fstat(descriptor)
-        after_open = path.lstat()
-        if (
-            not stat.S_ISREG(opened.st_mode)
-            or is_reparse_point(opened)
-            or stat.S_ISLNK(after_open.st_mode)
-            or is_reparse_point(after_open)
-            or not stat.S_ISREG(after_open.st_mode)
-        ):
-            failures.append(f"{label} must remain a regular non-reparse file")
-            return None
-        if not (
-            file_identity(before)
-            == file_identity(opened)
-            == file_identity(after_open)
-        ):
-            failures.append(f"{label} changed while it was being opened")
-            return None
-        if file_snapshot(before) != file_snapshot(opened):
-            failures.append(f"{label} changed while it was being opened")
-            return None
-
-        chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            chunks.append(chunk)
-        payload = b"".join(chunks)
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        second_chunks: list[bytes] = []
-        while chunk := os.read(descriptor, 1024 * 1024):
-            second_chunks.append(chunk)
-        if payload != b"".join(second_chunks):
-            failures.append(f"{label} changed while it was being read")
-            return None
-
-        after_read = os.fstat(descriptor)
-        final_path = path.lstat()
-        if (
-            stat.S_ISLNK(final_path.st_mode)
-            or is_reparse_point(final_path)
-            or not stat.S_ISREG(final_path.st_mode)
-            or not (
-                file_identity(opened)
-                == file_identity(after_read)
-                == file_identity(final_path)
-            )
-            or not (
-                file_snapshot(opened)
-                == file_snapshot(after_read)
-                == file_snapshot(final_path)
-            )
-        ):
-            failures.append(f"{label} changed while it was being read")
-            return None
-        try:
-            return payload.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            failures.append(f"{label} is not valid UTF-8: {exc}")
-            return None
-    except OSError as exc:
-        failures.append(f"cannot safely read {label}: {exc}")
-        return None
-    finally:
-        if descriptor is not None:
-            os.close(descriptor)
 
 
 def opening_fence(line: str) -> tuple[str, int] | None:
@@ -430,7 +269,7 @@ def main() -> int:
         help="Fail unless the repository Skill VERSION exactly matches this value.",
     )
     args = parser.parse_args()
-    root = Path(os.path.abspath(args.repository_root))
+    root = lexical_absolute(args.repository_root)
     failures: list[str] = []
     root_is_safe = validate_directory_components(
         root, "repository root", failures
