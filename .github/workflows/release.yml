@@ -13,6 +13,7 @@ concurrency:
 
 env:
   SKILL_PATH: skills/make-bilingual-study-pdf
+  SAFETY_MAX_AGE_HOURS: 168
 
 jobs:
   validate:
@@ -139,6 +140,36 @@ jobs:
             echo "no successful Baseline push run exists for the exact candidate SHA" >&2
             exit 1
           fi
+
+      - name: Require fresh successful safety evidence for the exact SHA
+        env:
+          CANDIDATE_SHA: ${{ steps.metadata.outputs.candidate_sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SAFETY_RUN=$(gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/safety.yml/runs" \
+            -f status=success \
+            -f head_sha="$CANDIDATE_SHA" \
+            -f per_page=100 \
+            --jq '[.workflow_runs[] | select(.event == "schedule" or .event == "workflow_dispatch")] | sort_by(.created_at) | reverse | .[0] | [.id, .created_at, .html_url] | @tsv')
+          if [[ -z "$SAFETY_RUN" ]]; then
+            echo "no successful Safety run exists for the exact candidate SHA" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r SAFETY_RUN_ID SAFETY_CREATED_AT SAFETY_URL EXTRA <<< "$SAFETY_RUN"
+          if [[ ! "$SAFETY_RUN_ID" =~ ^[0-9]+$ || -z "$SAFETY_CREATED_AT" || -z "$SAFETY_URL" || -n "${EXTRA:-}" ]]; then
+            echo "successful Safety run lookup returned an unexpected record" >&2
+            exit 1
+          fi
+          SAFETY_CREATED_EPOCH=$(date -u -d "$SAFETY_CREATED_AT" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          MAX_AGE_SECONDS=$((SAFETY_MAX_AGE_HOURS * 60 * 60))
+          if (( SAFETY_CREATED_EPOCH > NOW_EPOCH || NOW_EPOCH - SAFETY_CREATED_EPOCH > MAX_AGE_SECONDS )); then
+            echo "successful Safety evidence is older than ${SAFETY_MAX_AGE_HOURS} hours" >&2
+            exit 1
+          fi
+          echo "fresh Safety evidence: run=$SAFETY_RUN_ID created=$SAFETY_CREATED_AT url=$SAFETY_URL"
 
       - name: Require unused tag and Release names
         env:

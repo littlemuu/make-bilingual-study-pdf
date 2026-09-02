@@ -1,0 +1,160 @@
+{
+  "schema": "make-bilingual-study-pdf/ruleset-migration/v1",
+  "captured_at": "2026-09-02T09:07:01Z",
+  "repository": "littlemuu/make-bilingual-study-pdf",
+  "baseline_sha": "21cf4105b98da106a221b2ace87492d4978bfa53",
+  "live_write_authorized": false,
+  "rulesets": [
+    {
+      "id": 21659417,
+      "name": "main-baseline-gate",
+      "target": "branch",
+      "observed_updated_at": "2026-08-27T22:58:47.786+08:00",
+      "observed": {
+        "name": "main-baseline-gate",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": ["~DEFAULT_BRANCH"]
+          }
+        },
+        "bypass_actors": [],
+        "rules": [
+          {"type": "deletion"},
+          {"type": "non_fast_forward"},
+          {
+            "type": "pull_request",
+            "parameters": {
+              "required_approving_review_count": 0,
+              "dismiss_stale_reviews_on_push": false,
+              "required_reviewers": [],
+              "require_code_owner_review": false,
+              "require_last_push_approval": false,
+              "required_review_thread_resolution": false,
+              "require_extra_approval_for_unattributed_changes": true,
+              "allowed_merge_methods": ["merge", "squash", "rebase"]
+            }
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {"context": "workflow-lint", "integration_id": 15368},
+                {"context": "self-test", "integration_id": 15368},
+                {"context": "installer-parity", "integration_id": 15368},
+                {"context": "automated-forward", "integration_id": 15368},
+                {"context": "windows-filesystem", "integration_id": 15368},
+                {"context": "macos-filesystem", "integration_id": 15368}
+              ]
+            }
+          }
+        ]
+      },
+      "proposed": {
+        "name": "main-baseline-gate",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": ["~DEFAULT_BRANCH"]
+          }
+        },
+        "bypass_actors": [],
+        "rules": [
+          {"type": "deletion"},
+          {"type": "non_fast_forward"},
+          {
+            "type": "pull_request",
+            "parameters": {
+              "required_approving_review_count": 0,
+              "dismiss_stale_reviews_on_push": false,
+              "required_reviewers": [],
+              "require_code_owner_review": false,
+              "require_last_push_approval": false,
+              "required_review_thread_resolution": false,
+              "require_extra_approval_for_unattributed_changes": true,
+              "allowed_merge_methods": ["merge", "squash", "rebase"]
+            }
+          },
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": true,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {"context": "pr-fast", "integration_id": 15368}
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": 21659622,
+      "name": "v-release-tags",
+      "target": "tag",
+      "observed_updated_at": "2026-08-27T23:02:17.953+08:00",
+      "observed": {
+        "name": "v-release-tags",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": ["refs/tags/v*"]
+          }
+        },
+        "bypass_actors": [],
+        "rules": [
+          {"type": "deletion"},
+          {"type": "non_fast_forward"},
+          {"type": "update"},
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {"context": "workflow-lint", "integration_id": 15368},
+                {"context": "self-test", "integration_id": 15368},
+                {"context": "installer-parity", "integration_id": 15368},
+                {"context": "automated-forward", "integration_id": 15368},
+                {"context": "windows-filesystem", "integration_id": 15368},
+                {"context": "macos-filesystem", "integration_id": 15368}
+              ]
+            }
+          }
+        ]
+      },
+      "proposed": {
+        "name": "v-release-tags",
+        "enforcement": "active",
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": ["refs/tags/v*"]
+          }
+        },
+        "bypass_actors": [],
+        "rules": [
+          {"type": "deletion"},
+          {"type": "non_fast_forward"},
+          {"type": "update"},
+          {
+            "type": "required_status_checks",
+            "parameters": {
+              "strict_required_status_checks_policy": false,
+              "do_not_enforce_on_create": false,
+              "required_status_checks": [
+                {"context": "main-full", "integration_id": 15368},
+                {"context": "safety", "integration_id": 15368}
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

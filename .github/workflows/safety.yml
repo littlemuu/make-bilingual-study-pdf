@@ -1,0 +1,246 @@
+name: Scheduled and manual safety
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: safety-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SKILL_PATH: skills/make-bilingual-study-pdf
+
+jobs:
+  bind-default-branch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+
+    steps:
+      - name: Bind safety evidence to current default-branch head
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "safety evidence must run on the default branch" >&2
+            exit 1
+          fi
+          REMOTE_SHA=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$DEFAULT_BRANCH" --jq '.object.sha')
+          if [[ "$REMOTE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "safety evidence is not bound to the current default-branch head" >&2
+            exit 1
+          fi
+
+  macos-apfs-alias:
+    runs-on: macos-15
+    timeout-minutes: 10
+    needs: bind-default-branch
+
+    steps:
+      - name: Check out exact safety head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r "$SKILL_PATH/requirements.txt"
+          python -m pip check
+
+      - name: Run real APFS path-alias regressions
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/macos_path_alias_test.py
+
+  four-path-installer-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: bind-default-branch
+    env:
+      INSTALL_REPO: ${{ github.repository }}
+      INSTALL_SHA: ${{ github.sha }}
+      INSTALL_GIT_REF: ${{ github.event.repository.default_branch }}
+
+    steps:
+      - name: Check out exact safety head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out pinned OpenAI skill installer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: openai/skills
+          ref: 1131cea7b17214e5a96300a5a72c94642346ef34
+          path: .ci/openai-skills
+          sparse-checkout: skills/.system/skill-installer
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
+
+      - name: Install Poppler
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends poppler-utils
+
+      - name: Require named Git ref to match the exact safety head
+        run: |
+          set -euo pipefail
+          REMOTE_REF="refs/heads/$INSTALL_GIT_REF"
+          REMOTE_URL="https://github.com/$INSTALL_REPO.git"
+          if ! REMOTE_OUTPUT=$(GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            ls-remote --exit-code --refs "$REMOTE_URL" "$REMOTE_REF"); then
+            echo "cannot resolve the named Git ref anonymously" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_OUTPUT" == *$'\n'* ]]; then
+            echo "named Git ref lookup returned more than one record" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r REMOTE_SHA OBSERVED_REF EXTRA <<< "$REMOTE_OUTPUT"
+          if [[ ! "$REMOTE_SHA" =~ ^[0-9a-f]{40}$ || "$OBSERVED_REF" != "$REMOTE_REF" || -n "${EXTRA:-}" ]]; then
+            echo "named Git ref lookup returned an unexpected record" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_SHA" != "$INSTALL_SHA" ]]; then
+            echo "named Git ref does not match this safety head" >&2
+            exit 1
+          fi
+
+      - name: Install through all four real installer paths
+        env:
+          WORKFLOW_GITHUB_TOKEN: ${{ github.token }}
+          INVALID_GITHUB_TOKEN: github-actions-intentional-invalid-token
+        run: |
+          set -euo pipefail
+          DOWNLOAD_DEST="$RUNNER_TEMP/skill-download"
+          GIT_DEST="$RUNNER_TEMP/skill-git"
+          AUTO_DEST="$RUNNER_TEMP/skill-auto"
+          FALLBACK_DEST="$RUNNER_TEMP/skill-auto-fallback"
+          AUTO_GIT_TRACE="$RUNNER_TEMP/skill-auto-git-trace.json"
+          FALLBACK_GIT_TRACE="$RUNNER_TEMP/skill-auto-fallback-git-trace.json"
+          INSTALLER=.ci/openai-skills/skills/.system/skill-installer/scripts/install-skill-from-github.py
+          export GITHUB_TOKEN="$WORKFLOW_GITHUB_TOKEN"
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_SHA" --method download --dest "$DOWNLOAD_DEST"
+          python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_GIT_REF" --method git --dest "$GIT_DEST"
+          GIT_TRACE2_EVENT="$AUTO_GIT_TRACE" \
+            python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_SHA" --dest "$AUTO_DEST"
+          if [[ -e "$AUTO_GIT_TRACE" ]]; then
+            echo "default auto installation unexpectedly produced a Git trace" >&2
+            exit 1
+          fi
+          GITHUB_TOKEN="$INVALID_GITHUB_TOKEN" GH_TOKEN='' GIT_TRACE2_EVENT="$FALLBACK_GIT_TRACE" \
+            python "$INSTALLER" --repo "$INSTALL_REPO" --path "$SKILL_PATH" --ref "$INSTALL_GIT_REF" --dest "$FALLBACK_DEST"
+          if [[ ! -s "$FALLBACK_GIT_TRACE" ]]; then
+            echo "authentication-triggered auto fallback produced no Git trace" >&2
+            exit 1
+          fi
+          python -c 'import json, sys; events = (json.loads(line) for line in open(sys.argv[1], encoding="utf-8")); raise SystemExit(0 if any(event.get("event") == "cmd_name" and event.get("name") == "clone" for event in events) else 1)' "$FALLBACK_GIT_TRACE" || {
+            echo "authentication-triggered auto fallback did not execute git clone" >&2
+            exit 1
+          }
+
+      - name: Recheck named Git ref after installation
+        run: |
+          set -euo pipefail
+          REMOTE_REF="refs/heads/$INSTALL_GIT_REF"
+          REMOTE_URL="https://github.com/$INSTALL_REPO.git"
+          REMOTE_OUTPUT=$(GIT_TERMINAL_PROMPT=0 git -c credential.helper= \
+            -c http.https://github.com/.extraheader= \
+            ls-remote --exit-code --refs "$REMOTE_URL" "$REMOTE_REF")
+          if [[ "$REMOTE_OUTPUT" == *$'\n'* ]]; then
+            echo "named Git ref recheck returned more than one record" >&2
+            exit 1
+          fi
+          IFS=$'\t' read -r REMOTE_SHA OBSERVED_REF EXTRA <<< "$REMOTE_OUTPUT"
+          if [[ ! "$REMOTE_SHA" =~ ^[0-9a-f]{40}$ || "$OBSERVED_REF" != "$REMOTE_REF" || -n "${EXTRA:-}" ]]; then
+            echo "named Git ref recheck returned an unexpected record" >&2
+            exit 1
+          fi
+          if [[ "$REMOTE_SHA" != "$INSTALL_SHA" ]]; then
+            echo "named Git ref moved during safety validation" >&2
+            exit 1
+          fi
+
+      - name: Verify exact installed payloads and a clean environment
+        run: |
+          DOWNLOAD_SKILL="$RUNNER_TEMP/skill-download/make-bilingual-study-pdf"
+          GIT_SKILL="$RUNNER_TEMP/skill-git/make-bilingual-study-pdf"
+          AUTO_SKILL="$RUNNER_TEMP/skill-auto/make-bilingual-study-pdf"
+          FALLBACK_SKILL="$RUNNER_TEMP/skill-auto-fallback/make-bilingual-study-pdf"
+          for INSTALLED_SKILL in "$DOWNLOAD_SKILL" "$GIT_SKILL" "$AUTO_SKILL" "$FALLBACK_SKILL"; do
+            python "$INSTALLED_SKILL/scripts/release_check.py"
+            python tests/compare_install_trees.py "$SKILL_PATH" "$INSTALLED_SKILL"
+          done
+          CLEAN_VENV="$RUNNER_TEMP/skill-clean-venv"
+          python -m venv "$CLEAN_VENV"
+          "$CLEAN_VENV/bin/python" -m pip install --disable-pip-version-check -r "$AUTO_SKILL/requirements.txt"
+          "$CLEAN_VENV/bin/python" -m pip check
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/self_test.py"
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile assignment-en-zh
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile academic-paper-en-zh
+          "$CLEAN_VENV/bin/python" "$AUTO_SKILL/scripts/pipeline.py" validate-profile lecture-notes-en-zh
+
+  fault-injection:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: bind-default-branch
+
+    steps:
+      - name: Check out exact safety head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          python -m pip check
+
+      - name: Run the complete fault-injection suite
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tools/run_test_suite.py fault-injection
+
+  safety-complete:
+    name: safety
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    needs:
+      - bind-default-branch
+      - macos-apfs-alias
+      - four-path-installer-parity
+      - fault-injection
+
+    steps:
+      - name: Record completed safety evidence
+        run: echo "Safety tier passed for $GITHUB_SHA"

@@ -1,8 +1,8 @@
 # 架构减重路线与施工要求
 
 > 决策日期：2026-09-01  
-> 状态：路线已确认，尚未实施  
-> 适用基线：`main` 上合并 PR #3 后的 V2.3 代码  
+> 状态：工包 A-C 已合并；工包 D workflow 实施中，live ruleset 待单独授权
+> 工包 D 基线：`main@21cf4105b98da106a221b2ace87492d4978bfa53`
 > 当前原则：先做行为保持型减重，再讨论兼容层迁移和大模块拆分
 
 ## 1. 背景与结论
@@ -177,6 +177,23 @@ CI 分层的目标是降低验证频率，不是删除 release 证据。
 
 阶段一代码 PR 可以先完成 evaluator/helper 去重；CI/ruleset 迁移允许作为同一 Issue
 下的后续独立 PR，避免代码重构和仓库设置同时变化。
+
+工包 D 的实现边界如下：
+
+- `tools/run_test_suite.py` 是测试命令与 suite 成员关系的唯一声明处；workflow 和
+  development 文档只选择 suite，不再复制完整 Python 命令清单；
+- `.github/workflows/baseline.yml` 同时承载 PR 快车与 `main` 完整车，并在迁移期继续
+  真实执行六个 live required context；无 job-level `if`，不以 skip 伪造成功；
+- `.github/workflows/safety.yml` 独占 APFS、四安装路径、认证失败 fallback 和完整故障
+  注入，且只在当前 default-branch head 上产生成功的 `safety` 证据；
+- `.github/workflows/release.yml` 除精确 SHA 的 `main-full` 证据外，还要求同一 SHA 在
+  168 小时内通过 `safety`，再进入任何 tag/Release 写操作；
+- `tools/check_workflow_contract.py` 是 workflow 静态契约的唯一实现，敌对回归覆盖删除
+  context、条件 skip、缺安全车证据和文档命令漂移；
+- live ruleset 本 PR 不写入。精确旧值、新值、迁移顺序、验证和回滚统一记录在
+  [`ruleset-migration-plan.md`](ruleset-migration-plan.md)。只有 ruleset 获得另行授权并
+  验证后，后续清理 PR 才能移除六个过渡 context 以及 PR 上的临时 Windows/macOS
+  兼容成本。
 
 ### 3.5 工包 E：文档与历史边界
 
