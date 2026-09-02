@@ -24,14 +24,16 @@ SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(SCRIPTS))
 
-from audit_source import current_source_audit_bindings  # noqa: E402
 from audit_docx import (  # noqa: E402
     validate_compile_docx_binding,
     validate_v2_compile_docx_binding,
 )
+from audit_source import current_source_audit_bindings  # noqa: E402
 from document_ir import expected_ir  # noqa: E402
+import compile_docx_pdf as compile_docx_pdf_module  # noqa: E402
 import compile_pdf as compile_pdf_module  # noqa: E402
 import pipeline as pipeline_module  # noqa: E402
+from job_state import evaluate_job  # noqa: E402
 from profile import canonical_profile_sha256, load_profile, profile_contract  # noqa: E402
 
 
@@ -1788,6 +1790,180 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             report = json.loads((output / "compile-audit.json").read_text(encoding="utf-8"))
             self.assertEqual(report["stage"], "docx-audit")
             self.assertEqual(paths["outside"].read_bytes(), outside)
+
+    def test_job_state_v1_and_v2_finalize_freeze_same_snapshot(self) -> None:
+        for schema, maker in (
+            ("v1", self.make_finalizable_work),
+            ("v2", self.make_docx_finalizable_work),
+        ):
+            with self.subTest(schema=schema), tempfile.TemporaryDirectory(
+                prefix=f"job-state-{schema}-"
+            ) as temp:
+                work, _compile = maker(Path(temp))
+                before = {
+                    path: path.read_bytes() for path in work.rglob("*") if path.is_file()
+                }
+                state = evaluate_job(work)
+                self.assertEqual(state.final_report["status"], "passed")
+                self.assertEqual(
+                    before,
+                    {
+                        path: path.read_bytes()
+                        for path in work.rglob("*")
+                        if path.is_file()
+                    },
+                )
+
+                completed = self.run_script("finalize_qa.py", work)
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                qa = json.loads(
+                    (work / "output" / "qa-report.json").read_text(encoding="utf-8")
+                )
+                self.assertEqual(qa, state.final_report)
+                self.assertEqual(
+                    evaluate_job(work).status_report["gate_statuses"]["qa_report"],
+                    "passed",
+                )
+
+    def test_job_state_changed_deliverable_stales_and_refinalizes_failed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-deliverable-") as temp:
+            work, compile_report = self.make_finalizable_work(Path(temp))
+            first = self.run_script("finalize_qa.py", work)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            (work / "output" / compile_report["pdf"]).write_bytes(b"changed")
+
+            state = evaluate_job(work)
+            self.assertEqual(
+                state.status_report["gate_statuses"]["visual_review"], "stale"
+            )
+            self.assertEqual(state.status_report["gate_statuses"]["qa_report"], "stale")
+            self.assertEqual(state.final_report["status"], "failed")
+
+            second = self.run_script("finalize_qa.py", work)
+            self.assertNotEqual(second.returncode, 0)
+            qa = json.loads(
+                (work / "output" / "qa-report.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(qa, state.final_report)
+
+    def test_job_state_missing_docx_and_compile_status_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-missing-docx-") as temp:
+            work, _compile = self.make_docx_finalizable_work(Path(temp))
+            (work / "output" / "docx-audit.json").unlink()
+            state = evaluate_job(work)
+            self.assertIsNone(state.status_report["gate_statuses"]["docx_audit"])
+            self.assertIn(
+                f"missing docx gate: {Path('output') / 'docx-audit.json'}",
+                state.final_report["failures"],
+            )
+
+        with tempfile.TemporaryDirectory(prefix="job-state-missing-status-") as temp:
+            work, _compile = self.make_finalizable_work(Path(temp))
+            path = work / "output" / "compile-audit.json"
+            report = json.loads(path.read_text(encoding="utf-8"))
+            report.pop("automated_status")
+            path.write_text(json.dumps(report), encoding="utf-8")
+            state = evaluate_job(work)
+            self.assertEqual(
+                state.status_report["gate_statuses"]["compile_audit"], "invalid"
+            )
+            self.assertEqual(state.final_report["status"], "failed")
+
+    def test_pipeline_status_accepts_standard_failed_compile_reports(self) -> None:
+        writers = (
+            (
+                "tex",
+                self.make_finalizable_work,
+                lambda work, path: compile_pdf_module.write_failure(
+                    path, work, "latexmk", ["synthetic compiler failure"]
+                ),
+            ),
+            (
+                "docx",
+                self.make_docx_finalizable_work,
+                lambda work, path: compile_docx_pdf_module._fail_work_binding(
+                    work,
+                    path,
+                    stage="docx-audit",
+                    message="synthetic binding failure",
+                    cause=ValueError("stale fixture"),
+                ),
+            ),
+        )
+        for backend, maker, write_failure in writers:
+            with self.subTest(backend=backend), tempfile.TemporaryDirectory(
+                prefix=f"job-state-failed-{backend}-"
+            ) as temp:
+                work, _compile = maker(Path(temp))
+                audit = work / "output" / "compile-audit.json"
+                with redirect_stdout(io.StringIO()):
+                    if backend == "docx":
+                        with self.assertRaises(SystemExit):
+                            write_failure(work, audit)
+                    else:
+                        write_failure(work, audit)
+
+                completed = self.run_script("pipeline.py", "status", work)
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr
+                )
+                status = json.loads(completed.stdout)
+                self.assertEqual(status["gate_statuses"]["compile_audit"], "failed")
+                self.assertNotEqual(status["next_action"], "complete")
+                self.assertEqual(evaluate_job(work).final_report["status"], "failed")
+
+    def test_v1_docx_hash_marker_cannot_downgrade_to_tex_chain(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="job-state-v1-docx-marker-") as temp:
+            work, _compile = self.make_docx_finalizable_work(Path(temp))
+            output = work / "output"
+            compile_path = output / "compile-audit.json"
+            compile_report = json.loads(compile_path.read_text(encoding="utf-8"))
+            compile_report.pop("docx")
+            compile_report.pop("docx_audit_bindings")
+            self.write_json(compile_path, compile_report)
+            visual_path = output / "visual-review.json"
+            visual = json.loads(visual_path.read_text(encoding="utf-8"))
+            visual["compile_audit_sha256"] = digest(compile_path.read_bytes())
+            self.write_json(visual_path, visual)
+
+            state = evaluate_job(work)
+            self.assertNotEqual(
+                state.status_report["gate_statuses"]["compile_audit"], "passed"
+            )
+            self.assertEqual(state.final_report["status"], "failed")
+            completed = self.run_script("finalize_qa.py", work)
+            self.assertNotEqual(completed.returncode, 0)
+            qa = json.loads((output / "qa-report.json").read_text(encoding="utf-8"))
+            self.assertEqual(qa["status"], "failed")
+
+    def test_pipeline_status_contains_invalid_passed_compile_metadata(self) -> None:
+        mutations = (
+            ("missing-pdf", lambda report: report.pop("pdf")),
+            ("unsafe-pdf", lambda report: report.__setitem__("pdf", "../escape.pdf")),
+            (
+                "malformed-contact",
+                lambda report: report.__setitem__("contact_sheets", [None]),
+            ),
+        )
+        for label, mutate in mutations:
+            with self.subTest(label=label), tempfile.TemporaryDirectory(
+                prefix=f"job-state-invalid-compile-{label}-"
+            ) as temp:
+                work, _compile = self.make_finalizable_work(Path(temp))
+                compile_path = work / "output" / "compile-audit.json"
+                compile_report = json.loads(compile_path.read_text(encoding="utf-8"))
+                mutate(compile_report)
+                self.write_json(compile_path, compile_report)
+
+                completed = self.run_script("pipeline.py", "status", work)
+                self.assertEqual(
+                    completed.returncode, 0, completed.stdout + completed.stderr
+                )
+                status = json.loads(completed.stdout)
+                self.assertNotEqual(status["next_action"], "complete")
+                state = evaluate_job(work)
+                self.assertEqual(state.final_report["status"], "failed")
+                self.assertTrue(state.final_report["failures"])
 
 
 if __name__ == "__main__":

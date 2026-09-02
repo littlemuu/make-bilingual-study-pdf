@@ -3,28 +3,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 from adapters import get_adapter
 from audit_docx import (
-    validate_compile_docx_binding,
-    validate_docx_audit_binding,
     validate_v2_compile_docx_binding,
     validate_v2_docx_audit_binding,
 )
-from audit_outputs import (
-    validate_compile_output_binding,
-    validate_output_audit_binding,
-)
-from audit_source import validate_source_audit_binding
-from audit_translation import (
-    validate_translation_audit_binding,
-    validate_translation_plan_binding,
-)
 from common import json_loads_strict
+from job_state import report_status, translation_plan_status
 from profile import (
     load_profile,
     load_work_profile,
@@ -35,11 +24,9 @@ from safe_artifacts import (
     lexical_absolute_path,
     portable_artifact_basename,
     read_artifact_text,
-    sha256_artifact,
     validate_artifact_directory,
     validate_artifact_file,
     validate_artifact_tree,
-    work_relative_artifact_path,
 )
 from visual_utils import validate_visual_review_binding
 
@@ -52,27 +39,6 @@ def _read_json(path: Path, work_dir: Path) -> dict:
     if not isinstance(value, dict):
         raise ValueError(f"JSON artifact must be an object: {path}")
     return value
-
-
-def _read_jsonl(path: Path, work_dir: Path) -> list[dict]:
-    values = []
-    for line_number, raw in enumerate(
-        read_artifact_text(path, boundary=work_dir).splitlines(), 1
-    ):
-        if not raw.strip():
-            continue
-        value = json_loads_strict(raw)
-        if not isinstance(value, dict):
-            raise ValueError(f"invalid JSONL object at {path}:{line_number}")
-        values.append(value)
-    return values
-
-
-def _artifact_exists(path: Path, work_dir: Path) -> bool:
-    if not os.path.lexists(path):
-        return False
-    validate_artifact_file(path, boundary=work_dir)
-    return True
 
 
 def _work_cli_path(value: Path, work_dir: Path, *, label: str) -> Path:
@@ -90,360 +56,11 @@ def _portable_basename(value: str, work_dir: Path, *, label: str) -> str:
     return portable_artifact_basename(value, label=label)
 
 
-def translation_plan_status(work_dir: Path, plan_path: Path) -> str:
-    try:
-        plan, binding_errors = validate_translation_plan_binding(
-            work_dir, plan_path
-        )
-        if plan is None:
-            return "invalid"
-        return "stale" if binding_errors else "passed"
-    except (KeyError, TypeError, ValueError, OSError):
-        return "invalid"
-
-
 def run_script(script: str, *arguments: str) -> None:
     subprocess.run(
         [sys.executable, str(SCRIPT_DIR / script), *arguments],
         check=True,
     )
-
-
-def report_status(work_dir: Path) -> dict:
-    work_dir = lexical_absolute_path(work_dir)
-    validate_artifact_directory(work_dir)
-    validate_artifact_tree(work_dir, work_dir, allow_missing=False)
-    artifacts = {
-        "profile": work_dir / "profile.json",
-        "manifest": work_dir / "manifest.json",
-        "adapter_evidence": work_dir / "adapter-evidence.json",
-        "document_ir": work_dir / "document-ir.json",
-        "source_audit": work_dir / "source-audit.json",
-        "glossary": work_dir / "translation" / "glossary.json",
-        "translation_plan": work_dir / "translation" / "plan.json",
-        "translation_audit": work_dir / "translation" / "translation-audit.json",
-        "merged_translations": work_dir / "translation" / "translations-merged.jsonl",
-        "build_manifest": work_dir / "output" / "build-manifest.json",
-        "output_audit": work_dir / "output" / "output-audit.json",
-        "docx_audit": work_dir / "output" / "docx-audit.json",
-        "compile_audit": work_dir / "output" / "compile-audit.json",
-        "visual_review": work_dir / "output" / "visual-review.json",
-        "qa_report": work_dir / "output" / "qa-report.json",
-    }
-    exists = {
-        name: _artifact_exists(path, work_dir) for name, path in artifacts.items()
-    }
-
-    def is_schema_v2() -> bool:
-        try:
-            profile = (
-                _read_json(artifacts["profile"], work_dir)
-                if exists["profile"]
-                else {}
-            )
-            ir = (
-                _read_json(artifacts["document_ir"], work_dir)
-                if exists["document_ir"]
-                else {}
-            )
-            compile_report = (
-                _read_json(artifacts["compile_audit"], work_dir)
-                if exists["compile_audit"]
-                else {}
-            )
-            return (
-                profile.get("schema_version") == 2
-                or ir.get("schema_version") == 2
-                or "docx_audit_bindings" in compile_report
-            )
-        except (ArtifactSafetyError, KeyError, TypeError, ValueError, OSError):
-            return False
-
-    def status(name: str) -> str | None:
-        path = artifacts[name]
-        if not exists[name] or path.suffix != ".json":
-            return None
-        if name == "translation_plan":
-            return translation_plan_status(work_dir, path)
-        try:
-            report = _read_json(path, work_dir)
-            # Every gate owns one exact status field. In particular, a final QA
-            # report may not borrow compile-audit's automated_status field when
-            # its required status field is missing.
-            status_field = "automated_status" if name == "compile_audit" else "status"
-            value = report.get(status_field)
-            if not isinstance(value, str):
-                return "invalid"
-            if name == "source_audit" and value == "passed":
-                _, binding_errors = validate_source_audit_binding(
-                    work_dir, path
-                )
-                if binding_errors:
-                    return "stale"
-            if name == "output_audit" and value == "passed":
-                _, _, binding_errors = validate_output_audit_binding(
-                    work_dir, path
-                )
-                if binding_errors:
-                    return "stale"
-            if name == "translation_audit" and value == "passed":
-                _, binding_errors = validate_translation_audit_binding(
-                    work_dir, path
-                )
-                if binding_errors:
-                    return "stale"
-            if name == "docx_audit" and value == "passed":
-                docx_reference = report.get("docx")
-                if not isinstance(docx_reference, str) or not docx_reference:
-                    return "invalid"
-                # DOCX audit reports may be copied out of CI for human review.
-                # Their absolute diagnostic path belongs to the producing host;
-                # the frozen identity is the byte hash, so resolve the portable
-                # basename inside this work directory's output folder.
-                docx_name = docx_reference.replace("\\", "/").rsplit("/", 1)[-1]
-                if not docx_name or docx_name in {".", ".."}:
-                    return "invalid"
-                docx_path = work_relative_artifact_path(
-                    work_dir / "output", docx_name, label="status DOCX path"
-                )
-                _, _, binding_errors = validate_docx_audit_binding(
-                    work_dir, docx_path, path
-                )
-                if binding_errors:
-                    return "stale"
-            if name == "compile_audit" and value == "passed":
-                _, binding_errors = validate_compile_output_binding(
-                    work_dir, report, artifacts["output_audit"]
-                )
-                if binding_errors:
-                    return "stale"
-                if (
-                    is_schema_v2()
-                    or "docx" in report
-                    or "docx_audit_bindings" in report
-                ):
-                    docx_reference = report.get("docx")
-                    work_relative_artifact_path(
-                        work_dir / "output",
-                        docx_reference,
-                        label="compile status DOCX path",
-                    )
-                    _, binding_errors = validate_compile_docx_binding(
-                        work_dir, report, artifacts["docx_audit"]
-                    )
-                    if binding_errors:
-                        return "stale"
-            if name == "visual_review" and value == "passed":
-                if status("compile_audit") != "passed":
-                    return "stale"
-                compile_report = _read_json(
-                    artifacts["compile_audit"], work_dir
-                )
-                _, binding_errors = validate_visual_review_binding(
-                    work_dir, report, compile_report
-                )
-                if binding_errors:
-                    return "stale"
-            if name == "qa_report" and value == "passed":
-                current_compile = _read_json(
-                    artifacts["compile_audit"], work_dir
-                )
-                requires_docx = is_schema_v2() or any(
-                    key in current_compile
-                    for key in ("docx", "docx_audit_sha256", "docx_audit_bindings")
-                )
-                upstream = [
-                    "source_audit",
-                    "translation_audit",
-                    "output_audit",
-                    "compile_audit",
-                    "visual_review",
-                ]
-                if requires_docx:
-                    upstream.append("docx_audit")
-                if any(status(gate) != "passed" for gate in upstream):
-                    return "stale"
-                failures = report.get("failures")
-                if failures != []:
-                    return "invalid"
-                expected_gate_names = {
-                    gate.removesuffix("_audit")
-                    if gate != "visual_review"
-                    else "visual"
-                    for gate in upstream
-                }
-                recorded_statuses = report.get("gate_statuses")
-                if (
-                    not isinstance(recorded_statuses, dict)
-                    or set(recorded_statuses) != expected_gate_names
-                    or any(
-                        not isinstance(item, str) or item != "passed"
-                        for item in recorded_statuses.values()
-                    )
-                ):
-                    return "invalid"
-                gate_hashes = report.get("gate_sha256")
-                if not isinstance(gate_hashes, dict) or set(gate_hashes) != expected_gate_names:
-                    return "invalid"
-                gate_paths = {
-                    "source": artifacts["source_audit"],
-                    "translation": artifacts["translation_audit"],
-                    "output": artifacts["output_audit"],
-                    "compile": artifacts["compile_audit"],
-                    "visual": artifacts["visual_review"],
-                }
-                if requires_docx:
-                    gate_paths["docx"] = artifacts["docx_audit"]
-                for gate, gate_path in gate_paths.items():
-                    if (
-                        not _artifact_exists(gate_path, work_dir)
-                        or gate_hashes.get(gate)
-                        != sha256_artifact(gate_path, boundary=work_dir)
-                    ):
-                        return "stale"
-                deliverables = report.get("deliverables")
-                if not isinstance(deliverables, dict):
-                    return "invalid"
-                build = _read_json(artifacts["build_manifest"], work_dir)
-                compile_report = current_compile
-                expected_deliverables: dict[str, dict[str, str]] = {}
-                candidates = (
-                    ("markdown", build.get("markdown")),
-                    ("latex", build.get("latex")),
-                    ("docx", compile_report.get("docx")),
-                    ("pdf", compile_report.get("pdf")),
-                )
-                for label, relative in candidates:
-                    if relative is None:
-                        continue
-                    deliverable_path = work_relative_artifact_path(
-                        work_dir / "output",
-                        relative,
-                        label=f"current QA {label} path",
-                    )
-                    if not _artifact_exists(deliverable_path, work_dir):
-                        return "stale"
-                    expected_deliverables[label] = {
-                        "path": f"output/{relative}",
-                        "sha256": sha256_artifact(
-                            deliverable_path, boundary=work_dir
-                        ),
-                    }
-                if deliverables != expected_deliverables:
-                    return "stale"
-                source_manifest = _read_json(artifacts["manifest"], work_dir)
-                current_source_hash = source_manifest.get("source_sha256")
-                if (
-                    not isinstance(current_source_hash, str)
-                    or len(current_source_hash) != 64
-                    or any(character not in "0123456789abcdef" for character in current_source_hash)
-                ):
-                    return "invalid"
-                if report.get("source_pdf_sha256") != current_source_hash:
-                    return "stale"
-                compiled_source_hash = compile_report.get("source_pdf_sha256")
-                if (
-                    compiled_source_hash is not None
-                    and compiled_source_hash != current_source_hash
-                ):
-                    return "stale"
-            return value
-        except (ArtifactSafetyError, KeyError, TypeError, ValueError, OSError):
-            return "invalid"
-
-    profile_id = None
-    if exists["profile"]:
-        try:
-            profile_id = load_work_profile(work_dir)["id"]
-        except (ArtifactSafetyError, KeyError, TypeError, ValueError, OSError):
-            profile_id = "invalid"
-
-    manifest: dict = {}
-    if exists["manifest"]:
-        try:
-            manifest = _read_json(artifacts["manifest"], work_dir)
-        except (ArtifactSafetyError, KeyError, TypeError, ValueError, OSError):
-            manifest = {}
-    adapter_value = manifest.get("adapter")
-    adapter_invalid = adapter_value is not None and not isinstance(
-        adapter_value, dict
-    )
-    adapter = adapter_value if isinstance(adapter_value, dict) else {}
-    adapter_id = ("invalid" if adapter_invalid else adapter.get("id")) or (
-        load_work_profile(work_dir)["input"]["adapter"]
-        if exists["profile"] and profile_id != "invalid"
-        else None
-    )
-
-    if not exists["manifest"]:
-        next_action = (
-            "run `pipeline.py source SOURCE.pdf --work-dir WORK_DIR` for the native adapter, "
-            "or `pipeline.py import-mineru SOURCE.pdf MINERU_OUTPUT_DIR --work-dir WORK_DIR "
-            "--profile PROFILE` for a frozen MinerU output"
-        )
-    elif not exists["profile"] or not exists["document_ir"]:
-        next_action = "run `pipeline.py ir WORK_DIR` to bind the default profile and create the IR"
-    elif not exists["source_audit"]:
-        next_action = "run `pipeline.py source-audit WORK_DIR`"
-    elif status("source_audit") in {
-        "needs_manual_review",
-        "manual_source_review_required",
-    }:
-        next_action = (
-            "complete the independent per-page source review; translation preparation and "
-            "final QA remain blocked while source evidence needs manual review"
-        )
-    elif status("source_audit") != "passed":
-        next_action = "repair extraction, then rerun `pipeline.py source-audit WORK_DIR`"
-    elif not exists["glossary"]:
-        next_action = "run `init_glossary.py WORK_DIR`, then review the glossary"
-    elif not exists["translation_plan"]:
-        next_action = "after reviewing the glossary, run `pipeline.py prepare WORK_DIR`"
-    elif status("translation_plan") != "passed":
-        next_action = "repair changed plan inputs/requests, then rerun `pipeline.py prepare WORK_DIR`"
-    elif status("translation_audit") != "passed":
-        next_action = "fill/resume response JSONL files, then run `audit_translation.py WORK_DIR --progress`"
-    elif status("output_audit") != "passed":
-        next_action = "run `pipeline.py build WORK_DIR`"
-    elif status("docx_audit") != "passed":
-        next_action = (
-            "run `pipeline.py docx WORK_DIR --markdown AUDITED_STRUCTURED.md`; "
-            "the Markdown must already contain complete semantic callout containers"
-        )
-    elif status("compile_audit") != "passed":
-        next_action = "run `pipeline.py compile-docx WORK_DIR`"
-    elif status("visual_review") != "passed":
-        next_action = "inspect every final render and record the visual review"
-    elif status("qa_report") != "passed":
-        next_action = "run `pipeline.py finalize WORK_DIR`"
-    else:
-        next_action = "complete"
-    return {
-        "work_dir": str(work_dir),
-        "profile": profile_id,
-        "adapter": {
-            "id": adapter_id,
-            "backend": adapter.get("backend"),
-            "version": adapter.get("version"),
-            "evidence": adapter.get("evidence"),
-            "evidence_sha256": adapter.get("evidence_sha256"),
-        },
-        "artifacts": exists,
-        "gate_statuses": {
-            name: status(name)
-            for name in (
-                "source_audit",
-                "translation_plan",
-                "translation_audit",
-                "output_audit",
-                "docx_audit",
-                "compile_audit",
-                "visual_review",
-                "qa_report",
-            )
-        },
-        "next_action": next_action,
-    }
 
 
 def role_counts(work_dir: Path) -> dict[str, int]:
