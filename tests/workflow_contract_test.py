@@ -83,6 +83,15 @@ class WorkflowContractTests(unittest.TestCase):
         with self.assertRaisesRegex(checker.ContractError, "missing a required evidence job"):
             checker.validate_contracts(self.root)
 
+    def test_fault_injection_without_document_toolchain_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/safety.yml",
+            "            pandoc \\\n",
+            "",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "missing pandoc"):
+            checker.validate_contracts(self.root)
+
     def test_safety_aggregate_without_always_is_rejected(self) -> None:
         self._replace(
             ".github/workflows/safety.yml",

@@ -221,6 +221,18 @@ jobs:
           cache: pip
           cache-dependency-path: requirements-dev.txt
 
+      - name: Install document toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            fontconfig \
+            fonts-dejavu-core \
+            fonts-noto-cjk \
+            fonts-noto-core \
+            libreoffice-writer \
+            pandoc \
+            poppler-utils
+
       - name: Install Python dependencies
         run: |
           python -m pip install --disable-pip-version-check -r requirements-dev.txt
