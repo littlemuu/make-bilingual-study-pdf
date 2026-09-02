@@ -11,8 +11,8 @@ The approved architecture direction is documented in
 behavior-preserving deduplication: one shared Job/Gate evaluator, one runtime artifact
 safety layer, one repository payload helper, and a staged CI/ruleset migration.
 
-This document still describes the **currently active** commands and gates. Until the
-corresponding implementation PRs merge and repository rulesets are migrated explicitly:
+This document describes the **currently active** commands and gates. CI workflow
+tiering is staged ahead of the separately authorized live-ruleset migration:
 
 - every existing required check remains required;
 - no workflow job or check context may be removed merely because the target CI design is
@@ -115,53 +115,28 @@ metadata, including policy and MCP dependency cases.
 
 ## Run the current full baseline
 
-After running the metadata gate above, run the remaining current baseline from the
-repository root:
+`tools/run_test_suite.py` is the single command registry used by local development and
+CI. It includes `pip check`, payload and metadata gates, workflow-contract regressions,
+all existing unit and adversarial suites, the Skill self-test, and all three Profile
+validations. From the repository root, point it at the pinned upstream validator:
 
 ```bash
-.venv/bin/python -m pip check
-.venv/bin/python skills/make-bilingual-study-pdf/scripts/release_check.py
-.venv/bin/python tools/repository_release_check.py
-.venv/bin/python tests/check_skill_eol_test.py
-.venv/bin/python tests/release_check_test.py
-.venv/bin/python tests/repository_release_check_test.py
-.venv/bin/python tests/profile_binding_test.py
-.venv/bin/python tests/safe_artifacts_test.py
-.venv/bin/python tests/macos_path_alias_test.py
-.venv/bin/python tests/work_artifact_boundary_test.py
-.venv/bin/python tests/translation_artifact_boundary_test.py
-.venv/bin/python tests/output_artifact_boundary_test.py
-.venv/bin/python tests/docx_artifact_boundary_test.py
-.venv/bin/python tests/compile_final_artifact_boundary_test.py
-.venv/bin/python skills/make-bilingual-study-pdf/scripts/self_test.py
-.venv/bin/python tests/v23_profile_test.py
-.venv/bin/python tests/v23_mineru_test.py
-.venv/bin/python tests/v23_ir_source_test.py
-.venv/bin/python tests/v23_output_test.py
-.venv/bin/python tests/v23_docx_test.py
-.venv/bin/python tests/v23_visual_gate_test.py
-.venv/bin/python skills/make-bilingual-study-pdf/scripts/pipeline.py validate-profile assignment-en-zh
-.venv/bin/python skills/make-bilingual-study-pdf/scripts/pipeline.py validate-profile academic-paper-en-zh
-.venv/bin/python skills/make-bilingual-study-pdf/scripts/pipeline.py validate-profile lecture-notes-en-zh
+.venv/bin/python tools/run_test_suite.py full \
+  --upstream-validator "<OPENAI_SKILLS_CHECKOUT>/skills/.system/skill-creator/scripts/quick_validate.py"
 ```
 
 On Windows, replace `.venv/bin/python` with `.\.venv\Scripts\python.exe`. The
-dedicated Windows filesystem job installs the runtime dependency set and runs the
-Profile-binding plus unified work-artifact suites. Those suites exercise real
-junction/reparse-point and hard-link cases in addition to symbolic-link cases when the
-runner grants that privilege. A missing Python module or external executable is an
-environment failure, not a product pass.
-
-During the simplification phase, this full matrix remains the regression oracle even
-when the eventual PR fast lane will run a smaller subset. A refactor may add focused
-differential tests, but it may not delete an existing regression before its behavior is
-covered by the consolidated implementation.
+runner's named suites are CI composition units, not alternative command lists. Use
+`--list-json` or `--dry-run` for inspection. A missing Python module or external
+executable is an environment failure, not a product pass.
 
 ## Installer parity gate
 
 CI checks out OpenAI's system `skill-installer` at the exact commit
-`1131cea7b17214e5a96300a5a72c94642346ef34`, then installs the exact path
-`skills/make-bilingual-study-pdf` through four real paths:
+`1131cea7b17214e5a96300a5a72c94642346ef34`. The PR and `main` Baseline use the
+default automatic installer at the immutable event SHA as a real clean-install smoke.
+The scheduled/manual safety tier installs the exact path
+`skills/make-bilingual-study-pdf` through all four real paths:
 
 1. forced archive download at the immutable event SHA;
 2. forced Git sparse checkout at the event's named branch ref;
@@ -195,20 +170,40 @@ All four installed directories must:
 - leave the default automatic installation able to pass `pip check`, `self_test.py`,
   and all three Profile validations in a new venv outside the installed Skill.
 
-The GitHub Actions `Baseline` workflow currently runs the full baseline, installer
-parity, and both schema V2 automated forward chains for pull requests and pushes to
-`main`. A separate Windows 2025 job runs the EOL, Profile-binding, installed-release,
-repository-release, and generated work-artifact filesystem suites so hard-link and
-junction/reparse-point regressions are exercised on Windows. A focused macOS 15 job
-uses the hosted APFS filesystem to prove that case-only and NFC/NFD aliases are detected
-by physical directory identity before native or MinerU preflight can mutate `WORK`.
-The workflow does not use tag pushes as a release gate.
+## CI tiers and migration contexts
 
-The target layered design moves the expensive four-path installer proof and APFS alias
-suite away from every PR, but only after equivalent `main`, scheduled/manual, and
-release-candidate coverage exists and the required-check rulesets have been migrated
-without a gap. See the architecture simplification document for the approved trigger
-matrix.
+The workflow responsibilities are now explicit:
+
+| Context or workflow | Trigger | Responsibility |
+| --- | --- | --- |
+| `pr-fast` | pull request | lint and workflow contract, repository/metadata gates, core regressions, Linux synthetic forward chains, one exact-SHA clean install |
+| `main-full` | push to `main` | the complete command registry, full Windows filesystem suite, Linux forward chains, one exact-SHA clean install |
+| `safety` | weekly schedule or manual dispatch on current `main` | real APFS aliases, four installer paths including authenticated-failure fallback, complete fault injection |
+| guarded draft release | explicitly authorized `repository_dispatch` | exact candidate binding, fresh `main-full` and `safety` evidence, release-path validation, tag/Release state guards |
+
+`Baseline` also supports manual dispatch so reviewers can run the complete `main-full`
+matrix on an exact feature-branch head before merge. Release validation accepts only a
+successful `push` run on `main`, never this manual review run.
+
+During the ruleset migration window, `.github/workflows/baseline.yml` continues to
+execute and emit the six live required contexts on every pull request and every push to
+`main`: `workflow-lint`, `self-test`, `windows-filesystem`, `macos-filesystem`,
+`installer-parity`, and `automated-forward`. None of these leaf evidence jobs has a
+job-level condition. The final `pr-fast` or `main-full` aggregate is the intentional
+exception: `if: always()` makes it run after failed, cancelled, or skipped dependencies,
+and `tools/check_job_results.py` exits successfully only when all six results are exactly
+`success`. Windows runs a focused real smoke on PRs and its full
+filesystem group on `main`; macOS APFS remains active on both events until the live
+ruleset is separately migrated. This transitional cost prevents a dangling required
+check.
+
+`tools/check_workflow_contract.py` and its adversarial tests reject a missing or
+conditional leaf context, aggregate without the exact always-run condition, omitted
+dependency result, incomplete safety aggregate, removed fresh-safety release gate, or
+reintroduced development command list. `tests/job_results_test.py` rejects `failure`,
+`cancelled`, `skipped`, `neutral`, unknown values, malformed JSON, and missing fields.
+The live ruleset old/new values, authorization boundary, ordered migration, verification, and
+rollback are recorded in [`ruleset-migration-plan.md`](ruleset-migration-plan.md).
 
 ## Default-branch release path
 
@@ -220,7 +215,10 @@ following before it can create anything:
 - a full 40-character candidate SHA equal to both the event SHA and remote `main` HEAD;
 - an input version exactly equal to the Skill's `VERSION`, with the tag derived as
   `v<VERSION>`;
-- a successful `Baseline` push run for that exact SHA on `main`;
+- a successful `Baseline` push run for that exact SHA on `main` (including the
+  `main-full` aggregate);
+- a successful scheduled/manual `Safety` run for that exact SHA no more than 168 hours
+  old;
 - absent tag and Release names;
 - strict payload and repository-documentation checks, the pinned official Skill
   validator plus duplicate-key hardening, both release installer paths, and
