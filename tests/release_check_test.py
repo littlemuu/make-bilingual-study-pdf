@@ -219,6 +219,113 @@ class ReleaseCheckTests(unittest.TestCase):
         self.assertEqual(manifest.read_bytes(), intruder)
         self.assertEqual(list(self.root.glob(".release-manifest.json.*")), [])
 
+    def test_manifest_late_target_swap_is_not_overwritten(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        replacement = Path(self.temporary.name) / "late-replacement-manifest.json"
+        intruder = b"late concurrent replacement\n"
+        replacement.write_bytes(intruder)
+        real_read = payload_fs.read_regular_bytes
+        injected = False
+
+        def replace_after_temporary_read(
+            *arguments: object, **keyword_arguments: object
+        ) -> bytes:
+            nonlocal injected
+            payload = real_read(*arguments, **keyword_arguments)
+            if arguments[4] == "temporary file for release-manifest.json":
+                self.assertFalse(injected)
+                injected = True
+                os.replace(replacement, manifest)
+            return payload
+
+        with mock.patch.object(
+            payload_fs,
+            "read_regular_bytes",
+            side_effect=replace_after_temporary_read,
+        ):
+            result, output = self.run_generator_in_process()
+
+        self.assertTrue(injected)
+        self.assertNotEqual(result, 0, output)
+        self.assertIn("changed after inventory", output)
+        self.assertEqual(manifest.read_bytes(), intruder)
+        self.assertEqual(list(self.root.glob(".release-manifest.json.*")), [])
+
+    def test_manifest_late_target_appearance_is_not_overwritten(self) -> None:
+        manifest = self.root / "release-manifest.json"
+        manifest.unlink()
+        intruder = b"late concurrent creation\n"
+        real_read = payload_fs.read_regular_bytes
+        injected = False
+
+        def create_after_temporary_read(
+            *arguments: object, **keyword_arguments: object
+        ) -> bytes:
+            nonlocal injected
+            payload = real_read(*arguments, **keyword_arguments)
+            if arguments[4] == "temporary file for release-manifest.json":
+                self.assertFalse(injected)
+                injected = True
+                manifest.write_bytes(intruder)
+            return payload
+
+        with mock.patch.object(
+            payload_fs,
+            "read_regular_bytes",
+            side_effect=create_after_temporary_read,
+        ):
+            result, output = self.run_generator_in_process()
+
+        self.assertTrue(injected)
+        self.assertNotEqual(result, 0, output)
+        self.assertIn("target appeared before replacement", output)
+        self.assertEqual(manifest.read_bytes(), intruder)
+        self.assertEqual(list(self.root.glob(".release-manifest.json.*")), [])
+
+    def test_directory_close_failure_does_not_fail_successful_publication(
+        self,
+    ) -> None:
+        manifest = self.root / "release-manifest.json"
+        expected = manifest.read_bytes()
+        manifest.write_bytes(b"stale manifest\n")
+        directory_descriptor = 987654321
+        real_open = payload_fs.os.open
+        real_fsync = payload_fs.os.fsync
+        real_close = payload_fs.os.close
+
+        def open_with_directory_descriptor(
+            candidate: object, flags: int, *arguments: object, **keywords: object
+        ) -> int:
+            if Path(candidate) == self.root:
+                return directory_descriptor
+            return real_open(candidate, flags, *arguments, **keywords)
+
+        def fsync_directory_descriptor(descriptor: int) -> None:
+            if descriptor != directory_descriptor:
+                real_fsync(descriptor)
+
+        def fail_directory_close(descriptor: int) -> None:
+            if descriptor == directory_descriptor:
+                raise OSError("simulated directory close failure")
+            real_close(descriptor)
+
+        with (
+            mock.patch.object(
+                payload_fs.os, "open", side_effect=open_with_directory_descriptor
+            ),
+            mock.patch.object(
+                payload_fs.os, "fsync", side_effect=fsync_directory_descriptor
+            ),
+            mock.patch.object(
+                payload_fs.os, "close", side_effect=fail_directory_close
+            ),
+        ):
+            result, output = self.run_generator_in_process()
+
+        self.assertEqual(manifest.read_bytes(), expected)
+        self.assertEqual(result, 0, output)
+        self.assertIn("wrote release-manifest.json", output)
+
     def test_payload_helper_is_the_only_low_level_owner(self) -> None:
         forbidden_definitions = {
             "atomic_replace_bytes",

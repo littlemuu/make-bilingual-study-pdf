@@ -469,7 +469,10 @@ def best_effort_fsync_directory(directory: Path) -> None:
         except OSError:
             pass
     finally:
-        os.close(descriptor)
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
 
 
 def atomic_replace_bytes(
@@ -487,6 +490,36 @@ def atomic_replace_bytes(
     temporary_prefix: str | None = None,
     context: str = "payload",
 ) -> None:
+    def verify_target_version() -> None:
+        if expected_status is None:
+            current = inspect_regular_file(
+                repository,
+                root,
+                skill_directory,
+                path,
+                label,
+                expected_chain,
+                allow_missing=True,
+                context=context,
+            )
+            if current is not None:
+                raise ValueError(
+                    f"{context} target appeared before replacement: {label}"
+                )
+            return
+        current_payload = read_regular_bytes(
+            repository,
+            root,
+            skill_directory,
+            path,
+            label,
+            expected_status,
+            expected_chain,
+            context=context,
+        )
+        if expected_payload is not None and current_payload != expected_payload:
+            raise ValueError(f"{context} file changed before replacement: {label}")
+
     parent_chain = ensure_safe_parent_chain(
         repository, root, skill_directory, path, expected_chain, context=context
     )
@@ -539,32 +572,7 @@ def atomic_replace_bytes(
         os.close(descriptor)
         descriptor = None
 
-        if expected_status is None:
-            current = inspect_regular_file(
-                repository,
-                root,
-                skill_directory,
-                path,
-                label,
-                expected_chain,
-                allow_missing=True,
-                context=context,
-            )
-            if current is not None:
-                raise ValueError(f"{context} target appeared before replacement: {label}")
-        else:
-            current_payload = read_regular_bytes(
-                repository,
-                root,
-                skill_directory,
-                path,
-                label,
-                expected_status,
-                expected_chain,
-                context=context,
-            )
-            if expected_payload is not None and current_payload != expected_payload:
-                raise ValueError(f"{context} file changed before replacement: {label}")
+        verify_target_version()
 
         ensure_safe_parent_chain(
             repository,
@@ -587,6 +595,16 @@ def atomic_replace_bytes(
         )
         if temporary_payload != payload:
             raise ValueError(f"temporary {context} file changed before replacement: {label}")
+        ensure_safe_parent_chain(
+            repository,
+            root,
+            skill_directory,
+            path,
+            expected_chain,
+            expected_parents=parent_chain,
+            context=context,
+        )
+        verify_target_version()
         os.replace(temporary_path, path)
         temporary_path = None
         best_effort_fsync_directory(path.parent)
