@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shlex
 import sys
 from typing import Any
 
@@ -60,6 +61,34 @@ def _require_triggers(workflow: dict[str, Any], expected: set[str], label: str) 
         raise ContractError(f"{label} is missing triggers: {sorted(missing)}")
 
 
+def _validate_aggregate(
+    job: dict[str, Any], expected_needs: set[str], label: str
+) -> None:
+    if job.get("if") != "${{ always() }}":
+        raise ContractError(f"{label} must use the exact always-run condition")
+    if set(_sequence(job.get("needs"), f"{label} needs")) != expected_needs:
+        raise ContractError(f"{label} must depend on every required evidence job")
+
+    evaluator_step: dict[str, Any] | None = None
+    for step in _sequence(job.get("steps"), f"{label} steps"):
+        if isinstance(step, dict) and "tools/check_job_results.py" in str(step.get("run", "")):
+            evaluator_step = step
+            break
+    if evaluator_step is None:
+        raise ContractError(f"{label} must call the strict job-result evaluator")
+    env = _mapping(evaluator_step.get("env"), f"{label} evaluator environment")
+    if env.get("CI_NEEDS_JSON") != "${{ toJSON(needs) }}":
+        raise ContractError(f"{label} must pass the complete needs result object")
+    try:
+        tokens = shlex.split(str(evaluator_step["run"]))
+        require_index = tokens.index("--require")
+    except (ValueError, KeyError) as exc:
+        raise ContractError(f"{label} evaluator must declare required job names") from exc
+    required_tokens = [token for token in tokens[require_index + 1 :] if token.strip()]
+    if len(required_tokens) != len(expected_needs) or set(required_tokens) != expected_needs:
+        raise ContractError(f"{label} evaluator must check every dependency result")
+
+
 def validate_contracts(root: Path = ROOT) -> None:
     workflows = root / ".github" / "workflows"
     baseline = _load(workflows / "baseline.yml")
@@ -80,13 +109,10 @@ def validate_contracts(root: Path = ROOT) -> None:
             raise ContractError(f"required job {context} must execute real steps")
 
     tier = _mapping(jobs.get("tier-complete"), "tier-complete job")
-    if "if" in tier:
-        raise ContractError("tier-complete must run for both PR and main events")
     tier_name = str(tier.get("name", ""))
     if "pr-fast" not in tier_name or "main-full" not in tier_name:
         raise ContractError("tier-complete must emit pr-fast or main-full by event")
-    if set(_sequence(tier.get("needs"), "tier-complete needs")) != set(REQUIRED_CONTEXTS):
-        raise ContractError("tier-complete must depend on all six migration contexts")
+    _validate_aggregate(tier, set(REQUIRED_CONTEXTS), "tier-complete")
 
     baseline_runs = "\n".join(_run_text(_mapping(job, "baseline job")) for job in jobs.values())
     for required in (
@@ -108,7 +134,7 @@ def validate_contracts(root: Path = ROOT) -> None:
     }
     if not expected_safety_jobs.issubset(safety_jobs):
         raise ContractError("safety workflow is missing a required evidence job")
-    for job_id in expected_safety_jobs:
+    for job_id in expected_safety_jobs.difference({"safety-complete"}):
         job = _mapping(safety_jobs[job_id], f"safety job {job_id}")
         if "if" in job:
             raise ContractError(f"safety job {job_id} must not have a job-level if")
@@ -117,13 +143,16 @@ def validate_contracts(root: Path = ROOT) -> None:
     final_safety = _mapping(safety_jobs["safety-complete"], "safety-complete")
     if final_safety.get("name") != "safety":
         raise ContractError("safety-complete must emit the safety check context")
-    if set(_sequence(final_safety.get("needs"), "safety-complete needs")) != {
-        "bind-default-branch",
-        "macos-apfs-alias",
-        "four-path-installer-parity",
-        "fault-injection",
-    }:
-        raise ContractError("safety must depend on every safety evidence job")
+    _validate_aggregate(
+        final_safety,
+        {
+            "bind-default-branch",
+            "macos-apfs-alias",
+            "four-path-installer-parity",
+            "fault-injection",
+        },
+        "safety-complete",
+    )
 
     _require_triggers(release, {"repository_dispatch"}, "release")
     release_text = (workflows / "release.yml").read_text(encoding="utf-8")

@@ -37,8 +37,11 @@ byte-for-byte equivalent to the editable projection in the JSON artifact.
 - Tag ruleset `21659622`: replace the six migration contexts with `main-full` and
   `safety`, both from GitHub Actions integration `15368`.
 
-`pr-fast` is the successful aggregate of all six compatibility jobs on a pull request.
-`main-full` is the corresponding aggregate on a push to `main`. `safety` binds its run
+`pr-fast` is the strict all-success aggregate of all six compatibility jobs on a pull
+request. `main-full` is the corresponding aggregate on a push to `main`. Both aggregates
+run under `always()` and explicitly fail for failed, cancelled, skipped, neutral,
+unknown, or missing dependency results. `safety` applies the same strict evaluator,
+binds its run
 to the current default-branch head and aggregates APFS, four-path installer/fallback,
 and fault-injection evidence. The guarded release workflow independently requires an
 exact-SHA successful `main-full` workflow and `safety` evidence no older than 168 hours.

@@ -183,13 +183,15 @@ CI 分层的目标是降低验证频率，不是删除 release 证据。
 - `tools/run_test_suite.py` 是测试命令与 suite 成员关系的唯一声明处；workflow 和
   development 文档只选择 suite，不再复制完整 Python 命令清单；
 - `.github/workflows/baseline.yml` 同时承载 PR 快车与 `main` 完整车，并在迁移期继续
-  真实执行六个 live required context；无 job-level `if`，不以 skip 伪造成功；
+  真实执行六个 live required context；叶子证据 job 无 job-level `if`，聚合 job 则是
+  唯一使用 `always()` 的例外，并把任何非 `success` 依赖显式转成失败；
 - `.github/workflows/safety.yml` 独占 APFS、四安装路径、认证失败 fallback 和完整故障
   注入，且只在当前 default-branch head 上产生成功的 `safety` 证据；
 - `.github/workflows/release.yml` 除精确 SHA 的 `main-full` 证据外，还要求同一 SHA 在
   168 小时内通过 `safety`，再进入任何 tag/Release 写操作；
 - `tools/check_workflow_contract.py` 是 workflow 静态契约的唯一实现，敌对回归覆盖删除
-  context、条件 skip、缺安全车证据和文档命令漂移；
+  context、叶子条件 skip、聚合缺少 `always()`/依赖结果、缺安全车证据和文档命令
+  漂移；`tools/check_job_results.py` 唯一负责严格的 all-success 结果判定；
 - live ruleset 本 PR 不写入。精确旧值、新值、迁移顺序、验证和回滚统一记录在
   [`ruleset-migration-plan.md`](ruleset-migration-plan.md)。只有 ruleset 获得另行授权并
   验证后，后续清理 PR 才能移除六个过渡 context 以及 PR 上的临时 Windows/macOS

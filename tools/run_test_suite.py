@@ -47,6 +47,7 @@ COMMANDS = {
         ),
         Command("workflow-contract", ("tools/check_workflow_contract.py",)),
         Command("test-suite-contract", ("tests/ci_test_suite_test.py",)),
+        Command("job-results-regressions", ("tests/job_results_test.py",)),
         Command("workflow-contract-regressions", ("tests/workflow_contract_test.py",)),
         Command("eol-regressions", ("tests/check_skill_eol_test.py",)),
         Command("installed-release-regressions", ("tests/release_check_test.py",)),
@@ -98,6 +99,7 @@ REPOSITORY_GATES = (
     "skill-validator-regressions",
     "workflow-contract",
     "test-suite-contract",
+    "job-results-regressions",
     "workflow-contract-regressions",
 )
 
@@ -145,6 +147,7 @@ SUITES = {
     "workflow-contracts": (
         "workflow-contract",
         "test-suite-contract",
+        "job-results-regressions",
         "workflow-contract-regressions",
     ),
     "metadata": REPOSITORY_GATES,

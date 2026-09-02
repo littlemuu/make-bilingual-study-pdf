@@ -298,6 +298,7 @@ jobs:
 
   tier-complete:
     name: ${{ github.event_name == 'pull_request' && 'pr-fast' || 'main-full' }}
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     needs:
@@ -309,5 +310,21 @@ jobs:
       - automated-forward
 
     steps:
-      - name: Record completed tier
-        run: echo "${{ github.event_name == 'pull_request' && 'PR fast' || 'main full' }} tier passed for $GITHUB_SHA"
+      - name: Check out exact aggregate head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Require every migration context to succeed
+        env:
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python tools/check_job_results.py --require \
+            workflow-lint \
+            self-test \
+            windows-filesystem \
+            macos-filesystem \
+            installer-parity \
+            automated-forward

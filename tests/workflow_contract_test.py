@@ -60,9 +60,36 @@ class WorkflowContractTests(unittest.TestCase):
         with self.assertRaisesRegex(checker.ContractError, "job-level if"):
             checker.validate_contracts(self.root)
 
+    def test_tier_aggregate_without_always_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/baseline.yml",
+            "    if: ${{ always() }}\n",
+            "",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact always-run"):
+            checker.validate_contracts(self.root)
+
+    def test_tier_aggregate_missing_one_result_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/baseline.yml",
+            "            automated-forward\n",
+            "",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "every dependency result"):
+            checker.validate_contracts(self.root)
+
     def test_safety_without_fault_injection_is_rejected(self) -> None:
         self._replace(".github/workflows/safety.yml", "  fault-injection:\n", "  retired-faults:\n")
         with self.assertRaisesRegex(checker.ContractError, "missing a required evidence job"):
+            checker.validate_contracts(self.root)
+
+    def test_safety_aggregate_without_always_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/safety.yml",
+            "    if: ${{ always() }}\n",
+            "",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact always-run"):
             checker.validate_contracts(self.root)
 
     def test_release_without_fresh_safety_gate_is_rejected(self) -> None:

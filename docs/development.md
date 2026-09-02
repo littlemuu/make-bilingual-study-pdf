@@ -188,17 +188,21 @@ successful `push` run on `main`, never this manual review run.
 During the ruleset migration window, `.github/workflows/baseline.yml` continues to
 execute and emit the six live required contexts on every pull request and every push to
 `main`: `workflow-lint`, `self-test`, `windows-filesystem`, `macos-filesystem`,
-`installer-parity`, and `automated-forward`. None has a job-level condition. The final
-`pr-fast` or `main-full` job depends on all six, so it cannot report success after a
-failed compatibility context. Windows runs a focused real smoke on PRs and its full
+`installer-parity`, and `automated-forward`. None of these leaf evidence jobs has a
+job-level condition. The final `pr-fast` or `main-full` aggregate is the intentional
+exception: `if: always()` makes it run after failed, cancelled, or skipped dependencies,
+and `tools/check_job_results.py` exits successfully only when all six results are exactly
+`success`. Windows runs a focused real smoke on PRs and its full
 filesystem group on `main`; macOS APFS remains active on both events until the live
 ruleset is separately migrated. This transitional cost prevents a dangling required
 check.
 
-`tools/check_workflow_contract.py` and `tests/workflow_contract_test.py` reject a
-missing or conditional required context, missing trigger, incomplete safety aggregate,
-removed fresh-safety release gate, or reintroduced development command list. The live
-ruleset old/new values, authorization boundary, ordered migration, verification, and
+`tools/check_workflow_contract.py` and its adversarial tests reject a missing or
+conditional leaf context, aggregate without the exact always-run condition, omitted
+dependency result, incomplete safety aggregate, removed fresh-safety release gate, or
+reintroduced development command list. `tests/job_results_test.py` rejects `failure`,
+`cancelled`, `skipped`, `neutral`, unknown values, malformed JSON, and missing fields.
+The live ruleset old/new values, authorization boundary, ordered migration, verification, and
 rollback are recorded in [`ruleset-migration-plan.md`](ruleset-migration-plan.md).
 
 ## Default-branch release path

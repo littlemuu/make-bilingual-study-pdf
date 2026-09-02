@@ -233,6 +233,7 @@ jobs:
 
   safety-complete:
     name: safety
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     needs:
@@ -242,5 +243,18 @@ jobs:
       - fault-injection
 
     steps:
-      - name: Record completed safety evidence
-        run: echo "Safety tier passed for $GITHUB_SHA"
+      - name: Check out exact aggregate head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require every safety evidence job to succeed
+        env:
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python tools/check_job_results.py --require \
+            bind-default-branch \
+            macos-apfs-alias \
+            four-path-installer-parity \
+            fault-injection
