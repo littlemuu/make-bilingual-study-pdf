@@ -11,20 +11,20 @@
 ## 当前工程路线
 
 2026-09-01 的架构复审确认：内容完整性、冻结绑定、扫描页人工门禁和逐页视觉复核
-属于产品核心，不得以“简化”为由削弱；当前需要减重的是重复状态评估、重复文件系统
-实现、V1/V2 兼容成本和过高频率的完整供应链验证。
+属于产品核心，不得以“简化”为由削弱。
 
-下一阶段先做**行为保持型减重**：统一 `status/finalize` 的 gate evaluator，收敛运行时
-与仓库维护工具的文件系统 helper，并把 CI 拆分为 PR 快车、`main` 完整车、定时/手动
-安全车和显式 release candidate。该阶段不迁移 Profile schema、不改变任何可见成品、
-不修改运行时依赖，也不创建 tag 或 Release。
+阶段一（行为保持型减重）已完成：`status`/`finalize` 统一为同一个 gate evaluator，
+运行时与仓库维护工具收敛到共享文件系统 helper，CI 拆分为 PR 快车（`pr-fast`）、
+`main` 完整车（`main-full`）、定时/手动安全车（`safety`）与显式 release candidate，
+live branch/tag ruleset 已迁移到新聚合 context。该阶段不迁移 Profile schema、不改变
+任何可见成品、不修改运行时依赖，也不创建 tag 或 Release。
 
-完整决策、不变量、施工包、非目标和完成定义见
+后续阶段（V1→V2 Profile 迁移、巨型模块拆分）需独立工单与授权，见
 [`docs/architecture-simplification.md`](docs/architecture-simplification.md)。现有
 [`.github/PROJECT_HANDOFF.md`](.github/PROJECT_HANDOFF.md) 与
 [`.github/V2.3_ACCEPTANCE.md`](.github/V2.3_ACCEPTANCE.md) 继续保留为 V2.3 历史
-实施与验收证据；在减重实现合并前，当前 CI 和发布门禁仍按
-[`docs/development.md`](docs/development.md) 执行。
+实施与验收证据；当前命令、CI 层级和发布边界见
+[`docs/development.md`](docs/development.md)。
 
 ## 交付能力
 

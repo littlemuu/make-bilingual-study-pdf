@@ -1,5 +1,9 @@
 # make-bilingual-study-pdf 项目交接：V2.3 实施与验收
 
+> 当前指针（2026-09-03）：本文件是 V2.3 实现与验收的历史证据。阶段一（Issue #4）
+> 行为保持型减重与 CI/ruleset 分层已经收尾，当前能力、命令、CI 层级和发布边界以
+> `docs/architecture-simplification.md` 与 `docs/development.md` 为准。
+
 > 2026-08-26 发布包装续记：Draft PR #3 正在修复安装与发布门禁，暂未 Ready、
 > 合并、打 tag 或创建 Release。唯一可安装源码已迁移到
 > `skills/make-bilingual-study-pdf/`；仓库测试位于 `tests/`，开发与受控发布说明

@@ -21,8 +21,12 @@ rollback plan. The machine-readable old and proposed values are frozen in
 - Branch ruleset `21659417` was updated to its complete `proposed` object (single
   `pr-fast` context) and re-read field-by-field: name, enforcement, conditions,
   bypass list, rule order, pull-request parameters, strictness, integration ID, and
-  contexts all match. Tag ruleset `21659622` remains on the six compatibility
-  contexts until a fresh `main-full` + `safety` pair is confirmed on the exact SHA.
+  contexts all match.
+- Tag ruleset `21659622` was then updated to its complete `proposed` object
+  (`main-full` + `safety`, both from integration `15368`) only after the exact
+  `main` SHA `f7b08d4c...` had a successful `main-full` and fresh `safety`, and was
+  re-read field-by-field: name, enforcement, conditions, bypass list, rule order,
+  strictness, integration ID, and contexts all match. No test tag was created.
 
 ## Read-only snapshot
 
