@@ -1,0 +1,5 @@
+Temporary probe for branch ruleset pr-fast gate verification (Route B compensation).
+
+This file is not part of the installable Skill payload. It exists only to exercise the
+branch ruleset required check on a harmless Draft PR and will be removed when the probe
+PR is closed and its branch deleted.
