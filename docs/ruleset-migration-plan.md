@@ -38,10 +38,29 @@ strictness, integration ID, and contexts field-by-field. No test tag was created
 **Order deviation:** the tag ruleset write at 04:19:16Z happened before the branch
 probe's `pr-fast` resolved at 04:20:59Z (about 1m43s early), so `pr-fast` was not
 first proven on a probe PR before the tag write, contrary to the authorized sequence
-below. This is a process-order deviation, not a settings-value drift. Remediation is
-pending an explicit maintainer decision between (A) rollback and ordered redo, or (B)
-compensation verification via a separate harmless probe PR; no further settings write
-is made until that decision.
+below. This is a process-order deviation, not a settings-value drift.
+
+## Compensation verification (Route B)
+
+The maintainer explicitly selected the lower-risk compensation verification (Route B)
+instead of rollback-and-redo (Route A). No ruleset/settings write was made during this
+verification.
+
+- Probe PR `#15` (`PROBE: pr-fast ruleset gate verification`, Draft), head commit
+  `c64248e0ca853288322223a81100735fd59f5865`, branch
+  `codex/probe-pr-fast-gate-verification` (non-payload text only), created
+  2026-09-03T05:58:37Z.
+- Baseline run `33721146866` (pull_request, head `c64248e0...`) started
+  2026-09-03T05:58:39Z; leaf checks started 05:58:42Z.
+- `pr-fast` aggregate started 2026-09-03T06:01:12Z and passed 06:01:17Z.
+- Merge state was `BLOCKED` while `pr-fast` was pending and became `CLEAN` only after
+  `pr-fast` succeeded.
+- Probe PR `#15` was closed (not merged) and branch
+  `codex/probe-pr-fast-gate-verification` was deleted after verification.
+- Final read-only GET: branch ruleset `21659417` requires `pr-fast` (strict=true,
+  `updated_at` 2026-09-03T12:16:06.060+08:00); tag ruleset `21659622` requires
+  `main-full` + `safety` (strict=false, `updated_at` 2026-09-03T12:19:16.865+08:00).
+  Both match their complete `proposed` objects; no drift.
 
 ## Read-only snapshot
 
