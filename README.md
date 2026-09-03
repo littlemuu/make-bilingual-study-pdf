@@ -26,6 +26,20 @@ live branch/tag ruleset 已迁移到新聚合 context。该阶段不迁移 Profi
 实施与验收证据；当前命令、CI 层级和发布边界见
 [`docs/development.md`](docs/development.md)。
 
+### 阶段一收尾证据
+
+截至 2026-09-03，Issue #4 的实现收尾锚点为 PR #14 的合并提交
+`babac48eacad015daf73454fab52deba8d6cc820`。该精确 SHA 的 push Baseline
+run `33724559094` 已真实完成并通过 `workflow-lint`、`self-test`、
+`windows-filesystem`、`installer-parity`、`automated-forward` 与最终
+`main-full` 聚合；`pr-fast` 在 push 事件中按层级设计跳过。
+
+当前 live ruleset 状态为：默认分支只要求 strict `pr-fast`；`refs/tags/v*` 要求
+`main-full` 与 `safety`。三个聚合门禁均使用精确冻结的事件条件，并对失败、取消、
+跳过或缺失的依赖结果 fail closed。迁移时间线、补偿探针与回滚证据见
+[`docs/ruleset-migration-plan.md`](docs/ruleset-migration-plan.md)。阶段一没有创建 tag
+或 Release，也没有替换用户已安装的 Skill；后续工作必须另立工单。
+
 ## 交付能力
 
 - 完整的中英对照 Markdown；
