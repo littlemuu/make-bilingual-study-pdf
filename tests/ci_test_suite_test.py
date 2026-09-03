@@ -52,13 +52,20 @@ class TestSuiteContractTests(unittest.TestCase):
             "output-boundary-regressions",
             "docx-boundary-regressions",
             "compile-boundary-regressions",
-            "macos-alias-regressions",
         ):
             self.assertNotIn(main_or_safety_only, command_ids)
 
+    def test_windows_smoke_transitional_suite_is_removed(self) -> None:
+        self.assertNotIn("windows-smoke", run_test_suite.SUITES)
+
+    def test_macos_apfs_is_safety_tier_not_a_suite_command(self) -> None:
+        self.assertNotIn("macos-alias-regressions", run_test_suite.COMMANDS)
+        for command_ids in run_test_suite.SUITES.values():
+            self.assertNotIn("macos-alias-regressions", command_ids)
+
     def test_list_json_is_machine_readable_and_does_not_execute(self) -> None:
         completed = subprocess.run(
-            [sys.executable, str(RUNNER), "windows-smoke", "--list-json"],
+            [sys.executable, str(RUNNER), "windows-full", "--list-json"],
             cwd=ROOT,
             check=True,
             capture_output=True,
@@ -66,7 +73,7 @@ class TestSuiteContractTests(unittest.TestCase):
         )
         self.assertEqual(
             json.loads(completed.stdout),
-            list(run_test_suite.SUITES["windows-smoke"]),
+            list(run_test_suite.SUITES["windows-full"]),
         )
 
     def test_validator_suite_fails_closed_without_validator_path(self) -> None:

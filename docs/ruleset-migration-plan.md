@@ -1,9 +1,66 @@
 # CI ruleset migration and rollback plan
 
-This document is a review artifact, not authorization to change repository settings.
-The work-package-D implementation deliberately leaves both live rulesets untouched.
-The machine-readable old and proposed values are frozen in
+This document is a review artifact and the ordered migration, verification, and
+rollback plan. The machine-readable old and proposed values are frozen in
 [`ruleset-migration-state.json`](ruleset-migration-state.json).
+
+## Execution record
+
+> 2026-09-03: D2 post-merge verification is complete and live-ruleset migration is
+> authorized for work packages D3+E. The observed timeline is reported truthfully,
+> including one order deviation from the authorized sequence.
+
+- Baseline `main@f7b08d4c10a5cd7adf917805177431ac2dab080b`: run
+  `33646149699` (push) attempt 1 was cancelled because `automated-forward` hit its
+  20-minute timeout on a transient Azure apt-mirror slowdown while downloading the
+  document toolchain. Attempt 2 re-ran the exact SHA and all six compatibility
+  contexts (`workflow-lint`, `self-test`, `installer-parity`, `automated-forward`,
+  `windows-filesystem`, `macos-filesystem`) plus `main-full` succeeded.
+- Safety `main@f7b08d4c...`: run `33714112289` (workflow_dispatch) succeeded with
+  `bind-default-branch`, `macos-apfs-alias`, `four-path-installer-parity`,
+  `fault-injection`, and the final `safety` aggregate all successful, none skipped.
+
+Observed write/probe timeline (UTC):
+
+| Time | Event |
+| --- | --- |
+| 04:16:06Z | branch ruleset `21659417` updated to `pr-fast` |
+| 04:18:38Z | PR #14 created |
+| 04:18:41Z | first-round probe Baseline started on PR #14 |
+| 04:19:16Z | tag ruleset `21659622` updated to `main-full` + `safety` |
+| 04:20:57Z | first-round `pr-fast` aggregate started |
+| 04:20:59Z | `pr-fast` passed |
+
+Both writes used the complete `proposed` object and each post-write GET matched
+name, enforcement, conditions, bypass list, rule order, pull-request parameters,
+strictness, integration ID, and contexts field-by-field. No test tag was created.
+
+**Order deviation:** the tag ruleset write at 04:19:16Z happened before the branch
+probe's `pr-fast` resolved at 04:20:59Z (about 1m43s early), so `pr-fast` was not
+first proven on a probe PR before the tag write, contrary to the authorized sequence
+below. This is a process-order deviation, not a settings-value drift.
+
+## Compensation verification (Route B)
+
+The maintainer explicitly selected the lower-risk compensation verification (Route B)
+instead of rollback-and-redo (Route A). No ruleset/settings write was made during this
+verification.
+
+- Probe PR `#15` (`PROBE: pr-fast ruleset gate verification`, Draft), head commit
+  `c64248e0ca853288322223a81100735fd59f5865`, branch
+  `codex/probe-pr-fast-gate-verification` (non-payload text only), created
+  2026-09-03T05:58:37Z.
+- Baseline run `33721146866` (pull_request, head `c64248e0...`) started
+  2026-09-03T05:58:39Z; leaf checks started 05:58:42Z.
+- `pr-fast` aggregate started 2026-09-03T06:01:12Z and passed 06:01:17Z.
+- Merge state was `BLOCKED` while `pr-fast` was pending and became `CLEAN` only after
+  `pr-fast` succeeded.
+- Probe PR `#15` was closed (not merged) and branch
+  `codex/probe-pr-fast-gate-verification` was deleted after verification.
+- Final read-only GET: branch ruleset `21659417` requires `pr-fast` (strict=true,
+  `updated_at` 2026-09-03T12:16:06.060+08:00); tag ruleset `21659622` requires
+  `main-full` + `safety` (strict=false, `updated_at` 2026-09-03T12:19:16.865+08:00).
+  Both match their complete `proposed` objects; no drift.
 
 ## Read-only snapshot
 

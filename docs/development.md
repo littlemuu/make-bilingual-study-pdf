@@ -11,16 +11,17 @@ The approved architecture direction is documented in
 behavior-preserving deduplication: one shared Job/Gate evaluator, one runtime artifact
 safety layer, one repository payload helper, and a staged CI/ruleset migration.
 
-This document describes the **currently active** commands and gates. CI workflow
-tiering is staged ahead of the separately authorized live-ruleset migration:
+This document describes the **currently active** commands and gates. The live
+branch/tag rulesets have been migrated: the branch ruleset requires only the `pr-fast`
+aggregate and the tag ruleset requires `main-full` + `safety`; the six transitional
+compatibility contexts are no longer required checks. The following invariants remain:
 
-- every existing required check remains required;
-- no workflow job or check context may be removed merely because the target CI design is
-  lighter;
 - Profile schema, output bytes, runtime dependencies, VERSION, release metadata, tag and
   Release state must remain unchanged;
-- changes to live branch/tag rulesets require a separate, explicitly authorized settings
-  operation with recorded old values, new values, and rollback steps.
+- `pr-fast`, `main-full`, and `safety` are strict all-success aggregates: they run under
+  `always()` and fail closed for any failed, cancelled, skipped, or missing evidence job;
+- release-candidate evidence is not weakened by tiering: a Draft Release still requires
+  an exact-SHA successful `main-full` and `safety` evidence no older than 168 hours.
 
 A simplification PR must identify which duplicated implementation it removes and prove
 that content-integrity, freeze-chain, source-review, font, render and visual-review gates
@@ -170,7 +171,7 @@ All four installed directories must:
 - leave the default automatic installation able to pass `pip check`, `self_test.py`,
   and all three Profile validations in a new venv outside the installed Skill.
 
-## CI tiers and migration contexts
+## CI tiers
 
 The workflow responsibilities are now explicit:
 
@@ -185,25 +186,30 @@ The workflow responsibilities are now explicit:
 matrix on an exact feature-branch head before merge. Release validation accepts only a
 successful `push` run on `main`, never this manual review run.
 
-During the ruleset migration window, `.github/workflows/baseline.yml` continues to
-execute and emit the six live required contexts on every pull request and every push to
-`main`: `workflow-lint`, `self-test`, `windows-filesystem`, `macos-filesystem`,
-`installer-parity`, and `automated-forward`. None of these leaf evidence jobs has a
-job-level condition. The final `pr-fast` or `main-full` aggregate is the intentional
-exception: `if: always()` makes it run after failed, cancelled, or skipped dependencies,
-and `tools/check_job_results.py` exits successfully only when all six results are exactly
-`success`. Windows runs a focused real smoke on PRs and its full
-filesystem group on `main`; macOS APFS remains active on both events until the live
-ruleset is separately migrated. This transitional cost prevents a dangling required
-check.
+`.github/workflows/baseline.yml` runs the pull-request fast tier (`pr-fast`) and the
+push/manual main tier (`main-full`). Both aggregate jobs run under `always()` and call
+`tools/check_job_results.py`, which exits successfully only when every declared evidence
+job result is exactly `success`. The PR tier is the strict aggregate of `workflow-lint`,
+`self-test` (metadata gates and core regressions), `installer-parity` (one exact-SHA
+clean install), and `automated-forward` (Linux synthetic forward chains). The main tier
+adds the full `windows-filesystem` suite. `macos-filesystem` and the four-path
+installer/fallback and complete fault-injection evidence live only in the
+scheduled/manual `safety` workflow, which binds its result to the current default-branch
+head. No shared evidence job has a job-level `if`; the only conditional jobs are the
+Windows tier placement (`github.event_name != 'pull_request'`) and the two event-gated
+aggregates. The transitional six-context duplication on every pull request and the
+transitional macOS APFS baseline job are removed.
 
-`tools/check_workflow_contract.py` and its adversarial tests reject a missing or
-conditional leaf context, aggregate without the exact always-run condition, omitted
-dependency result, incomplete safety aggregate, removed fresh-safety release gate, or
-reintroduced development command list. `tests/job_results_test.py` rejects `failure`,
+`tools/check_workflow_contract.py` and its adversarial tests reject a conditional shared
+leaf job, a Windows tier placed on the wrong event or permanently skipped, a macOS APFS
+job reintroduced into `Baseline`, a transitional `tier-complete` job, an aggregate without
+the always-run condition, an omitted or extra dependency result, a Windows suite that is
+not the full group, an incomplete safety aggregate, a removed fresh-safety release gate,
+or a reintroduced development command list. `tests/job_results_test.py` rejects `failure`,
 `cancelled`, `skipped`, `neutral`, unknown values, malformed JSON, and missing fields.
-The live ruleset old/new values, authorization boundary, ordered migration, verification, and
-rollback are recorded in [`ruleset-migration-plan.md`](ruleset-migration-plan.md).
+The live ruleset old/new values, authorization boundary, ordered migration, execution
+record, verification, and rollback are recorded in
+[`ruleset-migration-plan.md`](ruleset-migration-plan.md).
 
 ## Default-branch release path
 

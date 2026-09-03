@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed when the staged CI/ruleset migration workflow contract drifts."""
+"""Fail closed when the phase-one CI tier workflow contract drifts."""
 
 from __future__ import annotations
 
@@ -13,14 +13,43 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REQUIRED_CONTEXTS = (
+
+# The six transitional compatibility contexts frozen in the migration state. After
+# the live rulesets were migrated they are no longer required checks: the branch
+# ruleset requires only `pr-fast` and the tag ruleset only `main-full` + `safety`.
+MIGRATION_CONTEXTS = (
     "workflow-lint",
     "self-test",
+    "installer-parity",
+    "automated-forward",
     "windows-filesystem",
     "macos-filesystem",
+)
+
+# Evidence jobs feeding each final aggregate. `pr-fast` is the pull-request tier and
+# must not run the Windows filesystem suite; `main-full` adds the full Windows
+# filesystem suite on push/manual dispatch.
+PR_FAST_NEEDS = (
+    "workflow-lint",
+    "self-test",
     "installer-parity",
     "automated-forward",
 )
+
+MAIN_FULL_NEEDS = (
+    "workflow-lint",
+    "self-test",
+    "windows-filesystem",
+    "installer-parity",
+    "automated-forward",
+)
+
+# Exact job-level conditions. These must match byte-for-byte: any extra term
+# (`&& false`, `|| true`, ...) would let a conditional skip pass as success.
+PR_FAST_CONDITION = "${{ always() && github.event_name == 'pull_request' }}"
+MAIN_FULL_CONDITION = "${{ always() && github.event_name != 'pull_request' }}"
+SAFETY_CONDITION = "${{ always() }}"
+WINDOWS_CONDITION = "${{ github.event_name != 'pull_request' }}"
 
 
 class ContractError(RuntimeError):
@@ -62,10 +91,12 @@ def _require_triggers(workflow: dict[str, Any], expected: set[str], label: str) 
 
 
 def _validate_aggregate(
-    job: dict[str, Any], expected_needs: set[str], label: str
+    job: dict[str, Any], expected_needs: set[str], expected_condition: str, label: str
 ) -> None:
-    if job.get("if") != "${{ always() }}":
-        raise ContractError(f"{label} must use the exact always-run condition")
+    if str(job.get("if", "")) != expected_condition:
+        raise ContractError(
+            f"{label} must use the exact condition {expected_condition!r}"
+        )
     if set(_sequence(job.get("needs"), f"{label} needs")) != expected_needs:
         raise ContractError(f"{label} must depend on every required evidence job")
 
@@ -89,6 +120,44 @@ def _validate_aggregate(
         raise ContractError(f"{label} evaluator must check every dependency result")
 
 
+def _validate_baseline(jobs: dict[str, Any]) -> None:
+    # Leaf evidence jobs shared by both tiers have no job-level condition.
+    for job_id in PR_FAST_NEEDS:
+        job = _mapping(jobs.get(job_id), f"baseline job {job_id}")
+        if "if" in job:
+            raise ContractError(f"baseline job {job_id} must not have a job-level if")
+        if not _sequence(job.get("steps"), f"baseline job {job_id} steps"):
+            raise ContractError(f"baseline job {job_id} must execute real steps")
+
+    # Windows filesystem belongs to the main tier: it must run only off pull_request
+    # (tier placement, not a permanent skip) and run the full Windows suite.
+    windows = _mapping(jobs.get("windows-filesystem"), "windows-filesystem job")
+    if str(windows.get("if", "")) != WINDOWS_CONDITION:
+        raise ContractError(
+            f"windows-filesystem must use the exact condition {WINDOWS_CONDITION!r}"
+        )
+    if "windows-full" not in _run_text(windows):
+        raise ContractError("windows-filesystem must run the full Windows suite")
+
+    # macOS APFS is safety-tier only; the transitional PR/main duplicate is removed.
+    if "macos-filesystem" in jobs:
+        raise ContractError("baseline must not run macOS APFS; it belongs to the safety tier")
+    if "tier-complete" in jobs:
+        raise ContractError("baseline must not keep the transitional tier-complete job")
+
+    pr_fast = _mapping(jobs.get("pr-fast"), "pr-fast job")
+    if str(pr_fast.get("name", "")) != "pr-fast":
+        raise ContractError("pr-fast aggregate must emit the pr-fast check context")
+    _validate_aggregate(pr_fast, set(PR_FAST_NEEDS), PR_FAST_CONDITION, "pr-fast")
+
+    main_full = _mapping(jobs.get("main-full"), "main-full job")
+    if str(main_full.get("name", "")) != "main-full":
+        raise ContractError("main-full aggregate must emit the main-full check context")
+    _validate_aggregate(
+        main_full, set(MAIN_FULL_NEEDS), MAIN_FULL_CONDITION, "main-full"
+    )
+
+
 def validate_contracts(root: Path = ROOT) -> None:
     workflows = root / ".github" / "workflows"
     baseline = _load(workflows / "baseline.yml")
@@ -101,18 +170,7 @@ def validate_contracts(root: Path = ROOT) -> None:
         raise ContractError("baseline push trigger must remain restricted to main")
 
     jobs = _mapping(baseline.get("jobs"), "baseline jobs")
-    for context in REQUIRED_CONTEXTS:
-        job = _mapping(jobs.get(context), f"required job {context}")
-        if "if" in job:
-            raise ContractError(f"required job {context} must not have a job-level if")
-        if not _sequence(job.get("steps"), f"required job {context} steps"):
-            raise ContractError(f"required job {context} must execute real steps")
-
-    tier = _mapping(jobs.get("tier-complete"), "tier-complete job")
-    tier_name = str(tier.get("name", ""))
-    if "pr-fast" not in tier_name or "main-full" not in tier_name:
-        raise ContractError("tier-complete must emit pr-fast or main-full by event")
-    _validate_aggregate(tier, set(REQUIRED_CONTEXTS), "tier-complete")
+    _validate_baseline(jobs)
 
     baseline_runs = "\n".join(_run_text(_mapping(job, "baseline job")) for job in jobs.values())
     for required in (
@@ -175,6 +233,7 @@ def validate_contracts(root: Path = ROOT) -> None:
             "four-path-installer-parity",
             "fault-injection",
         },
+        SAFETY_CONDITION,
         "safety-complete",
     )
 
@@ -214,7 +273,7 @@ def validate_contracts(root: Path = ROOT) -> None:
             raise ContractError("observed ruleset name must match the exact live name")
         if entry["proposed"].get("name") != entry.get("name"):
             raise ContractError("proposed ruleset name must preserve the live name")
-        if set(contexts(entry, "observed")) != set(REQUIRED_CONTEXTS):
+        if set(contexts(entry, "observed")) != set(MIGRATION_CONTEXTS):
             raise ContractError("observed ruleset contexts must remain the exact six")
     if contexts(rulesets[21659417], "proposed") != ["pr-fast"]:
         raise ContractError("proposed branch ruleset must require only pr-fast")

@@ -1,7 +1,8 @@
 # 架构减重路线与施工要求
 
 > 决策日期：2026-09-01  
-> 状态：工包 A-C 已合并；工包 D workflow 实施中，live ruleset 待单独授权
+> 状态：工包 A-C 已合并；工包 D（CI 分层 + live ruleset 迁移）与工包 E（closeout）
+> 在本 PR 完成，阶段一收尾
 > 工包 D 基线：`main@21cf4105b98da106a221b2ace87492d4978bfa53`
 > 当前原则：先做行为保持型减重，再讨论兼容层迁移和大模块拆分
 
@@ -192,10 +193,11 @@ CI 分层的目标是降低验证频率，不是删除 release 证据。
 - `tools/check_workflow_contract.py` 是 workflow 静态契约的唯一实现，敌对回归覆盖删除
   context、叶子条件 skip、聚合缺少 `always()`/依赖结果、缺安全车证据和文档命令
   漂移；`tools/check_job_results.py` 唯一负责严格的 all-success 结果判定；
-- live ruleset 本 PR 不写入。精确旧值、新值、迁移顺序、验证和回滚统一记录在
-  [`ruleset-migration-plan.md`](ruleset-migration-plan.md)。只有 ruleset 获得另行授权并
-  验证后，后续清理 PR 才能移除六个过渡 context 以及 PR 上的临时 Windows/macOS
-  兼容成本。
+- live ruleset 迁移已在本 PR 完成：branch ruleset `21659417` 只要求 `pr-fast`，
+  tag ruleset `21659622` 要求 `main-full` + `safety`。六个过渡 compatibility
+  context 不再是 required check，PR 上的临时 Windows/macOS 兼容成本已随清理移除。
+  精确旧值、新值、迁移顺序、live GET before/after 证据和回滚统一记录在
+  [`ruleset-migration-plan.md`](ruleset-migration-plan.md)。
 
 ### 3.5 工包 E：文档与历史边界
 
@@ -257,8 +259,8 @@ CI 分层的目标是降低验证频率，不是删除 release 证据。
 9. 目标模块中的重复实现和总代码量有可核验下降；
 10. README、development、当前路线和 Issue/PR 交接相互一致。
 
-若 CI 分层因 ruleset 授权尚未执行，可以将代码去重部分标记完成，但阶段一总工单仍
-保持 open，并明确记录唯一剩余阻塞项。
+CI 分层与 live ruleset 迁移已在本 PR 完成，且 branch/tag ruleset 没有悬空 required
+check；上述第 7、8 项随收尾一并满足。阶段一总工单在 cleanup/closeout PR 合并后关闭。
 
 ## 7. 后续阶段门槛
 
@@ -283,3 +285,54 @@ CI 分层的目标是降低验证频率，不是删除 release 证据。
 
 拆分验收以 import 方向、职责边界、测试定位和变更影响范围改善为准，不以文件数量
 增加为目标。
+
+## 8. 阶段一收尾记录（工包 E）
+
+### 8.1 最终模块边界
+
+- `skills/make-bilingual-study-pdf/scripts/job_state.py` 是唯一 Job/Gate evaluator；
+  `pipeline.py status` 与 `finalize_qa.py` 都消费它，不再各自维护状态机。
+- `skills/make-bilingual-study-pdf/scripts/safe_artifacts.py` 是运行时工作产物文件
+  系统操作的唯一通用实现；`profile.py` 只保留 schema/contract、canonical hash、
+  绑定与迁移规则。
+- `tools/_payload_fs.py` 是 EOL/manifest/repository 维护工具的共享 payload helper；
+  `scripts/release_check.py` 保持标准库-only、自包含。
+- `tools/run_test_suite.py` 是测试命令与 suite 成员关系的唯一声明处。
+- `tools/check_workflow_contract.py` 是 workflow 静态契约的唯一实现；
+  `tools/check_job_results.py` 唯一负责严格 all-success 结果判定。
+- CI 层级：`.github/workflows/baseline.yml` 承载 `pr-fast`（PR）与 `main-full`
+  （push/manual）；`.github/workflows/safety.yml` 独占 APFS、四安装路径、
+  authenticated-failure fallback 与完整故障注入；`.github/workflows/release.yml`
+  保持 guarded draft release。
+
+### 8.2 Ruleset 迁移结果
+
+- branch ruleset `21659417` `main-baseline-gate`：由六个兼容 context 迁移为单一
+  `pr-fast`（strict=true），其余条件、规则顺序、PR 参数、integration ID 与
+  bypass 字节等价。
+- tag ruleset `21659622` `v-release-tags`：由六个兼容 context 迁移为
+  `main-full` + `safety`（strict=false），其余字段字节等价。
+- 迁移顺序、live GET before/after、验证证据与回滚记录在
+  [`ruleset-migration-plan.md`](ruleset-migration-plan.md) 与
+  [`ruleset-migration-state.json`](ruleset-migration-state.json)。
+
+### 8.3 删除量与测试证据
+
+D3 清理移除的过渡重复实现：
+
+- `.github/workflows/baseline.yml` 中每个 PR/push 都运行的 `macos-filesystem` job
+  （APFS 已归 safety tier）；
+- PR 上的 Windows smoke suite（`windows-smoke`），Windows 只保留 `main` 完整车；
+- 过渡聚合 job `tier-complete`，替换为事件分流的 `pr-fast` / `main-full` 两个
+  always-run 聚合；
+- `run_test_suite.py` 中不再被任何 suite 引用的 `macos-alias-regressions` 命令。
+
+D3+E 变更规模（相对 `main@f7b08d4c10a5cd7adf917805177431ac2dab080b`）记录在
+PR #14 描述（+/- LOC、文件数、hosted PR CI 链接、live ruleset before/after）。
+
+### 8.4 明确未实施（后续工包）
+
+- 阶段二 V1→V2 Profile schema 迁移；
+- 阶段三巨型模块拆分（`adapters/mineru.py`、`audit_source.py`、`audit_docx.py`、
+  `audit_outputs.py`）；
+- 创建 tag、Draft/公开 Release 或替换已安装用户 Skill。
