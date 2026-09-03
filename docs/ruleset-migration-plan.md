@@ -7,7 +7,8 @@ rollback plan. The machine-readable old and proposed values are frozen in
 ## Execution record
 
 > 2026-09-03: D2 post-merge verification is complete and live-ruleset migration is
-> authorized for work packages D3+E. The steps below are being executed in order.
+> authorized for work packages D3+E. The observed timeline is reported truthfully,
+> including one order deviation from the authorized sequence.
 
 - Baseline `main@f7b08d4c10a5cd7adf917805177431ac2dab080b`: run
   `33646149699` (push) attempt 1 was cancelled because `automated-forward` hit its
@@ -18,15 +19,29 @@ rollback plan. The machine-readable old and proposed values are frozen in
 - Safety `main@f7b08d4c...`: run `33714112289` (workflow_dispatch) succeeded with
   `bind-default-branch`, `macos-apfs-alias`, `four-path-installer-parity`,
   `fault-injection`, and the final `safety` aggregate all successful, none skipped.
-- Branch ruleset `21659417` was updated to its complete `proposed` object (single
-  `pr-fast` context) and re-read field-by-field: name, enforcement, conditions,
-  bypass list, rule order, pull-request parameters, strictness, integration ID, and
-  contexts all match.
-- Tag ruleset `21659622` was then updated to its complete `proposed` object
-  (`main-full` + `safety`, both from integration `15368`) only after the exact
-  `main` SHA `f7b08d4c...` had a successful `main-full` and fresh `safety`, and was
-  re-read field-by-field: name, enforcement, conditions, bypass list, rule order,
-  strictness, integration ID, and contexts all match. No test tag was created.
+
+Observed write/probe timeline (UTC):
+
+| Time | Event |
+| --- | --- |
+| 04:16:06Z | branch ruleset `21659417` updated to `pr-fast` |
+| 04:18:38Z | PR #14 created |
+| 04:18:41Z | first-round probe Baseline started on PR #14 |
+| 04:19:16Z | tag ruleset `21659622` updated to `main-full` + `safety` |
+| 04:20:57Z | first-round `pr-fast` aggregate started |
+| 04:20:59Z | `pr-fast` passed |
+
+Both writes used the complete `proposed` object and each post-write GET matched
+name, enforcement, conditions, bypass list, rule order, pull-request parameters,
+strictness, integration ID, and contexts field-by-field. No test tag was created.
+
+**Order deviation:** the tag ruleset write at 04:19:16Z happened before the branch
+probe's `pr-fast` resolved at 04:20:59Z (about 1m43s early), so `pr-fast` was not
+first proven on a probe PR before the tag write, contrary to the authorized sequence
+below. This is a process-order deviation, not a settings-value drift. Remediation is
+pending an explicit maintainer decision between (A) rollback and ordered redo, or (B)
+compensation verification via a separate harmless probe PR; no further settings write
+is made until that decision.
 
 ## Read-only snapshot
 
