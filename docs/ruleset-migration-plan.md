@@ -1,9 +1,28 @@
 # CI ruleset migration and rollback plan
 
-This document is a review artifact, not authorization to change repository settings.
-The work-package-D implementation deliberately leaves both live rulesets untouched.
-The machine-readable old and proposed values are frozen in
+This document is a review artifact and the ordered migration, verification, and
+rollback plan. The machine-readable old and proposed values are frozen in
 [`ruleset-migration-state.json`](ruleset-migration-state.json).
+
+## Execution record
+
+> 2026-09-03: D2 post-merge verification is complete and live-ruleset migration is
+> authorized for work packages D3+E. The steps below are being executed in order.
+
+- Baseline `main@f7b08d4c10a5cd7adf917805177431ac2dab080b`: run
+  `33646149699` (push) attempt 1 was cancelled because `automated-forward` hit its
+  20-minute timeout on a transient Azure apt-mirror slowdown while downloading the
+  document toolchain. Attempt 2 re-ran the exact SHA and all six compatibility
+  contexts (`workflow-lint`, `self-test`, `installer-parity`, `automated-forward`,
+  `windows-filesystem`, `macos-filesystem`) plus `main-full` succeeded.
+- Safety `main@f7b08d4c...`: run `33714112289` (workflow_dispatch) succeeded with
+  `bind-default-branch`, `macos-apfs-alias`, `four-path-installer-parity`,
+  `fault-injection`, and the final `safety` aggregate all successful, none skipped.
+- Branch ruleset `21659417` was updated to its complete `proposed` object (single
+  `pr-fast` context) and re-read field-by-field: name, enforcement, conditions,
+  bypass list, rule order, pull-request parameters, strictness, integration ID, and
+  contexts all match. Tag ruleset `21659622` remains on the six compatibility
+  contexts until a fresh `main-full` + `safety` pair is confirmed on the exact SHA.
 
 ## Read-only snapshot
 
