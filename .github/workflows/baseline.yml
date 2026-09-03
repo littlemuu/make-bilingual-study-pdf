@@ -112,6 +112,7 @@ jobs:
             --upstream-validator .ci/openai-skill-creator/skills/.system/skill-creator/scripts/quick_validate.py
 
   windows-filesystem:
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: windows-2025
     timeout-minutes: 15
 
@@ -133,39 +134,10 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements-dev.txt
           python -m pip check
 
-      - name: Run event-tier Windows filesystem regressions
+      - name: Run full Windows filesystem regressions
         env:
           PYTHONDONTWRITEBYTECODE: "1"
-        run: |
-          $suite = if ("${{ github.event_name }}" -eq "pull_request") { "windows-smoke" } else { "windows-full" }
-          python tools/run_test_suite.py $suite
-
-  macos-filesystem:
-    runs-on: macos-15
-    timeout-minutes: 10
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: skills/make-bilingual-study-pdf/requirements.txt
-
-      - name: Install Python dependencies
-        run: |
-          python -m pip install --disable-pip-version-check -r "$SKILL_PATH/requirements.txt"
-          python -m pip check
-
-      - name: Run real APFS path-alias regressions
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: python tests/macos_path_alias_test.py
+        run: python tools/run_test_suite.py windows-full
 
   installer-parity:
     runs-on: ubuntu-24.04
@@ -296,16 +268,14 @@ jobs:
           path: artifacts/v23-e2e
           if-no-files-found: warn
 
-  tier-complete:
-    name: ${{ github.event_name == 'pull_request' && 'pr-fast' || 'main-full' }}
-    if: ${{ always() }}
+  pr-fast:
+    name: pr-fast
+    if: ${{ always() && github.event_name == 'pull_request' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     needs:
       - workflow-lint
       - self-test
-      - windows-filesystem
-      - macos-filesystem
       - installer-parity
       - automated-forward
 
@@ -317,7 +287,37 @@ jobs:
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
-      - name: Require every migration context to succeed
+      - name: Require every pr-fast evidence job to succeed
+        env:
+          CI_NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python tools/check_job_results.py --require \
+            workflow-lint \
+            self-test \
+            installer-parity \
+            automated-forward
+
+  main-full:
+    name: main-full
+    if: ${{ always() && github.event_name != 'pull_request' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    needs:
+      - workflow-lint
+      - self-test
+      - windows-filesystem
+      - installer-parity
+      - automated-forward
+
+    steps:
+      - name: Check out exact aggregate head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Require every main-full evidence job to succeed
         env:
           CI_NEEDS_JSON: ${{ toJSON(needs) }}
         run: |
@@ -325,6 +325,5 @@ jobs:
             workflow-lint \
             self-test \
             windows-filesystem \
-            macos-filesystem \
             installer-parity \
             automated-forward

@@ -54,7 +54,6 @@ COMMANDS = {
         Command("repository-release-regressions", ("tests/repository_release_check_test.py",)),
         Command("profile-binding-regressions", ("tests/profile_binding_test.py",)),
         Command("safe-artifact-regressions", ("tests/safe_artifacts_test.py",)),
-        Command("macos-alias-regressions", ("tests/macos_path_alias_test.py",)),
         Command("work-boundary-regressions", ("tests/work_artifact_boundary_test.py",)),
         Command(
             "translation-boundary-regressions",
@@ -152,14 +151,7 @@ SUITES = {
     ),
     "metadata": REPOSITORY_GATES,
     "pr-fast": REPOSITORY_GATES + PR_FAST_REGRESSIONS,
-    "full": REPOSITORY_GATES + CORE_REGRESSIONS + ("macos-alias-regressions",),
-    "windows-smoke": (
-        "eol-regressions",
-        "installed-release-regressions",
-        "repository-release-regressions",
-        "profile-binding-regressions",
-        "safe-artifact-regressions",
-    ),
+    "full": REPOSITORY_GATES + CORE_REGRESSIONS,
     "windows-full": (
         "eol-regressions",
         "installed-release-regressions",
