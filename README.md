@@ -19,7 +19,15 @@
 live branch/tag ruleset 已迁移到新聚合 context。该阶段不迁移 Profile schema、不改变
 任何可见成品、不修改运行时依赖，也不创建 tag 或 Release。
 
-后续阶段（V1→V2 Profile 迁移、巨型模块拆分）需独立工单与授权，见
+2026-09-03 的产品路线收敛进一步确定：**原生文本 PDF 是默认轻量核心，MinerU 是
+显式选择、只导入预生成结果的高级后端。** 近期保留现有 MinerU importer 和回归，但
+不扩展版本、backend、云端执行或 OCR 自动通过能力。下一阶段先完成
+`assignment-en-zh` 的 V1→V2 等价迁移；再优先建设原生 PDF 适用性预检和通用
+作业/handout 能力。巨型模块拆分改为由真实功能改动驱动，不再优先拆 MinerU。
+
+当前后续产品路线见
+[`docs/lightweight-core-roadmap.md`](docs/lightweight-core-roadmap.md)；阶段一的架构
+决策、实现边界与历史收尾证据保留在
 [`docs/architecture-simplification.md`](docs/architecture-simplification.md)。现有
 [`.github/PROJECT_HANDOFF.md`](.github/PROJECT_HANDOFF.md) 与
 [`.github/V2.3_ACCEPTANCE.md`](.github/V2.3_ACCEPTANCE.md) 继续保留为 V2.3 历史
@@ -50,14 +58,16 @@ run `33724559094` 已真实完成并通过 `workflow-lint`、`self-test`、
 脚本负责文档结构与呈现，模型只填写带稳定 ID 的翻译记录，不直接生成整份
 DOCX 或 LaTeX 文档。
 
-| Profile | 适用文档 | 输入适配器 |
-| --- | --- | --- |
-| `assignment-en-zh` | 英文作业与题目集 | 原生文本 PDF |
-| `academic-paper-en-zh` | 英文学术论文 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 |
-| `lecture-notes-en-zh` | 英文讲义 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 |
+| Profile | 适用文档 | 当前输入适配器 | 产品定位 |
+| --- | --- | --- | --- |
+| `assignment-en-zh` | 英文作业与题目集 | 原生文本 PDF | 默认轻量路径；以 CS336 及相似作业为主要基线 |
+| `academic-paper-en-zh` | 英文学术论文 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 | 可选高级路径 |
+| `lecture-notes-en-zh` | 英文讲义 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 | 可选高级路径 |
 
-MinerU 适配器只消费用户已经生成的输出，不安装、不运行 MinerU，也不下载模型。
-扫描或严重乱码页面必须停在人工源文件审查门禁，不能仅凭解析器输出自动通过。
+上表描述当前真实行为：论文和讲义 Profile 目前仍要求预生成 MinerU 输出；路线更新
+本身没有把它们改成原生适配器。MinerU 不属于 Skill 的安装依赖，适配器只消费用户
+已经生成的输出，不安装、不运行 MinerU，也不下载模型。扫描或严重乱码页面必须停在
+人工源文件审查门禁，不能仅凭解析器输出自动通过。
 
 ## 安装或升级
 
@@ -173,8 +183,10 @@ PDF 渲染以及逐页人工视觉复核。只有最终 `output/qa-report.json` 
 ## 仓库开发与发布校验
 
 开发、完整测试矩阵与发布门禁见
-[`docs/development.md`](docs/development.md)。架构减重的当前要求见
-[`docs/architecture-simplification.md`](docs/architecture-simplification.md)。V2.3 的历史验收证据保留在
+[`docs/development.md`](docs/development.md)。阶段一架构减重的事实与历史收尾见
+[`docs/architecture-simplification.md`](docs/architecture-simplification.md)；阶段一之后
+的当前产品路线见
+[`docs/lightweight-core-roadmap.md`](docs/lightweight-core-roadmap.md)。V2.3 的历史验收证据保留在
 [`.github/V2.3_ACCEPTANCE.md`](.github/V2.3_ACCEPTANCE.md)，不属于安装负载，也不参与后续版本元数据校验。
 
 从仓库根目录运行当前负载的标准库校验：
