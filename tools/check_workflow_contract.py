@@ -44,6 +44,13 @@ MAIN_FULL_NEEDS = (
     "automated-forward",
 )
 
+# Exact job-level conditions. These must match byte-for-byte: any extra term
+# (`&& false`, `|| true`, ...) would let a conditional skip pass as success.
+PR_FAST_CONDITION = "${{ always() && github.event_name == 'pull_request' }}"
+MAIN_FULL_CONDITION = "${{ always() && github.event_name != 'pull_request' }}"
+SAFETY_CONDITION = "${{ always() }}"
+WINDOWS_CONDITION = "${{ github.event_name != 'pull_request' }}"
+
 
 class ContractError(RuntimeError):
     pass
@@ -84,11 +91,12 @@ def _require_triggers(workflow: dict[str, Any], expected: set[str], label: str) 
 
 
 def _validate_aggregate(
-    job: dict[str, Any], expected_needs: set[str], label: str
+    job: dict[str, Any], expected_needs: set[str], expected_condition: str, label: str
 ) -> None:
-    condition = str(job.get("if", ""))
-    if "always()" not in condition:
-        raise ContractError(f"{label} must use the always-run condition")
+    if str(job.get("if", "")) != expected_condition:
+        raise ContractError(
+            f"{label} must use the exact condition {expected_condition!r}"
+        )
     if set(_sequence(job.get("needs"), f"{label} needs")) != expected_needs:
         raise ContractError(f"{label} must depend on every required evidence job")
 
@@ -124,10 +132,9 @@ def _validate_baseline(jobs: dict[str, Any]) -> None:
     # Windows filesystem belongs to the main tier: it must run only off pull_request
     # (tier placement, not a permanent skip) and run the full Windows suite.
     windows = _mapping(jobs.get("windows-filesystem"), "windows-filesystem job")
-    windows_if = str(windows.get("if", ""))
-    if "github.event_name" not in windows_if or "!= 'pull_request'" not in windows_if:
+    if str(windows.get("if", "")) != WINDOWS_CONDITION:
         raise ContractError(
-            "windows-filesystem must gate to non-pull_request events only"
+            f"windows-filesystem must use the exact condition {WINDOWS_CONDITION!r}"
         )
     if "windows-full" not in _run_text(windows):
         raise ContractError("windows-filesystem must run the full Windows suite")
@@ -141,18 +148,14 @@ def _validate_baseline(jobs: dict[str, Any]) -> None:
     pr_fast = _mapping(jobs.get("pr-fast"), "pr-fast job")
     if str(pr_fast.get("name", "")) != "pr-fast":
         raise ContractError("pr-fast aggregate must emit the pr-fast check context")
-    pr_condition = str(pr_fast.get("if", ""))
-    if "== 'pull_request'" not in pr_condition:
-        raise ContractError("pr-fast aggregate must gate to the pull_request event")
-    _validate_aggregate(pr_fast, set(PR_FAST_NEEDS), "pr-fast")
+    _validate_aggregate(pr_fast, set(PR_FAST_NEEDS), PR_FAST_CONDITION, "pr-fast")
 
     main_full = _mapping(jobs.get("main-full"), "main-full job")
     if str(main_full.get("name", "")) != "main-full":
         raise ContractError("main-full aggregate must emit the main-full check context")
-    main_condition = str(main_full.get("if", ""))
-    if "!= 'pull_request'" not in main_condition:
-        raise ContractError("main-full aggregate must gate off the pull_request event")
-    _validate_aggregate(main_full, set(MAIN_FULL_NEEDS), "main-full")
+    _validate_aggregate(
+        main_full, set(MAIN_FULL_NEEDS), MAIN_FULL_CONDITION, "main-full"
+    )
 
 
 def validate_contracts(root: Path = ROOT) -> None:
@@ -230,6 +233,7 @@ def validate_contracts(root: Path = ROOT) -> None:
             "four-path-installer-parity",
             "fault-injection",
         },
+        SAFETY_CONDITION,
         "safety-complete",
     )
 

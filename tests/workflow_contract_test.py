@@ -92,7 +92,7 @@ class WorkflowContractTests(unittest.TestCase):
             "    if: ${{ github.event_name != 'pull_request' }}",
             "    if: false",
         )
-        with self.assertRaisesRegex(checker.ContractError, "non-pull_request"):
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
             checker.validate_contracts(self.root)
 
     def test_windows_filesystem_gated_to_pull_request_only_is_rejected(self) -> None:
@@ -101,7 +101,7 @@ class WorkflowContractTests(unittest.TestCase):
             "    if: ${{ github.event_name != 'pull_request' }}",
             "    if: ${{ github.event_name == 'pull_request' }}",
         )
-        with self.assertRaisesRegex(checker.ContractError, "non-pull_request"):
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
             checker.validate_contracts(self.root)
 
     def test_windows_filesystem_without_full_suite_is_rejected(self) -> None:
@@ -121,7 +121,7 @@ class WorkflowContractTests(unittest.TestCase):
             "    if: ${{ always() && github.event_name == 'pull_request' }}",
             "    if: ${{ github.event_name == 'pull_request' }}",
         )
-        with self.assertRaisesRegex(checker.ContractError, "always-run"):
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
             checker.validate_contracts(self.root)
 
     def test_main_full_without_always_is_rejected(self) -> None:
@@ -130,7 +130,34 @@ class WorkflowContractTests(unittest.TestCase):
             "    if: ${{ always() && github.event_name != 'pull_request' }}",
             "    if: ${{ github.event_name != 'pull_request' }}",
         )
-        with self.assertRaisesRegex(checker.ContractError, "always-run"):
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
+            checker.validate_contracts(self.root)
+
+    def test_pr_fast_condition_with_and_false_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/baseline.yml",
+            "    if: ${{ always() && github.event_name == 'pull_request' }}",
+            "    if: ${{ always() && github.event_name == 'pull_request' && false }}",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
+            checker.validate_contracts(self.root)
+
+    def test_pr_fast_condition_with_or_true_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/baseline.yml",
+            "    if: ${{ always() && github.event_name == 'pull_request' }}",
+            "    if: ${{ always() && github.event_name == 'pull_request' || true }}",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
+            checker.validate_contracts(self.root)
+
+    def test_main_full_condition_with_extra_term_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/baseline.yml",
+            "    if: ${{ always() && github.event_name != 'pull_request' }}",
+            "    if: ${{ always() && github.event_name != 'pull_request' && true }}",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
             checker.validate_contracts(self.root)
 
     def test_pr_fast_missing_one_result_is_rejected(self) -> None:
@@ -185,7 +212,16 @@ class WorkflowContractTests(unittest.TestCase):
             "    if: ${{ always() }}\n",
             "",
         )
-        with self.assertRaisesRegex(checker.ContractError, "always-run"):
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
+            checker.validate_contracts(self.root)
+
+    def test_safety_condition_with_and_false_is_rejected(self) -> None:
+        self._replace(
+            ".github/workflows/safety.yml",
+            "    if: ${{ always() }}\n",
+            "    if: ${{ always() && false }}\n",
+        )
+        with self.assertRaisesRegex(checker.ContractError, "exact condition"):
             checker.validate_contracts(self.root)
 
     def test_release_without_fresh_safety_gate_is_rejected(self) -> None:
