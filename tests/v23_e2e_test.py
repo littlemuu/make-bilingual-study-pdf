@@ -23,6 +23,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import docx_style
 from common import read_json, read_jsonl, sha256_file, write_json, write_jsonl
+from docx_ast import transform
 from pipeline import report_status
 from profile import load_profile
 
@@ -197,25 +198,57 @@ def assert_automated_forward(profile: str, output_root: Path) -> dict[str, Any]:
     }
 
 
-def assert_static_header_fallback(
+def assert_assignment_v1_render(
     output_root: Path, office: str, pdftoppm: str, pdftotext: str
 ) -> dict[str, Any]:
-    """Render a no-Heading-2 document and reject visible STYLEREF errors."""
-    probe = output_root / "header-fallback"
+    """Render a real V1 Problem pair and reject visible STYLEREF errors."""
+    probe = output_root / "assignment-v1-render"
     probe.mkdir()
     profile = load_profile("assignment-en-zh")
-    document = Document()
-    document.add_paragraph("Header fallback render probe.")
+    converted_ast = subprocess.run(
+        ["pandoc", "--from", "markdown", "--to", "json"],
+        input=(
+            "**Problem (p1): Verify the complete assignment render path.**\n\n"
+            "> **问题（p1）：验证完整的作业渲染链。**\n"
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    grouped = transform(json.loads(converted_ast.stdout), profile)
+    problem_count = grouped["meta"]["v2-problem-group-count"]["c"]
+    if problem_count != "1":
+        raise RuntimeError(f"assignment V1 render grouped {problem_count} Problems")
+    grouped_path = probe / "grouped.json"
+    raw_docx_path = probe / "raw.docx"
+    write_json(grouped_path, grouped)
+    subprocess.run(
+        [
+            "pandoc",
+            str(grouped_path),
+            "--from",
+            "json",
+            "--to",
+            "docx",
+            "--output",
+            str(raw_docx_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    document = Document(raw_docx_path)
     docx_style.configure_profile(profile)
     docx_style.apply_styles(
         document,
-        document_title="Header fallback render probe",
+        document_title="Assignment V1 render probe",
         header_label=profile["render"]["docx"]["header_label"],
         footer_label=profile["render"]["docx"]["footer_label"],
     )
-    docx_path = probe / "header-fallback.docx"
-    pdf_path = probe / "header-fallback.pdf"
-    render_prefix = probe / "header-fallback"
+    docx_path = probe / "assignment-v1-render.docx"
+    pdf_path = probe / "assignment-v1-render.pdf"
+    render_prefix = probe / "assignment-v1-render"
     document.save(docx_path)
     converted = subprocess.run(
         [
@@ -246,6 +279,12 @@ def assert_static_header_fallback(
         raise RuntimeError("header fallback rendered an unresolved STYLEREF field")
     if profile["render"]["docx"]["header_label"] not in extracted:
         raise RuntimeError("header fallback label is absent from rendered PDF text")
+    for expected in (
+        "Problem (p1): Verify the complete assignment render path.",
+        "问题（p1）：验证完整的作业渲染链。",
+    ):
+        if expected not in extracted:
+            raise RuntimeError(f"assignment V1 render lost expected text: {expected}")
     subprocess.run(
         [
             pdftoppm,
@@ -260,7 +299,7 @@ def assert_static_header_fallback(
         capture_output=True,
         text=True,
     )
-    render_path = probe / "header-fallback.png"
+    render_path = probe / "assignment-v1-render.png"
     if not render_path.is_file():
         raise RuntimeError("header fallback render was not created")
     return {
@@ -269,6 +308,7 @@ def assert_static_header_fallback(
         "pdf_sha256": sha256_file(pdf_path),
         "render_sha256": sha256_file(render_path),
         "header_label": profile["render"]["docx"]["header_label"],
+        "problem_group_count": 1,
         "unresolved_reference_error": False,
     }
 
@@ -293,7 +333,7 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     results = [assert_automated_forward(profile, output_root) for profile in PROFILES]
-    header_fallback = assert_static_header_fallback(
+    assignment_v1_render = assert_assignment_v1_render(
         output_root, office, pdftoppm, pdftotext
     )
     report = {
@@ -311,7 +351,7 @@ def main() -> None:
             "fc_match": tool_version([require_tool("fc-match"), "--version"]),
         },
         "profiles": results,
-        "header_fallback": header_fallback,
+        "assignment_v1_render": assignment_v1_render,
     }
     write_json(output_root / "v23-e2e-report.json", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
