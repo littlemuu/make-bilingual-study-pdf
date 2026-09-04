@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "23d186edbb495d7afd9d07d557c57a42155870e90fe827e15669a92c384d4eee",
+  "tree_sha256": "7257818d230c5b4301622df7a560e922ff35cd86aba0da9ae5bc284d2652dec6",
   "files": [
     {
       "path": "SKILL.md",
@@ -52,8 +52,8 @@
     },
     {
       "path": "references/format-spec.md",
-      "size": 8981,
-      "sha256": "10681450dfd00e96979c66a4d96fc7667c3ffae5390839d7b7a88ba9f2abd600"
+      "size": 9220,
+      "sha256": "284473906bb27f6396114e445b2033634c20f8b0ae2a47fde158db32c15ef094"
     },
     {
       "path": "references/profile-ir.md",
@@ -62,8 +62,8 @@
     },
     {
       "path": "references/qa-rules.md",
-      "size": 8170,
-      "sha256": "96bb4d6e18e24267144d4c5ed189b80bd64479f74c598271e5a08c343a42e624"
+      "size": 8280,
+      "sha256": "d61e2bd33c070934db02c4d50774d0837f025b8abfe830188dec9fd803bf2536"
     },
     {
       "path": "references/translation-protocol.md",
@@ -97,8 +97,8 @@
     },
     {
       "path": "scripts/audit_docx.py",
-      "size": 65345,
-      "sha256": "d76e39406a298012854e0af76e94cc654d2a59d3723e9fa6670d482ca1c0645f"
+      "size": 65370,
+      "sha256": "75c635887ac811726ade5e38ef696f698ebdade4115b081d6b6427ce0b2dee02"
     },
     {
       "path": "scripts/audit_outputs.py",
@@ -147,13 +147,13 @@
     },
     {
       "path": "scripts/docx_ast.py",
-      "size": 23616,
-      "sha256": "2fc134e389945db190e01f1f4782ad1b16751412c03fe46a586890a1ce5f7efa"
+      "size": 25642,
+      "sha256": "17983105d000e3ae89d9c5d3ee3a762049e94772f0c6c02690d0c6b5cc7b9e84"
     },
     {
       "path": "scripts/docx_style.py",
-      "size": 30593,
-      "sha256": "094aca7faa3be805d1b512b5a639e6373954c1baf712f5a55e9a363b838ff516"
+      "size": 30856,
+      "sha256": "811633ede154275006996233ee15b65488dbfeb17a3fea033fc6dc6868472bda"
     },
     {
       "path": "scripts/extract_pdf.py",

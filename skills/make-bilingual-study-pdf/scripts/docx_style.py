@@ -535,6 +535,10 @@ def add_field(paragraph, instruction_text: str, fallback: str) -> None:
 
 
 def configure_page(document: Document, *, header_label: str, footer_label: str) -> None:
+    has_heading_two = any(
+        paragraph.style is not None and paragraph.style.name == "Heading 2"
+        for paragraph in document.paragraphs
+    )
     for section in document.sections:
         section.page_width = Cm(21.0)
         section.page_height = Cm(29.7)
@@ -550,8 +554,12 @@ def configure_page(document: Document, *, header_label: str, footer_label: str) 
         header.clear()
         header.alignment = WD_ALIGN_PARAGRAPH.LEFT
         set_spacing(header, line=1.0)
-        set_run_font(header.add_run(f"{header_label}  ·  "), LATIN_FONT, 8.2, color=MUTED)
-        add_field(header, 'STYLEREF "Heading 2"', "Bilingual study edition")
+        suffix = "  ·  " if has_heading_two else ""
+        set_run_font(
+            header.add_run(f"{header_label}{suffix}"), LATIN_FONT, 8.2, color=MUTED
+        )
+        if has_heading_two:
+            add_field(header, 'STYLEREF "Heading 2"', "Bilingual study edition")
 
         footer = section.footer.paragraphs[0]
         footer.clear()
