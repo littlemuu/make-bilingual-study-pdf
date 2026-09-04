@@ -34,6 +34,7 @@ from safe_artifacts import (
 W_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 GENERIC_MARKERS = ("V23-CALLOUT-BEGIN", "V23-CALLOUT-END")
 STYLE_COLORS = {
+    "problem": "D97706",
     "abstract": "4D7C8A",
     "definition": "2F7D5B",
     "theorem": "365E9D",

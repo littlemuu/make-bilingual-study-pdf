@@ -20,8 +20,9 @@ sys.path.insert(0, str(SCRIPTS))
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
 
-import docx_style
+import audit_docx
 import compile_docx_pdf
+import docx_style
 from adapters.mineru import LARGE_RASTER_PAGE_AREA_RATIO, RASTER_COVERAGE_METHOD
 from audit_source import current_source_audit_bindings
 from build_docx import materialize_html_tables
@@ -74,6 +75,78 @@ def test_legacy_transform() -> None:
     assert grouped[-1] == paragraph(PROBLEM_END)
     assert sum(block.get("t") == "HorizontalRule" for block in grouped) == 1
     assert result["meta"]["v2-problem-group-count"]["c"] == "1"
+
+
+def test_legacy_transform_pairs_real_build_output_markdown() -> None:
+    profile = load_profile("assignment-en-zh")
+    converted = subprocess.run(
+        ["pandoc", "--from", "markdown", "--to", "json"],
+        input="**Problem (p1): source half**\n\n> **问题（p1）：目标半部分**\n",
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    document = json.loads(converted.stdout)
+    result = transform(document, profile)
+    grouped = result["blocks"][0]["c"]
+    assert grouped[0] == paragraph(PROBLEM_BEGIN)
+    assert grouped[-1] == paragraph(PROBLEM_END)
+    assert result["meta"]["v2-problem-group-count"]["c"] == "1"
+
+
+def test_legacy_transform_rejects_language_and_identifier_mismatches() -> None:
+    profile = load_profile("assignment-en-zh")
+    cases = (
+        (
+            paragraph("Problem (p1): source half"),
+            target("问题（p2）：编号不一致"),
+        ),
+        (
+            paragraph("问题（p1）：源语言位置错误"),
+            target("Problem (p1): target-language position is wrong"),
+        ),
+        (
+            paragraph("Problem (p1): source half"),
+            target("普通译文，不是问题标签。"),
+        ),
+    )
+    for source, translated in cases:
+        document = {
+            "pandoc-api-version": [1, 23],
+            "meta": {},
+            "blocks": [source, translated],
+        }
+        result = transform(document, profile)
+        assert result["blocks"] == document["blocks"]
+        assert result["meta"]["v2-problem-group-count"]["c"] == "0"
+
+
+def test_page_header_omits_unresolvable_styleref() -> None:
+    no_heading = Document()
+    no_heading.add_paragraph("Body only")
+    docx_style.configure_page(
+        no_heading, header_label="Bilingual study edition", footer_label="页脚"
+    )
+    header = no_heading.sections[0].header
+    instructions = [node.text for node in header._element.xpath(".//w:instrText")]
+    assert not any("STYLEREF" in (text or "") for text in instructions)
+    assert header.paragraphs[0].text == "Bilingual study edition"
+
+    with_heading = Document()
+    with_heading.add_heading("Section", level=2)
+    docx_style.configure_page(
+        with_heading, header_label="Bilingual study edition", footer_label="页脚"
+    )
+    header = with_heading.sections[0].header
+    instructions = [node.text for node in header._element.xpath(".//w:instrText")]
+    assert any('STYLEREF "Heading 2"' in (text or "") for text in instructions)
+
+
+def test_v2_audit_palette_covers_assignment_styles() -> None:
+    assert audit_docx.STYLE_COLORS["problem"] == docx_style.PROBLEM
+    assert audit_docx.STYLE_COLORS["example"] == docx_style.EXAMPLE
+    assert audit_docx.STYLE_COLORS["tip"] == docx_style.TIP
 
 
 def test_generic_ast() -> None:
@@ -867,6 +940,10 @@ def test_frozen_audit() -> None:
 
 def main() -> None:
     test_legacy_transform()
+    test_legacy_transform_pairs_real_build_output_markdown()
+    test_legacy_transform_rejects_language_and_identifier_mismatches()
+    test_page_header_omits_unresolvable_styleref()
+    test_v2_audit_palette_covers_assignment_styles()
     test_generic_ast()
     test_shared_style_roles()
     test_html_table_materialization()

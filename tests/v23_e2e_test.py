@@ -15,12 +15,17 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from docx import Document
+
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
+import docx_style
 from common import read_json, read_jsonl, sha256_file, write_json, write_jsonl
+from docx_ast import transform
 from pipeline import report_status
+from profile import load_profile
 
 
 FIXTURE_ROOT = REPOSITORY / "tests" / "fixtures" / "mineru" / "pipeline-3.4.4"
@@ -193,6 +198,121 @@ def assert_automated_forward(profile: str, output_root: Path) -> dict[str, Any]:
     }
 
 
+def assert_assignment_v1_render(
+    output_root: Path, office: str, pdftoppm: str, pdftotext: str
+) -> dict[str, Any]:
+    """Render a real V1 Problem pair and reject visible STYLEREF errors."""
+    probe = output_root / "assignment-v1-render"
+    probe.mkdir()
+    profile = load_profile("assignment-en-zh")
+    converted_ast = subprocess.run(
+        ["pandoc", "--from", "markdown", "--to", "json"],
+        input=(
+            "**Problem (p1): Verify the complete assignment render path.**\n\n"
+            "> **问题（p1）：验证完整的作业渲染链。**\n"
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    grouped = transform(json.loads(converted_ast.stdout), profile)
+    problem_count = grouped["meta"]["v2-problem-group-count"]["c"]
+    if problem_count != "1":
+        raise RuntimeError(f"assignment V1 render grouped {problem_count} Problems")
+    grouped_path = probe / "grouped.json"
+    raw_docx_path = probe / "raw.docx"
+    write_json(grouped_path, grouped)
+    subprocess.run(
+        [
+            "pandoc",
+            str(grouped_path),
+            "--from",
+            "json",
+            "--to",
+            "docx",
+            "--output",
+            str(raw_docx_path),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    document = Document(raw_docx_path)
+    docx_style.configure_profile(profile)
+    docx_style.apply_styles(
+        document,
+        document_title="Assignment V1 render probe",
+        header_label=profile["render"]["docx"]["header_label"],
+        footer_label=profile["render"]["docx"]["footer_label"],
+    )
+    docx_path = probe / "assignment-v1-render.docx"
+    pdf_path = probe / "assignment-v1-render.pdf"
+    render_prefix = probe / "assignment-v1-render"
+    document.save(docx_path)
+    converted = subprocess.run(
+        [
+            office,
+            "--headless",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+            str(probe),
+            str(docx_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if converted.returncode or not pdf_path.is_file():
+        raise RuntimeError(
+            "header fallback LibreOffice conversion failed: "
+            f"{converted.stdout}{converted.stderr}"
+        )
+    extracted = subprocess.run(
+        [pdftotext, str(pdf_path), "-"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    if "Error: Reference source not found" in extracted:
+        raise RuntimeError("header fallback rendered an unresolved STYLEREF field")
+    if profile["render"]["docx"]["header_label"] not in extracted:
+        raise RuntimeError("header fallback label is absent from rendered PDF text")
+    for expected in (
+        "Problem (p1): Verify the complete assignment render path.",
+        "问题（p1）：验证完整的作业渲染链。",
+    ):
+        if expected not in extracted:
+            raise RuntimeError(f"assignment V1 render lost expected text: {expected}")
+    subprocess.run(
+        [
+            pdftoppm,
+            "-png",
+            "-r",
+            "96",
+            "-singlefile",
+            str(pdf_path),
+            str(render_prefix),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    render_path = probe / "assignment-v1-render.png"
+    if not render_path.is_file():
+        raise RuntimeError("header fallback render was not created")
+    return {
+        "status": "passed",
+        "docx_sha256": sha256_file(docx_path),
+        "pdf_sha256": sha256_file(pdf_path),
+        "render_sha256": sha256_file(render_path),
+        "header_label": profile["render"]["docx"]["header_label"],
+        "problem_group_count": 1,
+        "unresolved_reference_error": False,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run V2.3 academic-paper and lecture-notes automated forward tests."
@@ -202,7 +322,8 @@ def main() -> None:
 
     require_tool("pandoc")
     office = require_tool("libreoffice", "soffice")
-    require_tool("pdftoppm")
+    pdftoppm = require_tool("pdftoppm")
+    pdftotext = require_tool("pdftotext")
     require_tool("pdffonts")
     require_tool("fc-match")
 
@@ -212,6 +333,9 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
 
     results = [assert_automated_forward(profile, output_root) for profile in PROFILES]
+    assignment_v1_render = assert_assignment_v1_render(
+        output_root, office, pdftoppm, pdftotext
+    )
     report = {
         "schema_version": 1,
         "status": "passed",
@@ -227,6 +351,7 @@ def main() -> None:
             "fc_match": tool_version([require_tool("fc-match"), "--version"]),
         },
         "profiles": results,
+        "assignment_v1_render": assignment_v1_render,
     }
     write_json(output_root / "v23-e2e-report.json", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))

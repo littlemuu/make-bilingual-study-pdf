@@ -166,6 +166,9 @@ deterministic AST transform splits bilingual headings and paragraph lines, regro
 each complete Problem into English and Chinese halves, and inserts temporary range
 markers. The style pass applies A4 layout, fonts, paragraph bands, Problem/Tip/Example
 callouts, headers, and page fields, then removes every marker before saving.
+The running header uses a `Heading 2` `STYLEREF` only when the document contains that
+style; documents without a level-two heading render the static Profile header label so
+Word and LibreOffice cannot expose an unresolved-reference error.
 
 The matching V2 PDF is rendered from the final DOCX, not independently reassembled.
 Record both hashes so the editable document and final PDF remain traceable.

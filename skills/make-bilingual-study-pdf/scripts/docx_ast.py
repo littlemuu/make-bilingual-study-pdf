@@ -216,6 +216,15 @@ def group_problem(block: dict) -> dict:
     return {"t": "BlockQuote", "c": [begin] + english + [separator] + chinese + [end]}
 
 
+def is_grouped_problem(block: dict) -> bool:
+    children = block.get("c", [])
+    return bool(
+        children
+        and stringify(children[0]) == PROBLEM_BEGIN
+        and stringify(children[-1]) == PROBLEM_END
+    )
+
+
 def normalize_block(block: dict) -> list[dict]:
     kind = block.get("t")
     if kind in {"Para", "Plain"}:
@@ -315,20 +324,68 @@ def transform_headers(blocks: list[dict]) -> list[dict]:
 
 
 def _transform_v1(document: dict, profile: dict) -> dict:
-    """The byte-behavior compatible V2.2 assignment transformation."""
+    """Apply the audited V2.2 assignment transformation."""
     blocks: list[dict] = []
     problem_count = 0
-    for block in document.get("blocks", []):
+    source_blocks = document.get("blocks", [])
+    index = 0
+    while index < len(source_blocks):
+        block = source_blocks[index]
+        next_block = (
+            source_blocks[index + 1] if index + 1 < len(source_blocks) else None
+        )
+        source_semantic = (
+            semantic_match(profile, stringify(block), include_target=False)
+            if block.get("t") == "Para"
+            and next_block
+            and next_block.get("t") == "BlockQuote"
+            else None
+        )
+        target_semantic = (
+            semantic_match(profile, stringify(next_block))
+            if source_semantic and next_block is not None
+            else None
+        )
+        if (
+            source_semantic
+            and target_semantic
+            and source_semantic["role"] == "problem"
+            and target_semantic["role"] == "problem"
+            and source_semantic.get("matched_language") == "source"
+            and target_semantic.get("matched_language") == "target"
+            and source_semantic.get("identifier") is not None
+            and target_semantic.get("identifier") is not None
+            and source_semantic.get("identifier")
+            == target_semantic.get("identifier")
+            and source_semantic["docx_regroup"]
+        ):
+            grouped = group_problem(
+                {
+                    "t": "BlockQuote",
+                    "c": [copy.deepcopy(block)]
+                    + copy.deepcopy(next_block.get("c", [])),
+                }
+            )
+            if is_grouped_problem(grouped):
+                blocks.append(grouped)
+                problem_count += 1
+                index += 2
+                continue
         semantic = (
             semantic_match(profile, stringify(block))
             if block.get("t") == "BlockQuote"
             else None
         )
         if semantic and semantic["role"] == "problem" and semantic["docx_regroup"]:
-            blocks.append(group_problem(block))
-            problem_count += 1
+            grouped = group_problem(block)
+            if is_grouped_problem(grouped):
+                blocks.append(grouped)
+                problem_count += 1
+            else:
+                blocks.extend(normalize_block(block))
         else:
             blocks.extend(normalize_block(block))
+        index += 1
     document = copy.deepcopy(document)
     document["blocks"] = transform_headers(blocks)
     document.setdefault("meta", {})["v2-problem-group-count"] = {

@@ -138,6 +138,8 @@ pages named by warnings. Fail for:
 - a crop containing unrelated prose or omitting part of a technical visual;
 - broken code indentation, malformed links, unexpected blank pages, or severe spacing;
 - missing glyph boxes or visibly substituted characters.
+- unresolved Word fields such as `Error: Reference source not found` in any header,
+  footer, or body region.
 
 For V2 Problem callouts, also fail if the card alternates English and Chinese in small
 fragments, if the divider is missing or duplicated, or if a nested list/formula escapes
