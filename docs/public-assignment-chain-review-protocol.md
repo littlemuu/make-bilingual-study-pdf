@@ -59,7 +59,7 @@ attestation。
 ## 现存 WORK 与重复内容的追加验收
 
 `existing-work-migration.json` 记录测试参考驱动对已有 V1 WORK 安全副本的 dry-run、
-manifest/Profile/IR before/after、旧 gate 失效、source audit 重建，以及与 fresh V2 的
+manifest/Profile/IR before/after、旧 gate 失效、source audit 重建与 glossary 重新初始化，以及与 fresh V2 的
 DOCX/render 等价。它不表示生产 `migrate-profile` CLI 已在工包 A 上线。
 `repeated-visuals-report.json` 来自真实两页 PDF：两个独立数学截图资产具有相同 PNG 字节，
 但 ID/path 不同。DOCX 必须保留期望资产/目标文本的次数，PDF 必须保留实际 placement

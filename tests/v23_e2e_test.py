@@ -26,7 +26,7 @@ import docx_style
 from common import read_json, read_jsonl, sha256_file, write_json, write_jsonl
 from docx_ast import transform
 from pipeline import report_status
-from v2_assignment_chain_diff_test import run_assignment_document_chain, finish_assignment_document_chain, _run_pipeline_stage, _docx_projection, _render_projection
+from v2_assignment_chain_diff_test import run_assignment_document_chain, finish_assignment_document_chain, _run_pipeline_stage, _run_script, _docx_projection, _render_projection
 from v2_migration_contract_test import build_candidate_v2
 from profile import load_profile
 
@@ -339,6 +339,7 @@ def assert_assignment_migration_forward(output_root: Path) -> dict[str, Any]:
     if migrate_profile_reference(migrated_work, backup) != transaction:
         raise RuntimeError("migration differs from its dry-run plan")
     _run_pipeline_stage("source-audit", migrated_work)
+    _run_script("init_glossary.py", migrated_work)
     _run_pipeline_stage("prepare", migrated_work, "--max-source-chars", "1000")
     migrated = finish_assignment_document_chain(migrated_work, build_candidate_v2(v1_profile))
     for key in ("projection", "docx_projection", "render_projection"):

@@ -182,9 +182,12 @@ class ExistingWorkMigrationTests(unittest.TestCase):
                                          digest((work / "manifest.json").read_bytes()))
                         chain._run_pipeline_stage("source-audit", work)
                         self.assertEqual(chain.read_json(work / "source-audit.json")["status"], "passed")
+                        chain._run_script("init_glossary.py", work)
+                        chain._run_pipeline_stage("prepare", work, "--max-source-chars", "1000")
+                        self.assertTrue((work / "translation/plan.json").is_file())
                     if stop == "prepared":
                         self.assertEqual(tree_bytes(work), before)
-                    else:
+                    elif stop is not None:
                         self.assertFalse((work / "translation").exists())
                         self.assertFalse((work / "output").exists())
                         self.assertTrue(all(not (work / name).exists() for name in GATES if name != "source-audit.json"))
