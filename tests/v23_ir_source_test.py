@@ -791,9 +791,13 @@ class V23IrSourceTests(unittest.TestCase):
             self.assertEqual(audit["status"], "passed")
             visuals = list((root / "work" / "visuals").glob("*.png"))
             self.assertGreaterEqual(len(visuals), 2)
+            manifest = json.loads((root / "work" / "manifest.json").read_text())
+            self.assertEqual({item["kind"] for item in manifest["visuals"]}, {"math", "figure_or_table"})
             for visual in visuals:
                 with Image.open(visual) as image:
                     image.verify()
+                with Image.open(visual) as image:
+                    image.load()
 
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)

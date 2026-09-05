@@ -134,6 +134,23 @@ jobs:
           python -m pip install --disable-pip-version-check -r requirements-dev.txt
           python -m pip check
 
+      - name: Install pinned Poppler for native source smoke
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'poppler.zip'
+          Invoke-WebRequest 'https://github.com/oschwartz10612/poppler-windows/releases/download/v26.07.0-0/Release-26.07.0-0.zip' -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'a711b0563b06edc488583d28198b6734c5a494afbbd1b9d87d3d2866062fb7e2') {
+            throw 'Poppler archive hash mismatch'
+          }
+          $destination = Join-Path $env:RUNNER_TEMP 'native-source-poppler'
+          Expand-Archive -LiteralPath $archive -DestinationPath $destination
+          (Join-Path $destination 'poppler-26.07.0/Library/bin') | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Run clean payload native source smoke on Windows
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python tests/v23_ir_source_test.py
+
       - name: Run full Windows filesystem regressions
         env:
           PYTHONDONTWRITEBYTECODE: "1"
