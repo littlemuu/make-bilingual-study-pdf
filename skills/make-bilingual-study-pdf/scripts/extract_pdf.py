@@ -36,7 +36,7 @@ from profile import (
 from safe_artifacts import (
     ArtifactSafetyError,
     atomic_copy_file,
-    atomic_publish_with_writer,
+    atomic_write_bytes,
     atomic_write_text,
     clear_artifact_directory,
     lexical_absolute_path,
@@ -518,9 +518,9 @@ def make_visuals(
             pixmap = page.get_pixmap(
                 matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False
             )
-            atomic_publish_with_writer(
+            atomic_write_bytes(
                 visuals_dir / filename,
-                pixmap.save,
+                pixmap.tobytes("png"),
                 boundary=work_dir,
             )
             visuals.append(
@@ -663,9 +663,9 @@ def make_visuals(
                 pixmap = page.get_pixmap(
                     matrix=fitz.Matrix(scale, scale), clip=union, alpha=False
                 )
-                atomic_publish_with_writer(
+                atomic_write_bytes(
                     visuals_dir / filename,
-                    pixmap.save,
+                    pixmap.tobytes("png"),
                     boundary=work_dir,
                 )
                 visuals.append(
