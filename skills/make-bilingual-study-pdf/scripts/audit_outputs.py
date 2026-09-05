@@ -932,6 +932,7 @@ def main() -> None:
                 block_id
                 for block_id, disposition in dispositions.items()
                 if disposition != "artifact-omitted"
+                and block_by_id.get(block_id, {}).get("kind") != "visual_content"
             }
         else:
             expected_marker_ids = {
@@ -1014,6 +1015,27 @@ def main() -> None:
                 visuals_by_anchor.setdefault(visual.get("anchor_id"), []).append(visual)
             content_failures: list[str] = []
             for block_id, disposition in dispositions.items():
+                related = block_by_id.get(block_id, {})
+                if related.get("kind") == "visual_content":
+                    owners = [v for v in manifest.get("visuals", [])
+                              if block_id in v.get("contained_block_ids", [])
+                              and v.get("anchor_id") != block_id]
+                    asset = assets_by_id.get(owners[0]["id"]) if len(owners) == 1 else None
+                    relative = asset.get("path") if asset else None
+                    if (not relative or markdown.count(f"]({relative})") != 1
+                            or block_id in marker_by_id):
+                        content_failures.append(f"{block_id}:invalid-containing-visual")
+                    continue
+                if related.get("kind") == "caption_continuation":
+                    owners = [v for v in manifest.get("visuals", [])
+                              if block_id in v.get("caption_continuation_ids", [])
+                              and v.get("anchor_id") == related.get("caption_parent")]
+                    parent_marker = marker_by_id.get(related.get("caption_parent"))
+                    child_marker = marker_by_id.get(block_id)
+                    if (len(owners) != 1 or parent_marker is None or child_marker is None
+                            or child_marker.end() > parent_marker.start()):
+                        content_failures.append(f"{block_id}:invalid-caption-parent")
+
                 block = block_by_id.get(block_id)
                 marker = marker_by_id.get(block_id)
                 if block is None or disposition == "artifact-omitted" or marker is None:
@@ -1035,11 +1057,30 @@ def main() -> None:
                     if not isinstance(translation, str):
                         content_failures.append(f"{block_id}:missing-translation")
                         continue
-                    target_position = markdown.find(
-                        markdown_escape(translation), max(marker_end, source_position)
-                    )
-                    if source_position < marker_end or target_position <= source_position:
-                        content_failures.append(f"{block_id}:source-target-order")
+                    if block["kind"] == "math_with_text":
+                        target_position = markdown.find(
+                            markdown_escape(translation), marker_end
+                        )
+                        visuals = visuals_by_anchor.get(block_id, [])
+                        asset = (
+                            assets_by_id.get(visuals[0].get("id"))
+                            if len(visuals) == 1 else None
+                        )
+                        relative = asset.get("path") if isinstance(asset, dict) else None
+                        if (
+                            not relative
+                            or markdown.count(f"]({relative})") != 1
+                            or target_position < marker_end
+                        ):
+                            content_failures.append(
+                                f"{block_id}:math-visual-target-order"
+                            )
+                    else:
+                        target_position = markdown.find(
+                            markdown_escape(translation), max(marker_end, source_position)
+                        )
+                        if source_position < marker_end or target_position <= source_position:
+                            content_failures.append(f"{block_id}:source-target-order")
                 elif disposition == "source-only":
                     if source_position < marker_end or markdown.count(rendered_source) != 1:
                         content_failures.append(f"{block_id}:source-only-count")

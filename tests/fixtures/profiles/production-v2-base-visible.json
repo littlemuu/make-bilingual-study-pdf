@@ -1,0 +1,822 @@
+{
+  "base_sha": "a8bb3dc1c7d36270181d4741d4ad5d87557598c7",
+  "run_id": 33961158634,
+  "artifact_id": 9968027885,
+  "toolchain": {
+    "python": "3.11.7",
+    "pandoc": "pandoc 3.1.3",
+    "libreoffice": "LibreOffice 24.2.7.2 420(Build:2)",
+    "pdftoppm": "pdftoppm version 24.02.0",
+    "fc_match": "fontconfig version 2.15.0"
+  },
+  "profiles": {
+    "academic-paper-en-zh": {
+      "docx": {
+        "paragraphs": [
+          {
+            "text": " ",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "Deterministic Evidence for Small Study Documents",
+            "style": "Heading2",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": []
+          },
+          {
+            "text": "Ada Example — Department of Reproducible Learning",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "Abstract",
+            "style": "Heading2",
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "",
+            "style": null,
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "bottom",
+              "left",
+              "right"
+            ]
+          },
+          {
+            "text": "This original synthetic abstract tests deterministic import, complete evidence, stable ordering, and explicit handling of every record.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "1 Evidence Model",
+            "style": "Heading2",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。 保留项：1",
+            "style": "BlockText",
+            "border_sides": []
+          },
+          {
+            "text": "Each frozen record has one disposition, one stable source pointer, and enough synthetic prose for an independent native-text oracle to classify this page safely.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Definition 1. A stable record has exactly one source pointer.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Theorem 1. Frozen inputs produce deterministic identities.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Proof. The identifier seed uses only frozen hashes and pointers.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Example 1. Repeating an import yields the same ordered IR.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "E = m c^2",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Figure 1. A synthetic evidence flow.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "All values are illustrative.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Chart 1. Deterministic counts.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "The chart reuses the original synthetic asset.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Gate",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "Count",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "explicit",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "1",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Table 1. Synthetic gate inventory.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "HTML is preserved as structured source.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "def stable(value):    return value",
+            "style": "SourceCode",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Listing 1. Stable identity.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "The code body must appear once.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "1: read frozen records2: emit one disposition",
+            "style": "SourceCode",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Algorithm 1. Explicit accounting.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "[1] A. Example. Synthetic Evidence Notes, 2026.",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "[2] B. Example. Deterministic Fixtures, 2026.",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "Correspondence: fixture@example.invalid",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。 保留项：fixture@example.invalid",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          }
+        ],
+        "nonempty_text_sha256": "f6e0d3c3721604073f21498977adf1d0bfbfc6ec375d8db19227965007d86fb0"
+      },
+      "render": {
+        "page_count": 3,
+        "pages": [
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              719,
+              1089
+            ],
+            "sha256": "3c3c3cd554cf7a03cd61de78b5dd63ccef005f6205c44953a5edda81149fba46"
+          },
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              712,
+              1089
+            ],
+            "sha256": "b4dca286130baa17a3221f241a41fa3743f45f3f182f2983f0a4ef56b51f6b78"
+          },
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              712,
+              1089
+            ],
+            "sha256": "0556160593a6230ff2e9d7bcbd17da3e7bcd11c9298ea598b50888a105ee78ca"
+          }
+        ]
+      }
+    },
+    "lecture-notes-en-zh": {
+      "docx": {
+        "paragraphs": [
+          {
+            "text": " ",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "Deterministic Evidence for Small Study Documents",
+            "style": "Heading2",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": []
+          },
+          {
+            "text": "Ada Example — Department of Reproducible Learning",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Abstract",
+            "style": "Heading2",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": []
+          },
+          {
+            "text": "This original synthetic abstract tests deterministic import, complete evidence, stable ordering, and explicit handling of every record.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "1 Evidence Model",
+            "style": "Heading2",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。 保留项：1",
+            "style": "BlockText",
+            "border_sides": []
+          },
+          {
+            "text": "Each frozen record has one disposition, one stable source pointer, and enough synthetic prose for an independent native-text oracle to classify this page safely.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Definition 1. A stable record has exactly one source pointer.",
+            "style": "BlockText",
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "",
+            "style": null,
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "bottom",
+              "left",
+              "right"
+            ]
+          },
+          {
+            "text": "Theorem 1. Frozen inputs produce deterministic identities.",
+            "style": "BlockText",
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "",
+            "style": null,
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "bottom",
+              "left",
+              "right"
+            ]
+          },
+          {
+            "text": "Proof. The identifier seed uses only frozen hashes and pointers.",
+            "style": "BlockText",
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "",
+            "style": null,
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "bottom",
+              "left",
+              "right"
+            ]
+          },
+          {
+            "text": "Example 1. Repeating an import yields the same ordered IR.",
+            "style": "BlockText",
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "",
+            "style": null,
+            "border_sides": [
+              "left",
+              "right",
+              "top"
+            ]
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "bottom",
+              "left",
+              "right"
+            ]
+          },
+          {
+            "text": "E = m c^2",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Figure 1. A synthetic evidence flow.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "All values are illustrative.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Chart 1. Deterministic counts.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "The chart reuses the original synthetic asset.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Gate",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "Count",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "explicit",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "1",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "",
+            "style": "CaptionedFigure",
+            "border_sides": []
+          },
+          {
+            "text": "Source visual from page 1",
+            "style": "ImageCaption",
+            "border_sides": []
+          },
+          {
+            "text": "Table 1. Synthetic gate inventory.",
+            "style": "BodyText",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "HTML is preserved as structured source.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "def stable(value):    return value",
+            "style": "SourceCode",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Listing 1. Stable identity.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "The code body must appear once.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "1: read frozen records2: emit one disposition",
+            "style": "SourceCode",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "Algorithm 1. Explicit accounting.",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          },
+          {
+            "text": "[1] A. Example. Synthetic Evidence Notes, 2026.",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "[2] B. Example. Deterministic Fixtures, 2026.",
+            "style": "Compact",
+            "border_sides": []
+          },
+          {
+            "text": "Correspondence: fixture@example.invalid",
+            "style": "FirstParagraph",
+            "border_sides": []
+          },
+          {
+            "text": "译文：这是用于验证完整英中双语生成链、角色处置和冻结证据的原创合成中文内容。 保留项：fixture@example.invalid",
+            "style": "BlockText",
+            "border_sides": [
+              "left"
+            ]
+          }
+        ],
+        "nonempty_text_sha256": "4c5dd5223d7bd71a55c17a7f0e1d7f661df0f780e21ced6ae3aa15f76259b28d"
+      },
+      "render": {
+        "page_count": 3,
+        "pages": [
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              719,
+              1089
+            ],
+            "sha256": "7215dfe056cf681656ffaf6d8b48bc6f7e9c084ccefee4d0c0fd421959335c90"
+          },
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              712,
+              1089
+            ],
+            "sha256": "b9976cb21245a85743bff4d95095fd0ce813fd505069d8772e035c77bddae831"
+          },
+          {
+            "size": [
+              794,
+              1123
+            ],
+            "content_bbox": [
+              74,
+              34,
+              712,
+              1089
+            ],
+            "sha256": "f207c390307d90f12ba2815bad972f883fab7cc7167011b30975fc35ea4359a1"
+          }
+        ]
+      }
+    }
+  }
+}

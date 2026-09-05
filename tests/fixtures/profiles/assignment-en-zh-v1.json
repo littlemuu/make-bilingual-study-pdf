@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "id": "assignment-en-zh",
+  "label": "English academic assignment to Simplified Chinese",
+  "input": {
+    "adapter": "native-text-pdf",
+    "source_language": "en",
+    "minimum_native_text_page_ratio": 0.7,
+    "minimum_text_characters_per_page": 100
+  },
+  "translation": {
+    "target_language": "zh-CN",
+    "target_text_pattern": "[\\u3400-\\u4dbf\\u4e00-\\u9fff\\uf900-\\ufaff]",
+    "reading_order": "source-then-target",
+    "policy": "English source first; faithful Simplified Chinese; preserve every placeholder exactly once."
+  },
+  "semantics": {
+    "groups": [
+      {
+        "role": "problem",
+        "source_pattern": "^Problem\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+        "target_pattern": "^问题\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+        "docx_regroup": true,
+        "style": "problem"
+      },
+      {
+        "role": "example",
+        "source_pattern": "^Example\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+        "target_pattern": "^示例\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+        "docx_regroup": false,
+        "style": "example"
+      },
+      {
+        "role": "tip",
+        "source_pattern": "^Low-Resource Tip(?:\\s*[:：]|$)",
+        "target_pattern": "^低资源提示(?:\\s*[:：]|$)",
+        "docx_regroup": false,
+        "style": "tip"
+      }
+    ]
+  },
+  "render": {
+    "page_size": "A4",
+    "docx": {
+      "latin_font": "Noto Sans",
+      "cjk_font": "Noto Sans S Chinese",
+      "code_font": "DejaVu Sans Mono",
+      "title": "English-Chinese Bilingual Study Edition",
+      "header_label": "Bilingual study edition",
+      "footer_label": "英中双语学习版"
+    }
+  },
+  "qa": {
+    "primary_semantic_role": "problem",
+    "minimum_global_fivegram_coverage": 0.95,
+    "warn_page_below": 0.75,
+    "require_external_uri_inventory": true,
+    "require_exact_target_font": true
+  }
+}
