@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -758,6 +760,45 @@ class V23IrSourceTests(unittest.TestCase):
             )
 
 
+    def test_clean_payload_native_source_publishes_pngs(self) -> None:
+        # Exercise the installable payload in a child interpreter, without a
+        # sitecustomize/PYTHONPATH hook changing PyMuPDF's filesystem behavior.
+        with tempfile.TemporaryDirectory(prefix="native-installed-source-") as temp:
+            root = Path(temp)
+            payload = root / "skill"
+            shutil.copytree(SCRIPTS.parent, payload)
+            source = root / "input.pdf"
+            document = fitz.open()
+            page = document.new_page()
+            page.insert_text((50, 60), "Problem (p1): Explain every step of the update rule.")
+            page.insert_text((50, 100), "The objective combines the data term and the regularization term.")
+            page.insert_textbox(fitz.Rect(50, 130, 450, 180), "f(x) = x^2 + 3x\n(1)", fontsize=12)
+            page.draw_rect(fitz.Rect(50, 200, 250, 280))
+            page.insert_text((50, 300), "Figure 1: A deterministic reference curve.")
+            document.save(source)
+            document.close()
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            result = subprocess.run(
+                [sys.executable, "-B", str(payload / "scripts" / "pipeline.py"),
+                 "source", str(source), "--work-dir", str(root / "work"),
+                 "--profile", "assignment-en-zh", "--render-dpi", "96"],
+                env=env, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            audit = json.loads((root / "work" / "source-audit.json").read_text())
+            self.assertEqual(audit["status"], "passed")
+            visuals = list((root / "work" / "visuals").glob("*.png"))
+            self.assertGreaterEqual(len(visuals), 2)
+            manifest = json.loads((root / "work" / "manifest.json").read_text())
+            self.assertEqual({item["kind"] for item in manifest["visuals"]}, {"math", "figure_or_table"})
+            for visual in visuals:
+                with Image.open(visual) as image:
+                    image.verify()
+                with Image.open(visual) as image:
+                    image.load()
+
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)
@@ -784,6 +825,8 @@ def main() -> None:
             indent=2,
         )
     )
+
+
 
 
 if __name__ == "__main__":

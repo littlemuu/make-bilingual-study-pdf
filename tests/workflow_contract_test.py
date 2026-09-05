@@ -113,6 +113,22 @@ class WorkflowContractTests(unittest.TestCase):
         with self.assertRaisesRegex(checker.ContractError, "full Windows suite"):
             checker.validate_contracts(self.root)
 
+    def test_windows_native_source_smoke_cannot_be_removed_or_skipped(self) -> None:
+        for replacement in ("run: python -c 'pass'", "if: false\n        run: python tests/v23_ir_source_test.py"):
+            with self.subTest(replacement=replacement):
+                path = self.root / ".github/workflows/baseline.yml"
+                original = path.read_text(encoding="utf-8")
+                path.write_text(original.replace("run: python tests/v23_ir_source_test.py", replacement), encoding="utf-8")
+                with self.assertRaisesRegex(checker.ContractError, "native source smoke"):
+                    checker.validate_contracts(self.root)
+                path.write_text(original, encoding="utf-8")
+
+    def test_windows_poppler_hash_is_required(self) -> None:
+        self._replace(".github/workflows/baseline.yml",
+                      "a711b0563b06edc488583d28198b6734c5a494afbbd1b9d87d3d2866062fb7e2", "0" * 64)
+        with self.assertRaisesRegex(checker.ContractError, "pinned Poppler"):
+            checker.validate_contracts(self.root)
+
     # --- Targeted: fail-closed aggregates ---
 
     def test_pr_fast_without_always_is_rejected(self) -> None:

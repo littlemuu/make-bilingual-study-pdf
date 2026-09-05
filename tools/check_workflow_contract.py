@@ -138,6 +138,15 @@ def _validate_baseline(jobs: dict[str, Any]) -> None:
         )
     if "windows-full" not in _run_text(windows):
         raise ContractError("windows-filesystem must run the full Windows suite")
+    for name, required in (
+        ("Install pinned Poppler for native source smoke", "a711b0563b06edc488583d28198b6734c5a494afbbd1b9d87d3d2866062fb7e2"),
+        ("Run clean payload native source smoke on Windows", "python tests/v23_ir_source_test.py"),
+    ):
+        matches = [step for step in windows["steps"] if step.get("name") == name]
+        if (len(matches) != 1 or required not in str(matches[0].get("run", ""))
+                or "if" in matches[0] or "continue-on-error" in matches[0]):
+            raise ContractError("Windows native source smoke and pinned Poppler must run unconditionally")
+
 
     # macOS APFS is safety-tier only; the transitional PR/main duplicate is removed.
     if "macos-filesystem" in jobs:
