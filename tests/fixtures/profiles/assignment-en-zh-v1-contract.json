@@ -1,0 +1,83 @@
+{
+  "adapter": "native-text-pdf",
+  "auxiliary_dispositions": {
+    "marginalia": "artifact-omitted",
+    "page-footer": "artifact-omitted",
+    "page-header": "artifact-omitted",
+    "page-number": "artifact-omitted"
+  },
+  "constraints": [],
+  "contract_version": 1,
+  "profile_id": "assignment-en-zh",
+  "role_inventory": {
+    "example": {
+      "grouping": "none",
+      "maximum": null,
+      "minimum": 0,
+      "output": "bilingual",
+      "style": "example"
+    },
+    "problem": {
+      "grouping": "structural-container",
+      "maximum": null,
+      "minimum": 0,
+      "output": "bilingual",
+      "style": "problem"
+    },
+    "tip": {
+      "grouping": "none",
+      "maximum": null,
+      "minimum": 0,
+      "output": "bilingual",
+      "style": "tip"
+    }
+  },
+  "roles": [
+    {
+      "docx_regroup": true,
+      "grouping": "structural-container",
+      "output": "bilingual",
+      "role": "problem",
+      "selectors": [
+        {
+          "source_pattern": "^Problem\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+          "target_pattern": "^问题\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+        }
+      ],
+      "source_pattern": "^Problem\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+      "style": "problem",
+      "target_pattern": "^问题\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+    },
+    {
+      "docx_regroup": false,
+      "grouping": "none",
+      "output": "bilingual",
+      "role": "example",
+      "selectors": [
+        {
+          "source_pattern": "^Example\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+          "target_pattern": "^示例\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+        }
+      ],
+      "source_pattern": "^Example\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+      "style": "example",
+      "target_pattern": "^示例\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+    },
+    {
+      "docx_regroup": false,
+      "grouping": "none",
+      "output": "bilingual",
+      "role": "tip",
+      "selectors": [
+        {
+          "source_pattern": "^Low-Resource Tip(?:\\s*[:：]|$)",
+          "target_pattern": "^低资源提示(?:\\s*[:：]|$)"
+        }
+      ],
+      "source_pattern": "^Low-Resource Tip(?:\\s*[:：]|$)",
+      "style": "tip",
+      "target_pattern": "^低资源提示(?:\\s*[:：]|$)"
+    }
+  ],
+  "source_schema_version": 1
+}

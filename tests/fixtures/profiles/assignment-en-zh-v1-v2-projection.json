@@ -1,0 +1,182 @@
+{
+  "block_order": [
+    "p001-b001",
+    "p001-b002",
+    "p001-b003",
+    "p001-b004",
+    "p001-b005",
+    "p001-b006",
+    "p001-b007",
+    "p001-b008",
+    "p001-b009",
+    "p001-b010",
+    "p001-b011",
+    "p001-b012",
+    "p001-b013"
+  ],
+  "kind_counts": {
+    "artifact": 1,
+    "callout": 3,
+    "caption": 1,
+    "code": 1,
+    "heading": 1,
+    "image": 1,
+    "list": 1,
+    "math": 1,
+    "math_with_text": 1,
+    "prose": 2
+  },
+  "nodes": [
+    {
+      "id": "p001-b001",
+      "kind": "heading",
+      "output": "bilingual",
+      "role": "heading",
+      "source": "1 Native Assignment Migration Fixture",
+      "source_sha256": "ad3747ff35fd52f95051dd5b081272c1a1cbadeda9aa9b1273dc61c12f541ca9"
+    },
+    {
+      "id": "p001-b002",
+      "kind": "callout",
+      "output": "bilingual",
+      "role": "problem",
+      "source": "Problem (p1): Explain the update rule for the training objective.",
+      "source_sha256": "711c23d1c3c9af380a783e2cdc0fd3ce412af37f8b28f0c1f864e3667c6e47b0"
+    },
+    {
+      "id": "p001-b003",
+      "kind": "prose",
+      "output": "bilingual",
+      "role": "paragraph",
+      "source": "The objective combines a data term with a regularization term.",
+      "source_sha256": "a479a9a6129444e8c63394bf47f82ec31c42c013c82f55e7dd2aa5503bf5b356"
+    },
+    {
+      "id": "p001-b004",
+      "kind": "callout",
+      "output": "bilingual",
+      "role": "example",
+      "source": "Example (e1): Evaluate the rule when the learning rate is 0.1.",
+      "source_sha256": "2fce6c1e02c01dc6fde29d7edcb90ea551a8f0329590600bc5b755804d9aecb9"
+    },
+    {
+      "id": "p001-b005",
+      "kind": "callout",
+      "output": "bilingual",
+      "role": "tip",
+      "source": "Low-Resource Tip: Cache repeated feature vectors.",
+      "source_sha256": "b81b92211042c2ee842031e62bbf5d92083a252dc0df2795fc153869be9b7b19"
+    },
+    {
+      "id": "p001-b006",
+      "kind": "list",
+      "output": "bilingual",
+      "role": "list-item",
+      "source": "- Verify every intermediate value before submission.",
+      "source_sha256": "83830e8259a8f4fd7f9292e3a706d1e3b0fd29c0d65a9e62f2647986d996fe34"
+    },
+    {
+      "id": "p001-b007",
+      "kind": "code",
+      "output": "source-only",
+      "role": "code",
+      "source": "for value in values:\n    total += value",
+      "source_sha256": "d8c58208f3f8acac25fca5b3c5229bd866275eec53c12fff37f76188969752a9"
+    },
+    {
+      "id": "p001-b008",
+      "kind": "math",
+      "output": "visual-once",
+      "role": "math",
+      "source": "f(x) = x^2 + 3x\n(1)",
+      "source_sha256": "91d756250e760ff03d3f9daec7ac0795784ffeeeb01ee5525ad4d212b3832bbb"
+    },
+    {
+      "id": "p001-b009",
+      "kind": "math_with_text",
+      "output": "bilingual",
+      "role": "math-with-text",
+      "source": "where x = 2\nand y = 3",
+      "source_sha256": "776030aefa0d81c5c190248363d4354fc17bc6453611facc23fbcc19ad0b0607"
+    },
+    {
+      "id": "p001-b010",
+      "kind": "image",
+      "output": "visual-once",
+      "role": "image",
+      "source": "",
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "p001-b011",
+      "kind": "caption",
+      "output": "bilingual",
+      "role": "caption",
+      "source": "Figure 1: Deterministic reference curve.",
+      "source_sha256": "aca7f8c9a12aab9050ecc230abccbf2d3462d52857144c4dca5f875281fc0497"
+    },
+    {
+      "id": "p001-b012",
+      "kind": "prose",
+      "output": "bilingual",
+      "role": "paragraph",
+      "source": "The figure is retained once with its caption.",
+      "source_sha256": "8693320c695256680363beae18bca5fb244d7e2532b0f054f1bcd7d9da4513b7"
+    },
+    {
+      "id": "p001-b013",
+      "kind": "artifact",
+      "output": "artifact-omitted",
+      "role": "artifact",
+      "source": "1",
+      "source_sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b"
+    }
+  ],
+  "normalized_disposition_counts": {
+    "artifact-omitted": 1,
+    "bilingual": 9,
+    "source-only": 1,
+    "visual-once": 2
+  },
+  "semantic_groups": [
+    {
+      "anchor_node_id": "p001-b002",
+      "identifier": "p1",
+      "member_node_ids": [
+        "p001-b002"
+      ],
+      "membership": "anchor-only",
+      "role": "problem",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "anchor_node_id": "p001-b004",
+      "identifier": "e1",
+      "member_node_ids": [
+        "p001-b004"
+      ],
+      "membership": "anchor-only",
+      "role": "example",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "anchor_node_id": "p001-b005",
+      "identifier": null,
+      "member_node_ids": [
+        "p001-b005"
+      ],
+      "membership": "anchor-only",
+      "role": "tip",
+      "source_pages": [
+        1
+      ]
+    }
+  ],
+  "source_pdf_sha256": "21109d8a3109df0840305fe5cf305cf3924262cd6b1232d6b7a6e3225e6e0edd",
+  "visible_markdown": "## 1 Native Assignment Migration Fixture\n> **中文译文：1 Native Assignment Migration Fixture**\n**Problem (p1): Explain the update rule for the training objective.**\n> **问题（p1）： Explain the update rule for the training objective.（中文说明）**\nThe objective combines a data term with a regularization term.\n> 中文译文：The objective combines a data term with a regularization term.\n**Example (e1): Evaluate the rule when the learning rate is 0.1.**\n> **示例（e1）： Evaluate the rule when the learning rate is 0.1.（中文说明）**\n**Low-Resource Tip: Cache repeated feature vectors.**\n> **低资源提示： Cache repeated feature vectors.（中文说明）**\n- Verify every intermediate value before submission.\n> 中文译文：- Verify every intermediate value before submission.\n```text\nfor value in values:\n    total += value\n```\n![Source visual from page 1](assets/visual-p001-b008.png)\n![Source visual from page 1](assets/visual-p001-b009.png)\n> 中文译文：where x = 2 and y = 3\n![Source visual from page 1](assets/visual-p001-b010.png)\n![Source visual from page 1](assets/visual-p001-b011.png)\n*Figure 1: Deterministic reference curve.*\n> *中文译文：Figure 1: Deterministic reference curve.*\nThe figure is retained once with its caption.\n> 中文译文：The figure is retained once with its caption.\n",
+  "visible_markdown_sha256": "34806b3b7c8b9a4f444a5caf0db152556f6efde058257ce61281217191c92f51"
+}

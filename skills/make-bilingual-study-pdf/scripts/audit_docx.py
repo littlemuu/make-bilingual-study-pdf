@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import io
 import json
 import os
+import posixpath
 import re
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -235,7 +238,11 @@ def _docx_audit_producer_errors(
                     not isinstance(evidence, dict)
                     or not _strict_nonnegative_int(evidence.get("textual"))
                     or not _strict_nonnegative_int(evidence.get("visual"))
-                    or evidence["textual"] + evidence["visual"] != role_counts[role]
+                    or not _strict_nonnegative_int(evidence.get("omitted", 0))
+                    or evidence["textual"]
+                    + evidence["visual"]
+                    + evidence.get("omitted", 0)
+                    != role_counts[role]
                 ):
                     errors.append(
                         "V2 DOCX audit role occurrence evidence is invalid"
@@ -280,6 +287,8 @@ def _docx_audit_producer_errors(
                 and group.get("membership") == "anchor-only"
                 and role_specs.get(group.get("role"), {}).get("grouping")
                 != "structural-container"
+                and role_specs.get(group.get("role"), {}).get("output")
+                != "artifact-omitted"
             },
         }
         for field, expected_keys in expected_nested_keys.items():
@@ -1018,6 +1027,53 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             if name.startswith("word/media/") and not name.endswith("/")
         ]
 
+        # Count drawing references separately from ZIP media entries: repeated
+        # drawings may share a single file. Read the same inspected DOCX bytes.
+        media_by_relationship = {
+            item.get("Id"): hashlib.sha256(
+                archive.read(posixpath.normpath("word/" + item.get("Target")))
+            ).hexdigest()
+            for item in relationships
+            if item.get("Type", "").endswith("/image")
+            and item.get("TargetMode") != "External"
+        }
+    image_uses = Counter(
+        media_by_relationship.get(relationship_id)
+        for relationship_id in root.xpath(
+            "//a:blip/@r:embed",
+            namespaces={"a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+                        "r": "http://schemas.openxmlformats.org/officeDocument/2006/relationships"},
+        )
+    )
+    source_manifest = json_loads_strict(read_artifact_text(work_dir / "manifest.json", boundary=work_dir))
+    assets_by_id = {asset["id"]: asset for asset in build.get("assets", [])}
+    expected_image_uses = Counter(asset["sha256"] for asset in build.get("assets", []))
+    translation_path = work_dir / "translation" / "translations-merged.jsonl"
+    translations = {
+        row["id"]: row["translation"]
+        for line in read_artifact_text(translation_path, boundary=work_dir).splitlines()
+        if line.strip() for row in [json_loads_strict(line)]
+    } if translation_path.exists() else {}
+
+    expected_target_uses = Counter(normalized_text(target) for target in translations.values())
+
+    def composite_visual_is_evidenced(node: dict) -> bool:
+        node_id = node["id"]
+        if node.get("type") == "visual_content":
+            visuals = [v for v in source_manifest.get("visuals", [])
+                       if node_id in v.get("contained_block_ids", []) and v.get("anchor_id") != node_id]
+        else:
+            visuals = [v for v in source_manifest.get("visuals", []) if v.get("anchor_id") == node_id]
+        if len(visuals) != 1:
+            return False
+        asset = assets_by_id.get(visuals[0]["id"])
+        if not asset or image_uses[asset["sha256"]] != expected_image_uses[asset["sha256"]]:
+            return False
+        if node.get("type") == "math_with_text":
+            target = translations.get(node_id)
+            return isinstance(target, str) and bool(target.strip()) and occurrence_count(text, target) == expected_target_uses[normalized_text(target)]
+        return True
+
     paragraphs: list[dict[str, Any]] = []
     for node in root.xpath("/w:document/w:body/w:p", namespaces=W_NS):
         paragraph_text = "".join(node.xpath(".//w:t/text()", namespaces=W_NS))
@@ -1089,6 +1145,7 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         group for group in ir.get("semantic_groups", [])
         if group.get("membership") == "anchor-only"
         and role_specs[group["role"]]["grouping"] != "structural-container"
+        and role_specs[group["role"]]["output"] != "artifact-omitted"
     ]
     target_re = target_text_pattern(profile)
     complete_container_checks: dict[str, bool] = {}
@@ -1181,13 +1238,24 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         role_groups = [group for group in ir.get("semantic_groups", []) if group["role"] == role]
         textual = 0
         visual = 0
+        omitted = 0
         for group in role_groups:
             node = nodes[group["anchor_node_id"]]
-            if source_occurrence_count(text, node) > 0:
+            if node["semantic"]["output"] == "artifact-omitted":
+                omitted += 1
+            elif (node.get("type"), node["semantic"]["output"]) in {
+                ("math_with_text", "bilingual"), ("visual_content", "visual-once")
+            }:
+                visual += int(composite_visual_is_evidenced(node))
+            elif source_occurrence_count(text, node) > 0:
                 textual += 1
             elif node["semantic"]["output"] == "visual-once":
                 visual += 1
-        occurrence_evidence[role] = {"textual": textual, "visual": visual}
+        occurrence_evidence[role] = {
+            "textual": textual,
+            "visual": visual,
+            "omitted": omitted,
+        }
 
     source_only_counts = {
         node_id: source_occurrence_count(text, node)
@@ -1197,6 +1265,11 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
     }
     visual_occurrences = sum(
         item["visual"] for item in occurrence_evidence.values()
+    )
+    shared_visual_occurrences = sum(
+        node.get("type") == "visual_content"
+        and node.get("semantic", {}).get("output") == "visual-once"
+        for node in nodes.values()
     )
     expected_links = sorted(build.get("external_uris", []))
     if args.expected_links is not None and args.expected_links != len(expected_links):
@@ -1231,7 +1304,8 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         "docx_opens": True,
         "frozen_role_inventory_matches": all(role_assertions.values()),
         "every_role_occurrence_is_evidenced": all(
-            evidence["textual"] + evidence["visual"] == frozen_role_counts[role]
+            evidence["textual"] + evidence["visual"] + evidence["omitted"]
+            == frozen_role_counts[role]
             for role, evidence in occurrence_evidence.items()
         ),
         "source_only_nodes_appear_once": all(count == 1 for count in source_only_counts.values()),
@@ -1255,7 +1329,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         "no_internal_generic_markers": not any(marker in text for marker in GENERIC_MARKERS),
         "chinese_present": bool(target_re.search(text)),
         "external_links_match": external_links == expected_links,
-        "visual_occurrences_are_embedded": len(images) >= max(visual_occurrences, expected_assets),
+        "visual_occurrences_are_embedded": len(images) >= max(
+            visual_occurrences - shared_visual_occurrences, expected_assets
+        ),
         "minimum_images_met": len(images) >= args.minimum_images,
         "structured_tables_are_native_word_tables": (
             native_table_count == expected_native_tables

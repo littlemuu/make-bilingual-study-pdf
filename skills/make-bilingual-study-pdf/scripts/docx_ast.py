@@ -566,7 +566,13 @@ def _transform_v2(
         covered.update(indices)
         starts[min(indices)] = (group, [segments[index] for index in indices])
 
-    output = prefix
+    # Native assignment preserves its historical V1 prefix layout. Existing
+    # MinerU V2 profiles retain their original unnormalized prefix bytes.
+    output: list[dict] = copy.deepcopy(prefix)
+    if profile.get("id") == "assignment-en-zh" and profile.get("input", {}).get("adapter") == "native-text-pdf":
+        output = []
+        for block in prefix:
+            output.extend(normalize_block(block))
     index = 0
     while index < len(segments):
         start = starts.get(index)
