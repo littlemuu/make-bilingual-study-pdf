@@ -302,7 +302,7 @@ def _docx_audit_producer_errors(
                 and role_specs.get(group.get("role"), {}).get("output")
                 not in {"artifact-omitted", "visual-once"}
                 and nodes_by_id.get(group.get("anchor_node_id"), {}).get("type")
-                != "math_with_text"
+                not in {"math_with_text", "table"}
             },
         }
         for field, expected_keys in expected_nested_keys.items():
@@ -643,9 +643,18 @@ def source_occurrence_count(haystack: str, node: dict[str, Any]) -> int:
 def source_only_occurrence_evidence(
     nodes: list[dict[str, Any]], paragraphs: list[dict[str, Any]]
 ) -> dict[str, int]:
-    """Bind each source-only node to a distinct paragraph in document order."""
+    """Bind each source-only node to distinct ordered DOCX text."""
     result: dict[str, int] = {}
-    cursor = -1
+    paragraph_spans: list[tuple[int, int, dict[str, Any]]] = []
+    chunks: list[str] = []
+    offset = 0
+    for paragraph in paragraphs:
+        chunk = source_comparison_text(paragraph["text"])
+        paragraph_spans.append((offset, offset + len(chunk), paragraph))
+        chunks.append(chunk)
+        offset += len(chunk)
+    document_text = "".join(chunks)
+    cursor = 0
     for node in nodes:
         if (
             node.get("semantic", {}).get("output") != "source-only"
@@ -658,19 +667,42 @@ def source_only_occurrence_evidence(
             if source_comparison_text(item)
         }
         required_style = "SourceCode" if node.get("type") == "code" else None
-        match = next(
-            (
-                index
-                for index in range(cursor + 1, len(paragraphs))
-                if (required_style is None or paragraphs[index]["style"] == required_style)
-                and source_comparison_text(paragraphs[index]["text"]) in candidates
-            ),
-            None,
-        )
+        if required_style:
+            matches = [
+                (start, end)
+                for start, end, paragraph in paragraph_spans
+                if start >= cursor
+                and paragraph["style"] == required_style
+                and source_comparison_text(paragraph["text"]) in candidates
+            ]
+        else:
+            matches = [
+                (position, position + len(candidate))
+                for candidate in candidates
+                if (position := document_text.find(candidate, cursor)) >= 0
+            ]
+        match = min(matches, default=None)
         result[node["id"]] = int(match is not None)
         if match is not None:
-            cursor = match
+            cursor = match[1]
     return result
+
+
+def source_occurs_outside_structural_ranges(
+    node: dict[str, Any],
+    paragraphs: list[dict[str, Any]],
+    boxed_paragraph_indexes: set[int],
+) -> bool:
+    """Find source evidence in one contiguous run of unboxed paragraphs."""
+    segment: list[str] = []
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        if paragraph_index in boxed_paragraph_indexes:
+            if segment and source_occurrence_count("\n".join(segment), node):
+                return True
+            segment = []
+        else:
+            segment.append(paragraph["text"])
+    return bool(segment and source_occurrence_count("\n".join(segment), node))
 
 
 def load_v2_context(
@@ -1174,6 +1206,15 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                 ),
             }
         )
+    content_paragraphs = [
+        {
+            "text": "".join(node.xpath(".//w:t/text()", namespaces=W_NS)),
+            "style": node.xpath(
+                "string(./w:pPr/w:pStyle/@w:val)", namespaces=W_NS
+            ),
+        }
+        for node in root.xpath("//w:body//w:p", namespaces=W_NS)
+    ]
 
     expected_callout_colors = {
         STYLE_COLORS[spec["style"]]
@@ -1224,7 +1265,8 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         and role_specs[group["role"]]["grouping"] != "structural-container"
         and role_specs[group["role"]]["output"]
         not in {"artifact-omitted", "visual-once"}
-        and nodes[group["anchor_node_id"]].get("type") != "math_with_text"
+        and nodes[group["anchor_node_id"]].get("type")
+        not in {"math_with_text", "table"}
     ]
     target_re = target_text_pattern(profile)
     complete_container_checks: dict[str, bool] = {}
@@ -1317,10 +1359,10 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
     }
     for group in non_structural_anchor_groups:
         anchor_node = nodes[group["anchor_node_id"]]
-        non_structural_anchor_unboxed[group["id"]] = any(
-            paragraph_index not in boxed_paragraph_indexes
-            and source_occurrence_count(paragraph["text"], anchor_node) > 0
-            for paragraph_index, paragraph in enumerate(paragraphs)
+        non_structural_anchor_unboxed[group["id"]] = (
+            source_occurs_outside_structural_ranges(
+                anchor_node, paragraphs, boxed_paragraph_indexes
+            )
         )
 
     occurrence_evidence: dict[str, dict[str, int]] = {}
@@ -1348,7 +1390,7 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         }
 
     source_only_counts = source_only_occurrence_evidence(
-        list(nodes.values()), paragraphs
+        list(nodes.values()), content_paragraphs
     )
     visual_occurrences = sum(
         item["visual"] for item in occurrence_evidence.values()

@@ -1141,6 +1141,27 @@ def test_docx_source_evidence_handles_layout_and_duplicate_code() -> None:
             "source": {"text": "A 'smart' out-of-\nvocabulary token"},
         },
     ) == 1
+    table_node = {
+        "id": "table",
+        "type": "table",
+        "source": {"text": "<table><tr><td>Left</td><td>Right</td></tr></table>"},
+        "semantic": {"output": "source-only"},
+    }
+    table_paragraphs = [
+        {"text": "Before", "style": "BodyText"},
+        {"text": "Left", "style": "TableText"},
+        {"text": "Right", "style": "TableText"},
+        {"text": "After", "style": "BodyText"},
+    ]
+    assert audit_docx.source_only_occurrence_evidence(
+        [table_node], table_paragraphs
+    ) == {"table": 1}
+    assert audit_docx.source_occurs_outside_structural_ranges(
+        table_node, table_paragraphs, set()
+    )
+    assert not audit_docx.source_occurs_outside_structural_ranges(
+        table_node, table_paragraphs, {2}
+    )
 
 
 def main() -> None:
