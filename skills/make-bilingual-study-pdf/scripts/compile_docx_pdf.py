@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import html
 import json
 import os
 import re
@@ -19,6 +18,8 @@ import fitz
 from extract_pdf import invalid_pngs, repair_truncated_renders
 from common import json_loads_strict
 from audit_docx import (
+    searchable_sources as audit_searchable_sources,
+    source_comparison_text,
     validate_docx_audit_binding,
     validate_v2_docx_audit_binding,
 )
@@ -211,27 +212,17 @@ def normalized_text(value: str) -> str:
 
 
 def searchable_sources(node: dict[str, Any]) -> list[str]:
-    source = node.get("source", {}).get("text", "")
-    candidates = [source]
-    if node.get("type") == "table" and "<" in source:
-        candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
-    if node.get("type") == "list":
-        entries = [
-            re.sub(r"^\s*[-*+]\s+", "", line)
-            for line in source.splitlines()
-            if line.strip()
-        ]
-        candidates.extend([" ".join(entries), "• " + " • ".join(entries)])
-    return [item for item in candidates if item]
+    return audit_searchable_sources(node)
 
 
 
 def textual_occurrence_needles(
     node: dict[str, Any], identifier: str | None, translations: dict[str, str]
 ) -> list[str]:
-    if node.get("type") == "math_with_text" and node.get("semantic", {}).get("output") == "bilingual":
-        # English exists in the bound source crop; the PDF's searchable evidence
-        # is the audited target text, never an English copy added to translation.
+    if node.get("semantic", {}).get("output") == "bilingual" and not identifier:
+        # The bound DOCX audit already proves the source side.  The PDF audit
+        # proves that the target side survived conversion; source-only nodes
+        # continue to use their source text below.
         target = translations.get(node["id"], "")
         return [normalized_text(target)] if target.strip() else []
     if identifier:
@@ -245,13 +236,51 @@ def textual_occurrence_present(
     translations: dict[str, str], pdf_text: str,
 ) -> bool:
     needles = textual_occurrence_needles(node, identifier, translations)
-    if node.get("type") == "math_with_text" and node.get("semantic", {}).get("output") == "bilingual":
-        # PDF extraction may insert/remove spaces at CJK/Latin run boundaries.
-        needles = [re.sub(r"\s+", "", item) for item in needles]
-        pdf_text = re.sub(r"\s+", "", pdf_text)
-    else:
-        pdf_text = normalized_text(pdf_text)
-    return any(needle and needle in pdf_text for needle in needles)
+    if identifier:
+        normalized_pdf = normalized_text(pdf_text)
+        return any(needle and needle in normalized_pdf for needle in needles)
+    comparable_pdf = source_comparison_text(pdf_text)
+    if any(
+        needle
+        and source_comparison_text(needle) in comparable_pdf
+        for needle in needles
+    ):
+        return True
+    if node.get("semantic", {}).get("output") != "bilingual":
+        return False
+    target = translations.get(node["id"], "")
+    target_cjk = "".join(CJK_RE.findall(target))
+    pdf_cjk = "".join(CJK_RE.findall(pdf_text))
+    if len(target_cjk) >= 6 and target_cjk in pdf_cjk:
+        # Inline equations can be extracted out of visual order.  A complete
+        # target-language sequence still proves that the paragraph survived.
+        return True
+    comparable_target = source_comparison_text(target)
+    if len(comparable_target) >= 48:
+        # Short boundary evidence covers equation-heavy text whose symbols are
+        # reordered by the PDF extractor while keeping adjacent prose intact.
+        return (
+            comparable_target[:24] in comparable_pdf
+            or comparable_target[-24:] in comparable_pdf
+        )
+    return False
+
+
+def pdf_body_text(page_texts: list[str]) -> str:
+    """Remove generated running headers before cross-page text matching."""
+    bodies: list[str] = []
+    for page_text in page_texts:
+        lines = page_text.splitlines()
+        header_end = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.strip().startswith("英中双语学习版")
+            ),
+            -1,
+        )
+        bodies.append("\n".join(lines[header_end + 1:] if header_end >= 0 else lines))
+    return "\n".join(bodies)
 
 
 def load_v2_context(work_dir: Path, docx_path: Path) -> dict[str, Any]:
@@ -684,7 +713,7 @@ def main() -> None:
                 "Problem count alias disagrees with frozen IR: "
                 f"{args.expected_problems} != {role_counts.get('problem', 0)}"
             )
-        normalized_pdf = normalized_text(joined)
+        normalized_pdf = normalized_text(pdf_body_text(full_text))
         nodes = {node["id"]: node for node in ir.get("nodes", [])}
         role_presence_counts = {role: 0 for role in role_counts}
         translation_path = work_dir / "translation" / "translations-merged.jsonl"

@@ -486,7 +486,13 @@ def style_callout(paragraphs, start: int, end: int, role: str) -> None:
             if role == "problem" or ACTIVE_SCHEMA_VERSION == 2:
                 clear_paragraph_content(paragraph)
             add_paragraph_border(
-                paragraph, color=color, left=True, right=True, top=True, size=8, space=6
+                paragraph,
+                color=color,
+                left=True,
+                right=True,
+                top=index == separator_index,
+                size=8,
+                space=6,
             )
             continue
         cjk = has_cjk(text)

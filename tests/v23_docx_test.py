@@ -1017,7 +1017,7 @@ def test_frozen_audit() -> None:
 
 
 
-def test_compile_math_with_text_uses_target_evidence() -> None:
+def test_compile_bilingual_text_uses_target_evidence() -> None:
     node = {"id": "math-text", "type": "math_with_text",
             "source": {"text": "where x = 2 and y = 3"},
             "semantic": {"output": "bilingual"}}
@@ -1037,6 +1037,61 @@ def test_compile_math_with_text_uses_target_evidence() -> None:
     assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == []
     node["semantic"]["output"] = "source-only"
     assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == [node["source"]["text"]]
+    prose_node = {
+        "id": "prose",
+        "type": "prose",
+        "source": {"text": "A 'smart' out-of-\nvocabulary token"},
+        "semantic": {"output": "bilingual"},
+    }
+    prose_target = "一个包含智能引号的词表外词元"
+    assert compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {"prose": prose_target},
+        "一个包含智能引号的\n词表外词元",
+    )
+    assert not compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {"prose": prose_target},
+        "A ‘smart’ out-of-vocabulary token",
+    )
+    prose_node["semantic"]["output"] = "source-only"
+    assert compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {},
+        "A ‘smart’ out-of-vocabulary token",
+    )
+    page_one = "Bilingual study edition · Title\n英中双语学习版 · 1\n目标段落的前半部分"
+    page_two = (
+        "Bilingual study edition · A wrapped title\ncontinued title\n"
+        "英中双语学习版 · 2\n和后半部分"
+    )
+    assert compile_docx_pdf.pdf_body_text([page_one, page_two]) == (
+        "目标段落的前半部分\n和后半部分"
+    )
+    long_target = "目标段落的前半部分和后半部分，这一整段中文应当跨页保持连续并且可以被审计。"
+    long_node = {
+        "id": "long-prose",
+        "type": "prose",
+        "source": {"text": "A long source paragraph"},
+        "semantic": {"output": "bilingual"},
+    }
+    assert compile_docx_pdf.textual_occurrence_present(
+        long_node,
+        None,
+        {"long-prose": long_target},
+        compile_docx_pdf.pdf_body_text(
+            [
+                "Bilingual study edition · Title\n英中双语学习版 · 1\n"
+                "目标段落的前半部分",
+                "Bilingual study edition · A wrapped title\ncontinued title\n"
+                "英中双语学习版 · 2\n"
+                "和后半部分，这一整段中文应当跨页保持连续并且可以被审计。",
+            ]
+        ),
+    )
 
 
 
@@ -1055,6 +1110,39 @@ def test_pdf_counts_placements_not_shared_resources() -> None:
         assert compile_docx_pdf.image_placement_count(page) == 1
 
 
+def test_docx_source_evidence_handles_layout_and_duplicate_code() -> None:
+    nodes = [
+        {
+            "id": "code-one",
+            "type": "code",
+            "source": {"text": ">>> value\n1"},
+            "semantic": {"output": "source-only"},
+        },
+        {
+            "id": "code-two",
+            "type": "code",
+            "source": {"text": ">>> value\n1"},
+            "semantic": {"output": "source-only"},
+        },
+    ]
+    paragraphs = [
+        {"text": ">>> value1", "style": "SourceCode"},
+        {"text": "unrelated", "style": "BodyText"},
+        {"text": ">>> value1", "style": "SourceCode"},
+    ]
+    assert audit_docx.source_only_occurrence_evidence(nodes, paragraphs) == {
+        "code-one": 1,
+        "code-two": 1,
+    }
+    assert audit_docx.source_occurrence_count(
+        "A ‘smart’ out-of-vocabulary token",
+        {
+            "type": "prose",
+            "source": {"text": "A 'smart' out-of-\nvocabulary token"},
+        },
+    ) == 1
+
+
 def main() -> None:
     test_legacy_transform()
     test_legacy_transform_pairs_real_build_output_markdown()
@@ -1067,8 +1155,9 @@ def main() -> None:
     test_shared_style_roles()
     test_html_table_materialization()
     test_frozen_audit()
-    test_compile_math_with_text_uses_target_evidence()
+    test_compile_bilingual_text_uses_target_evidence()
     test_pdf_counts_placements_not_shared_resources()
+    test_docx_source_evidence_handles_layout_and_duplicate_code()
     print(
         "V2.3 DOCX tests passed: legacy, structural AST, shared styles, "
         "native tables, frozen audit"

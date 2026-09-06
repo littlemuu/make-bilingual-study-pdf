@@ -78,6 +78,9 @@ def build_fixture(work_dir: Path) -> tuple[list[dict], list[str]]:
     blocks = [
         make_block("n-title", "heading", "A Small Paper", 50, translatable=True),
         make_block("n-author", "prose", "Alice Example", 75, translatable=False),
+        make_block(
+            "n-author-duplicate", "prose", "Alice Example", 85, translatable=False
+        ),
         make_block("n-abstract", "prose", "Abstract: a concise result.", 100, translatable=True),
         make_block("n-section", "heading", "1 Method", 130, translatable=True),
         make_block("n-p1", "prose", "This paragraph continues", 160, translatable=True),
@@ -97,6 +100,7 @@ def build_fixture(work_dir: Path) -> tuple[list[dict], list[str]]:
     adapter_roles = {
         "n-title": "title",
         "n-author": "author",
+        "n-author-duplicate": "author",
         "n-abstract": "abstract",
         "n-section": "section",
         "n-p1": "paragraph",
@@ -410,7 +414,7 @@ def main() -> None:
         translations = {
             "n-title": "一篇小论文",
             "n-abstract": "摘要：一个简洁的结果。",
-            "n-section": "1 方法",
+            "n-section": "1 Method",
             "n-p1": "本段继续",
             "n-p2": "到第二个提取块。",
             "n-caption": "图 1：一个简洁的结果。",
@@ -451,6 +455,7 @@ def main() -> None:
         assert build["dispositions"] == {
             "n-title": "bilingual",
             "n-author": "source-only",
+            "n-author-duplicate": "source-only",
             "n-abstract": "bilingual",
             "n-section": "bilingual",
             "n-p1": "bilingual",
@@ -461,7 +466,7 @@ def main() -> None:
             "n-header": "artifact-omitted",
         }
         markdown = (work_dir / "output" / "fixture.md").read_text(encoding="utf-8")
-        assert markdown.count("Alice Example") == 1
+        assert markdown.count("Alice Example") == 2
         assert markdown.count("](assets/figure.bin)") == 1
         assert markdown.index("This paragraph continues") < markdown.index("本段继续")
 

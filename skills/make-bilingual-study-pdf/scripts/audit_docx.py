@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import html
 import io
@@ -10,6 +11,7 @@ import json
 import os
 import posixpath
 import re
+import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Any
 from lxml import etree
 from common import json_loads_strict
 from audit_outputs import validate_compile_output_binding, validate_output_audit_binding
+from build_outputs import prose_text
 from profile import load_profile, load_work_profile, profile_contract, semantic_group, target_text_pattern
 from safe_artifacts import (
     ArtifactSafetyError,
@@ -269,6 +272,9 @@ def _docx_audit_producer_errors(
             errors.append("V2 document IR semantic evidence is invalid")
             semantic_groups = []
             nodes = []
+        nodes_by_id = {
+            node.get("id"): node for node in nodes if isinstance(node, dict)
+        }
         expected_nested_keys = {
             "complete_container_checks": {
                 group.get("id")
@@ -294,7 +300,9 @@ def _docx_audit_producer_errors(
                 and role_specs.get(group.get("role"), {}).get("grouping")
                 != "structural-container"
                 and role_specs.get(group.get("role"), {}).get("output")
-                != "artifact-omitted"
+                not in {"artifact-omitted", "visual-once"}
+                and nodes_by_id.get(group.get("anchor_node_id"), {}).get("type")
+                != "math_with_text"
             },
         }
         for field, expected_keys in expected_nested_keys.items():
@@ -586,26 +594,83 @@ def occurrence_count(haystack: str, needle: str) -> int:
     return normalized_text(haystack).count(needle) if needle else 0
 
 
+@functools.lru_cache(maxsize=4096)
+def source_comparison_text(value: str) -> str:
+    """Normalize DOCX typography and layout-only whitespace for source binding."""
+    value = unicodedata.normalize("NFKC", value)
+    value = value.translate(
+        str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+    )
+    return re.sub(r"\s+", "", value)
+
+
 def searchable_sources(node: dict[str, Any]) -> list[str]:
     source = node.get("source", {}).get("text", "")
-    candidates = [source]
+    candidates = [source, prose_text(source)]
     if node.get("type") == "table" and "<" in source:
         candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
     if node.get("type") == "list":
         entries = [
-            re.sub(r"^\s*[-*+]\s+", "", line)
+            re.sub(
+                r"^\s*(?:[-*+•]|\(?[A-Za-z0-9]+\)[.)]?|\d+[.)])\s+",
+                "",
+                line,
+            )
             for line in source.splitlines()
             if line.strip()
         ]
-        candidates.extend([" ".join(entries), "• " + " • ".join(entries)])
-    return [item for item in candidates if item]
+        candidates.extend(
+            [
+                " ".join(entries),
+                "• " + " • ".join(entries),
+                prose_text(" ".join(entries)),
+            ]
+        )
+    return list(dict.fromkeys(item for item in candidates if item))
 
 
 def source_occurrence_count(haystack: str, node: dict[str, Any]) -> int:
     return max(
-        (occurrence_count(haystack, needle) for needle in searchable_sources(node)),
+        (
+            source_comparison_text(haystack).count(source_comparison_text(needle))
+            for needle in searchable_sources(node)
+            if source_comparison_text(needle)
+        ),
         default=0,
     )
+
+
+def source_only_occurrence_evidence(
+    nodes: list[dict[str, Any]], paragraphs: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Bind each source-only node to a distinct paragraph in document order."""
+    result: dict[str, int] = {}
+    cursor = -1
+    for node in nodes:
+        if (
+            node.get("semantic", {}).get("output") != "source-only"
+            or not node.get("source", {}).get("text")
+        ):
+            continue
+        candidates = {
+            source_comparison_text(item)
+            for item in searchable_sources(node)
+            if source_comparison_text(item)
+        }
+        required_style = "SourceCode" if node.get("type") == "code" else None
+        match = next(
+            (
+                index
+                for index in range(cursor + 1, len(paragraphs))
+                if (required_style is None or paragraphs[index]["style"] == required_style)
+                and source_comparison_text(paragraphs[index]["text"]) in candidates
+            ),
+            None,
+        )
+        result[node["id"]] = int(match is not None)
+        if match is not None:
+            cursor = match
+    return result
 
 
 def load_v2_context(
@@ -1024,7 +1089,10 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         relationships_xml = archive.read("word/_rels/document.xml.rels")
         root = etree.fromstring(document_xml)
         relationships = etree.fromstring(relationships_xml)
-        text = "\n".join(root.xpath("//w:t/text()", namespaces=W_NS))
+        text = "\n".join(
+            "".join(paragraph.xpath(".//w:t/text()", namespaces=W_NS))
+            for paragraph in root.xpath("//w:body//w:p", namespaces=W_NS)
+        )
         external_links = sorted(
             item.get("Target") for item in relationships if item.get("TargetMode") == "External"
         )
@@ -1101,6 +1169,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                     node.xpath("string(./w:pPr/w:ind/@w:left)", namespaces=W_NS),
                     node.xpath("string(./w:pPr/w:ind/@w:right)", namespaces=W_NS),
                 ),
+                "style": node.xpath(
+                    "string(./w:pPr/w:pStyle/@w:val)", namespaces=W_NS
+                ),
             }
         )
 
@@ -1151,7 +1222,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         group for group in ir.get("semantic_groups", [])
         if group.get("membership") == "anchor-only"
         and role_specs[group["role"]]["grouping"] != "structural-container"
-        and role_specs[group["role"]]["output"] != "artifact-omitted"
+        and role_specs[group["role"]]["output"]
+        not in {"artifact-omitted", "visual-once"}
+        and nodes[group["anchor_node_id"]].get("type") != "math_with_text"
     ]
     target_re = target_text_pattern(profile)
     complete_container_checks: dict[str, bool] = {}
@@ -1200,7 +1273,11 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                     }
                     valid = (
                         group["member_node_ids"] == [group["anchor_node_id"]]
-                        and normalized_text(before) in source_candidates
+                        and any(
+                            source_comparison_text(before)
+                            == source_comparison_text(candidate)
+                            for candidate in source_candidates
+                        )
                     )
                 else:
                     cursor = -1
@@ -1233,10 +1310,17 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             scoped_range_indexes.add(range_index)
 
     non_structural_anchor_unboxed: dict[str, bool] = {}
+    boxed_paragraph_indexes = {
+        paragraph_index
+        for item in ranges
+        for paragraph_index in range(item["start"], item["end"] + 1)
+    }
     for group in non_structural_anchor_groups:
         anchor_node = nodes[group["anchor_node_id"]]
-        non_structural_anchor_unboxed[group["id"]] = not any(
-            source_occurrence_count(item["text"], anchor_node) for item in ranges
+        non_structural_anchor_unboxed[group["id"]] = any(
+            paragraph_index not in boxed_paragraph_indexes
+            and source_occurrence_count(paragraph["text"], anchor_node) > 0
+            for paragraph_index, paragraph in enumerate(paragraphs)
         )
 
     occurrence_evidence: dict[str, dict[str, int]] = {}
@@ -1263,12 +1347,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             "omitted": omitted,
         }
 
-    source_only_counts = {
-        node_id: source_occurrence_count(text, node)
-        for node_id, node in nodes.items()
-        if node.get("semantic", {}).get("output") == "source-only"
-        and node.get("source", {}).get("text")
-    }
+    source_only_counts = source_only_occurrence_evidence(
+        list(nodes.values()), paragraphs
+    )
     visual_occurrences = sum(
         item["visual"] for item in occurrence_evidence.values()
     )
