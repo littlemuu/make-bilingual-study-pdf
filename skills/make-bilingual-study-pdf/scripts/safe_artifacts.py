@@ -61,6 +61,15 @@ class ArtifactFileSnapshot:
         return self.status is not None
 
 
+@dataclass(frozen=True)
+class ArtifactDirectorySnapshot:
+    """Opaque identity for one directory and its lexical ancestors."""
+
+    path: Path
+    status: os.stat_result
+    parents: tuple[_EntrySnapshot, ...]
+
+
 def lexical_absolute_path(path: str | os.PathLike[str]) -> Path:
     """Return an expanded absolute path without following filesystem links."""
     return Path(os.path.abspath(os.fspath(Path(path).expanduser())))
@@ -415,8 +424,8 @@ def create_artifact_directory_exclusive(
     *,
     boundary: str | os.PathLike[str] | None = None,
     mode: int = 0o700,
-) -> Path:
-    """Create one missing leaf directory and reject any competing entry."""
+) -> ArtifactDirectorySnapshot:
+    """Create one missing leaf directory and capture its exact identity."""
     absolute, _ = _bounded_path(path, boundary, allow_boundary=False)
     _, parent_identities = _inspect_directory(absolute.parent, boundary=boundary)
     _recheck_directories(parent_identities)
@@ -446,7 +455,49 @@ def create_artifact_directory_exclusive(
         raise ArtifactSafetyError(
             f"cannot verify created artifact directory: {exc}"
         ) from exc
-    return absolute
+    return ArtifactDirectorySnapshot(absolute, created, parent_identities)
+
+
+def _recheck_artifact_directory(snapshot: ArtifactDirectorySnapshot) -> None:
+    if not isinstance(snapshot, ArtifactDirectorySnapshot):
+        raise TypeError("expected directory version must be an ArtifactDirectorySnapshot")
+    _recheck_directories(snapshot.parents)
+    try:
+        current = os.lstat(snapshot.path)
+        _require_directory(current, snapshot.path)
+    except OSError as exc:
+        raise ArtifactSafetyError(
+            f"artifact directory changed after creation: {exc}"
+        ) from exc
+    if not _same_directory(snapshot.status, current):
+        raise ArtifactSafetyError(
+            f"artifact directory identity changed after creation: {snapshot.path}"
+        )
+    _recheck_directories(snapshot.parents)
+
+
+def inspect_missing_artifact_file(
+    path: str | os.PathLike[str],
+    *,
+    parent: ArtifactDirectorySnapshot,
+) -> ArtifactFileSnapshot:
+    """Capture a required-missing direct child under a fixed directory identity."""
+    if not isinstance(parent, ArtifactDirectorySnapshot):
+        raise TypeError("parent must be an ArtifactDirectorySnapshot")
+    absolute = lexical_absolute_path(path)
+    if absolute.parent != parent.path:
+        raise ArtifactSafetyError(
+            "missing artifact target must be a direct child of its fixed directory"
+        )
+    _recheck_artifact_directory(parent)
+    if _artifact_file_status(absolute) is not None:
+        raise ArtifactSafetyError(f"artifact target already exists: {absolute}")
+    _recheck_artifact_directory(parent)
+    return ArtifactFileSnapshot(
+        absolute,
+        None,
+        parent.parents + (_EntrySnapshot(parent.path, parent.status),),
+    )
 
 
 def _artifact_file_status(path: Path) -> os.stat_result | None:
@@ -1335,6 +1386,7 @@ def clear_artifact_directory(
 
 
 __all__ = [
+    "ArtifactDirectorySnapshot",
     "ArtifactSafetyError",
     "artifact_paths_same_entry",
     "artifact_size",
@@ -1344,6 +1396,7 @@ __all__ = [
     "atomic_write_text",
     "clear_artifact_directory",
     "create_artifact_directory_exclusive",
+    "inspect_missing_artifact_file",
     "lexical_absolute_path",
     "lexical_paths_overlap",
     "prepare_artifact_directory",

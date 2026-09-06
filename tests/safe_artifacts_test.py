@@ -31,6 +31,7 @@ from safe_artifacts import (  # noqa: E402
     clear_artifact_directory,
     create_artifact_directory_exclusive,
     inspect_artifact_file,
+    inspect_missing_artifact_file,
     lexical_absolute_path,
     lexical_paths_overlap,
     portable_artifact_basename,
@@ -241,11 +242,13 @@ class SafeArtifactTests(unittest.TestCase):
         created = create_artifact_directory_exclusive(
             parent / "migration", boundary=self.boundary
         )
-        sentinel = created / "manifest.json"
+        sentinel = created.path / "manifest.json"
         sentinel.write_bytes(b"preserve\n")
         with self.assertRaisesRegex(ArtifactSafetyError, "already exists"):
+            inspect_missing_artifact_file(sentinel, parent=created)
+        with self.assertRaisesRegex(ArtifactSafetyError, "already exists"):
             create_artifact_directory_exclusive(
-                created, boundary=self.boundary
+                created.path, boundary=self.boundary
             )
         self.assertEqual(sentinel.read_bytes(), b"preserve\n")
 

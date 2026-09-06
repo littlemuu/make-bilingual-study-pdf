@@ -161,6 +161,66 @@ class ExistingWorkMigrationTests(unittest.TestCase):
             self.assertEqual(sentinel.read_bytes(), b"competing migration\n")
             self.assertEqual(tree_bytes(work), before)
 
+    def test_post_create_backup_file_and_directory_races_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="migration-post-create-race-") as temporary:
+            root = Path(temporary)
+            seed = self.seed_v1_work(root)
+            real_create = migration_module.create_artifact_directory_exclusive
+
+            file_work = root / "file-race" / "work"
+            shutil.copytree(seed, file_work)
+            file_before = tree_bytes(file_work)
+            file_backup = root / "file-race-backup"
+            file_sentinel = file_backup / "manifest.json"
+
+            def create_then_add_file(*args: object, **kwargs: object) -> object:
+                created = real_create(*args, **kwargs)
+                (created.path / "manifest.json").write_bytes(b"competing backup\n")
+                return created
+
+            with mock.patch.object(
+                migration_module,
+                "create_artifact_directory_exclusive",
+                side_effect=create_then_add_file,
+            ):
+                with self.assertRaises(MigrationFailed):
+                    migration_module.migrate_profile(file_work, file_backup)
+
+            self.assertEqual(file_sentinel.read_bytes(), b"competing backup\n")
+            self.assertEqual(tree_bytes(file_work), file_before)
+
+            directory_work = root / "directory-race" / "work"
+            shutil.copytree(seed, directory_work)
+            directory_before = tree_bytes(directory_work)
+            directory_backup = root / "directory-race-backup"
+            displaced_backup = root / "directory-race-created"
+            replacement_sentinel = directory_backup / "intruder.txt"
+
+            def create_then_replace_directory(
+                *args: object, **kwargs: object
+            ) -> object:
+                created = real_create(*args, **kwargs)
+                created.path.rename(displaced_backup)
+                created.path.mkdir()
+                (created.path / "intruder.txt").write_bytes(b"replacement directory\n")
+                return created
+
+            with mock.patch.object(
+                migration_module,
+                "create_artifact_directory_exclusive",
+                side_effect=create_then_replace_directory,
+            ):
+                with self.assertRaises(MigrationFailed):
+                    migration_module.migrate_profile(directory_work, directory_backup)
+
+            self.assertEqual(replacement_sentinel.read_bytes(), b"replacement directory\n")
+            self.assertEqual(
+                sorted(path.name for path in directory_backup.iterdir()),
+                ["intruder.txt"],
+            )
+            self.assertFalse(any(displaced_backup.iterdir()))
+            self.assertEqual(tree_bytes(directory_work), directory_before)
+
     def test_real_migration_reports_each_write_phase_failure(self) -> None:
         with tempfile.TemporaryDirectory(prefix="migration-failures-") as temporary:
             root = Path(temporary)

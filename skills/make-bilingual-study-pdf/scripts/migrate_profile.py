@@ -22,6 +22,7 @@ from safe_artifacts import (
     clear_artifact_directory,
     create_artifact_directory_exclusive,
     inspect_artifact_file,
+    inspect_missing_artifact_file,
     lexical_absolute_path,
     lexical_paths_overlap,
     prepare_artifact_directory,
@@ -370,11 +371,11 @@ def migrate_profile(work_dir: Path, backup_dir: Path, *, dry_run: bool = False) 
             raise ValueError(
                 "backup path began overlapping WORK or the installed Skill root"
             )
-        create_artifact_directory_exclusive(backup_dir)
+        backup_directory = create_artifact_directory_exclusive(backup_dir)
         completed_steps.append("backup-directory-created")
         backup_targets = {
-            name: inspect_artifact_file(
-                backup_dir / name, boundary=backup_dir, allow_missing=True
+            name: inspect_missing_artifact_file(
+                backup_dir / name, parent=backup_directory
             )
             for name in UPSTREAM
         }
