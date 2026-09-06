@@ -1,0 +1,495 @@
+{
+  "block_order": [
+    "p001-b001",
+    "p001-b002",
+    "p001-b003",
+    "p001-b004",
+    "p001-b005",
+    "p001-b006",
+    "p001-b007",
+    "p001-b008",
+    "p001-b009",
+    "p001-b010",
+    "p001-b011",
+    "p001-b012",
+    "p001-b013",
+    "p001-b014"
+  ],
+  "build_status": null,
+  "gate_statuses": {
+    "compile_audit": null,
+    "docx_audit": null,
+    "output_audit": "passed",
+    "qa_report": null,
+    "source_audit": "passed",
+    "translation_audit": "passed",
+    "translation_plan": "passed",
+    "visual_review": null
+  },
+  "ir_inventories": {
+    "external_uris": [],
+    "node_count": 14,
+    "node_type_counts": {
+      "artifact": 1,
+      "callout": 3,
+      "caption": 1,
+      "caption_continuation": 1,
+      "code": 1,
+      "heading": 1,
+      "image": 1,
+      "list": 1,
+      "math": 1,
+      "math_with_text": 1,
+      "prose": 1,
+      "visual_content": 1
+    },
+    "semantic_role_counts": {
+      "example": 1,
+      "problem": 1,
+      "tip": 1
+    },
+    "visual_ids": [
+      "visual-p001-b008",
+      "visual-p001-b009",
+      "visual-p001-b010",
+      "visual-p001-b012"
+    ]
+  },
+  "ir_nodes": [
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b001"
+      },
+      "id": "p001-b001",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          40.0,
+          345.616,
+          62.032
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "ad3747ff35fd52f95051dd5b081272c1a1cbadeda9aa9b1273dc61c12f541ca9",
+        "text": "1 Native Assignment Migration Fixture"
+      },
+      "translatable": true,
+      "type": "heading"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b002"
+      },
+      "id": "p001-b002",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          88.0,
+          359.085,
+          103.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "semantic_anchor": {
+        "identifier": "p1",
+        "role": "problem"
+      },
+      "source": {
+        "sha256": "711c23d1c3c9af380a783e2cdc0fd3ce412af37f8b28f0c1f864e3667c6e47b0",
+        "text": "Problem (p1): Explain the update rule for the training objective."
+      },
+      "translatable": true,
+      "type": "callout"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b003"
+      },
+      "id": "p001-b003",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          130.0,
+          357.226,
+          145.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "a479a9a6129444e8c63394bf47f82ec31c42c013c82f55e7dd2aa5503bf5b356",
+        "text": "The objective combines a data term with a regularization term."
+      },
+      "translatable": true,
+      "type": "prose"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b004"
+      },
+      "id": "p001-b004",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          172.0,
+          352.364,
+          187.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "semantic_anchor": {
+        "identifier": "e1",
+        "role": "example"
+      },
+      "source": {
+        "sha256": "2fce6c1e02c01dc6fde29d7edcb90ea551a8f0329590600bc5b755804d9aecb9",
+        "text": "Example (e1): Evaluate the rule when the learning rate is 0.1."
+      },
+      "translatable": true,
+      "type": "callout"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b005"
+      },
+      "id": "p001-b005",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          214.0,
+          306.494,
+          229.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "semantic_anchor": {
+        "identifier": null,
+        "role": "tip"
+      },
+      "source": {
+        "sha256": "b81b92211042c2ee842031e62bbf5d92083a252dc0df2795fc153869be9b7b19",
+        "text": "Low-Resource Tip: Cache repeated feature vectors."
+      },
+      "translatable": true,
+      "type": "callout"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b006"
+      },
+      "id": "p001-b006",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          256.0,
+          307.088,
+          271.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "83830e8259a8f4fd7f9292e3a706d1e3b0fd29c0d65a9e62f2647986d996fe34",
+        "text": "- Verify every intermediate value before submission."
+      },
+      "translatable": true,
+      "type": "list"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b007"
+      },
+      "id": "p001-b007",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          302.0,
+          174.0,
+          325.674
+        ],
+        "page": 1
+      },
+      "protected_spans": [
+        {
+          "end": 20,
+          "role": "code",
+          "start": 0,
+          "text": "for value in values:"
+        },
+        {
+          "end": 39,
+          "role": "code",
+          "start": 21,
+          "text": "    total += value"
+        }
+      ],
+      "source": {
+        "sha256": "d8c58208f3f8acac25fca5b3c5229bd866275eec53c12fff37f76188969752a9",
+        "text": "for value in values:\n    total += value"
+      },
+      "translatable": false,
+      "type": "code"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b008"
+      },
+      "id": "p001-b008",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          362.0,
+          129.66,
+          393.968
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "91d756250e760ff03d3f9daec7ac0795784ffeeeb01ee5525ad4d212b3832bbb",
+        "text": "f(x) = x^2 + 3x\n(1)"
+      },
+      "translatable": false,
+      "type": "math"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b009"
+      },
+      "id": "p001-b009",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          422.0,
+          116.364,
+          453.968
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "776030aefa0d81c5c190248363d4354fc17bc6453611facc23fbcc19ad0b0607",
+        "text": "where x = 2\nand y = 3"
+      },
+      "translatable": true,
+      "type": "math_with_text"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b010"
+      },
+      "id": "p001-b010",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          54.0,
+          485.0,
+          234.0,
+          565.0
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "text": ""
+      },
+      "translatable": false,
+      "type": "image"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b011"
+      },
+      "id": "p001-b011",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          320.0,
+          510.0,
+          435.04,
+          523.74
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "4a2469ee2248e232951fde6379559c8b230df9862ba7c13c7704d265b4e8dca7",
+        "text": "Curve label inside graphic"
+      },
+      "translatable": false,
+      "type": "visual_content"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b012"
+      },
+      "id": "p001-b012",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          300.0,
+          575.0,
+          489.497,
+          590.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "09921ea5579c608a8e4131f157ff59ae455380a4eb8772d18dad64952b2a1e25",
+        "text": "Figure 1: Deterministic reference curve"
+      },
+      "translatable": true,
+      "type": "caption"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b013"
+      },
+      "id": "p001-b013",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          300.0,
+          598.0,
+          508.483,
+          613.114
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "relations": {
+        "caption_parent": "p001-b012"
+      },
+      "source": {
+        "sha256": "8693320c695256680363beae18bca5fb244d7e2532b0f054f1bcd7d9da4513b7",
+        "text": "The figure is retained once with its caption."
+      },
+      "translatable": true,
+      "type": "caption_continuation"
+    },
+    {
+      "evidence": {
+        "adapter": "native-text-pdf",
+        "source_block_id": "p001-b014"
+      },
+      "id": "p001-b014",
+      "link_ids": [],
+      "location": {
+        "bbox": [
+          295.0,
+          748.0,
+          300.56,
+          761.74
+        ],
+        "page": 1
+      },
+      "protected_spans": [],
+      "source": {
+        "sha256": "6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "text": "1"
+      },
+      "translatable": false,
+      "type": "artifact"
+    }
+  ],
+  "ir_profile": {
+    "id": "assignment-en-zh",
+    "sha256": "8ce2863ab72adc1ac11f415576060afbbdf39ab7d4f62fc7f25b88b31539c774"
+  },
+  "ir_schema_version": 1,
+  "ir_semantic_groups": [
+    {
+      "anchor_node_id": "p001-b002",
+      "evidence": "The native-text PDF adapter proves the semantic label and anchor. It does not infer a complete container range without structural evidence.",
+      "id": "problem:p1",
+      "identifier": "p1",
+      "member_node_ids": [
+        "p001-b002"
+      ],
+      "membership": "anchor-only",
+      "role": "problem",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "anchor_node_id": "p001-b004",
+      "evidence": "The native-text PDF adapter proves the semantic label and anchor. It does not infer a complete container range without structural evidence.",
+      "id": "example:e1",
+      "identifier": "e1",
+      "member_node_ids": [
+        "p001-b004"
+      ],
+      "membership": "anchor-only",
+      "role": "example",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "anchor_node_id": "p001-b005",
+      "evidence": "The native-text PDF adapter proves the semantic label and anchor. It does not infer a complete container range without structural evidence.",
+      "id": "tip:p001-b005",
+      "identifier": null,
+      "member_node_ids": [
+        "p001-b005"
+      ],
+      "membership": "anchor-only",
+      "role": "tip",
+      "source_pages": [
+        1
+      ]
+    }
+  ],
+  "kind_counts": {
+    "artifact": 1,
+    "callout": 3,
+    "caption": 1,
+    "caption_continuation": 1,
+    "code": 1,
+    "heading": 1,
+    "image": 1,
+    "list": 1,
+    "math": 1,
+    "math_with_text": 1,
+    "prose": 1,
+    "visual_content": 1
+  },
+  "next_action": "run `pipeline.py docx WORK_DIR --markdown AUDITED_STRUCTURED.md`; the Markdown must already contain complete semantic callout containers",
+  "output_audit_status": "passed",
+  "source_audit": {
+    "global_fivegram_coverage": 0.9878,
+    "oracle_fivegrams": 82,
+    "status": "passed"
+  },
+  "source_pdf_sha256": "0cfe0a798f92722245ead59d9220b3834af1b38cc8e6e531bb417eca295398ef"
+}

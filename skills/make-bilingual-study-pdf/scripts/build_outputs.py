@@ -860,6 +860,22 @@ def main() -> None:
             if policy == "artifact-omitted":
                 dispositions[block_id] = policy
                 continue
+            if block["kind"] == "visual_content":
+                owners = [v for v in manifest.get("visuals", [])
+                          if block_id in v.get("contained_block_ids", [])
+                          and v.get("anchor_id") != block_id]
+                if policy != "visual-once" or len(owners) != 1:
+                    raise SystemExit(f"visual content {block_id} requires one containing visual")
+                dispositions[block_id] = policy
+                continue
+            if block["kind"] == "caption_continuation":
+                owners = [v for v in manifest.get("visuals", [])
+                          if block_id in v.get("caption_continuation_ids", [])
+                          and v.get("anchor_id") == block.get("caption_parent")]
+                if policy != "bilingual" or len(owners) != 1:
+                    raise SystemExit(f"caption continuation {block_id} requires one bound parent")
+                dispositions[block_id] = policy
+                continue
             if policy == "visual-once":
                 if len(anchored_visuals) != 1:
                     raise SystemExit(
@@ -899,11 +915,28 @@ def main() -> None:
                 raise SystemExit(
                     f"bilingual node {block_id} is not eligible for translation"
                 )
-            if anchored_visuals:
+            if anchored_visuals and block["kind"] not in {"caption", "math_with_text"}:
                 raise SystemExit(
                     f"bilingual node {block_id} unexpectedly owns a visual; "
                     "split its caption from the visual node"
                 )
+            for visual in anchored_visuals:
+                relative = visual_paths[visual["id"]]
+                markdown_parts.append(
+                    visual_markdown(
+                        relative, f"Source visual from page {block['page']}"
+                    )
+                )
+                latex_parts.append(visual_latex(relative))
+            if block["kind"] == "math_with_text":
+                markdown_parts.append(
+                    make_translation_only_markdown(block, translations[block_id])
+                )
+                latex_parts.append(
+                    make_translation_only_latex(block, translations[block_id])
+                )
+                dispositions[block_id] = policy
+                continue
             if block_id in follower_ids:
                 dispositions[block_id] = policy
                 continue
@@ -927,6 +960,21 @@ def main() -> None:
                     latex_parts.append(
                         f"\\SegmentAnchor{{{latex_escape(follower['id'])}}}"
                     )
+            continuation_blocks: list[dict[str, Any]] = []
+            for visual in anchored_visuals:
+                for continuation_id in visual.get("caption_continuation_ids", []):
+                    continuation = blocks_by_id[continuation_id]
+                    continuation_blocks.append(continuation)
+            if continuation_blocks:
+                source_override = " ".join(
+                    [block["source"]] + [item["source"] for item in continuation_blocks]
+                )
+                translation = " ".join(
+                    [translation] + [translations[item["id"]] for item in continuation_blocks]
+                )
+                for continuation in continuation_blocks:
+                    markdown_parts.append(response_marker(continuation, "grouped"))
+
             markdown_parts.append(
                 make_bilingual_markdown(
                     block, translation, source_override=source_override

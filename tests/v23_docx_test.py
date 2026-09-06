@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import shutil
 import subprocess
@@ -242,6 +243,40 @@ def test_generic_ast() -> None:
     )
     assert len(grouped_alias["blocks"]) == 1
     assert grouped_alias["blocks"][0]["t"] == "BlockQuote"
+
+
+def test_v2_normalizes_pre_segment_page_anchor_like_v1() -> None:
+    prefix = {
+        "t": "Para",
+        "c": [
+            {"t": "RawInline", "c": ["html", '<a id="source-page-1">']},
+            {"t": "RawInline", "c": ["html", "</a>"]},
+            {"t": "SoftBreak"},
+            {"t": "RawInline", "c": ["html", "<!-- source-page: 1 -->"]},
+        ],
+    }
+    document = {
+        "pandoc-api-version": [1, 23],
+        "meta": {},
+        "blocks": [
+            prefix,
+            marker("a"),
+            paragraph("Ordinary source paragraph"),
+            target("普通目标段落"),
+        ],
+    }
+    legacy = transform(document, load_profile("assignment-en-zh"))["blocks"]
+    from v2_migration_contract_test import build_candidate_v2
+    generic = transform(
+        document, build_candidate_v2(load_profile("assignment-en-zh")),
+        semantic_groups=[],
+    )["blocks"]
+    for profile_id in ("academic-paper-en-zh", "lecture-notes-en-zh"):
+        existing = transform(document, load_profile(profile_id), semantic_groups=[])["blocks"]
+        assert existing[0] == prefix
+        assert len(existing) == len(generic) - 1
+    assert generic == legacy
+    assert [block["t"] for block in generic[:2]] == ["Para", "Para"]
 
 
 def add_generic_range(
@@ -938,6 +973,45 @@ def test_frozen_audit() -> None:
         audit_path.write_bytes(audit_bytes)
 
 
+
+def test_compile_math_with_text_uses_target_evidence() -> None:
+    node = {"id": "math-text", "type": "math_with_text",
+            "source": {"text": "where x = 2 and y = 3"},
+            "semantic": {"output": "bilingual"}}
+    target = "其中 x = 2，且 y = 3"
+    needles = compile_docx_pdf.textual_occurrence_needles(node, None, {"math-text": target})
+    assert needles == [target]
+    assert compile_docx_pdf.textual_occurrence_present(
+        node, None, {"math-text": target}, "其中x = 2，\n且y = 3"
+    )
+    assert not compile_docx_pdf.textual_occurrence_present(
+        node, None, {"math-text": target}, "其中x = 9，且y = 3"
+    )
+    assert not compile_docx_pdf.textual_occurrence_present(
+        node, None, {"math-text": target}, node["source"]["text"]
+    )
+    assert all(needle not in node["source"]["text"] for needle in needles)
+    assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == []
+    node["semantic"]["output"] = "source-only"
+    assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == [node["source"]["text"]]
+
+
+
+def test_pdf_counts_placements_not_shared_resources() -> None:
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (8, 8), "navy").save(image_bytes, format="PNG")
+    with fitz.open() as document:
+        page = document.new_page()
+        page.insert_image(fitz.Rect(20, 20, 40, 40), stream=image_bytes.getvalue())
+        stream_id = page.get_contents()[0]
+        drawing = document.xref_stream(stream_id)
+        document.update_stream(stream_id, drawing + drawing)
+        assert len(page.get_images(full=True)) == 1
+        assert compile_docx_pdf.image_placement_count(page) == 2
+        document.update_stream(stream_id, drawing)
+        assert compile_docx_pdf.image_placement_count(page) == 1
+
+
 def main() -> None:
     test_legacy_transform()
     test_legacy_transform_pairs_real_build_output_markdown()
@@ -945,9 +1019,12 @@ def main() -> None:
     test_page_header_omits_unresolvable_styleref()
     test_v2_audit_palette_covers_assignment_styles()
     test_generic_ast()
+    test_v2_normalizes_pre_segment_page_anchor_like_v1()
     test_shared_style_roles()
     test_html_table_materialization()
     test_frozen_audit()
+    test_compile_math_with_text_uses_target_evidence()
+    test_pdf_counts_placements_not_shared_resources()
     print(
         "V2.3 DOCX tests passed: legacy, structural AST, shared styles, "
         "native tables, frozen audit"

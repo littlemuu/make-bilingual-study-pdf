@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the two V2.3 Profiles through the automated DOCX/PDF gate.
+"""Run the installed V2.3 Profiles and the public assignment migration chain.
 
 This forward test deliberately stops before human visual approval.  CI may prove
 that the automated compile gate passes and that finalization remains blocked; it
@@ -20,11 +20,14 @@ from docx import Document
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPT_DIR = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
+sys.path.insert(0, str(REPOSITORY / "tests"))
 
 import docx_style
 from common import read_json, read_jsonl, sha256_file, write_json, write_jsonl
 from docx_ast import transform
 from pipeline import report_status
+from v2_assignment_chain_diff_test import run_assignment_document_chain, finish_assignment_document_chain, _run_pipeline_stage, _run_script, _docx_projection, _render_projection
+from v2_migration_contract_test import build_candidate_v2
 from profile import load_profile
 
 
@@ -313,6 +316,113 @@ def assert_assignment_v1_render(
     }
 
 
+def assert_assignment_migration_forward(output_root: Path) -> dict[str, Any]:
+    """Exercise real V1 and candidate-V2 DOCX/PDF gates on public input.
+
+    This is intentionally an automated-forward proof only.  It produces real
+    contact sheets, verifies the production document gates, and proves final QA
+    remains blocked until a human has inspected those images.
+    """
+    v1_profile = load_profile("assignment-en-zh")
+    v1 = run_assignment_document_chain(output_root / "assignment-v1", v1_profile)
+    v2 = run_assignment_document_chain(
+        output_root / "assignment-v2", build_candidate_v2(v1_profile)
+    )
+    from migrate_profile_contract_test import migrate_profile_reference, tree_bytes
+    migrated_work = output_root / "assignment-existing-migrated" / "work"
+    shutil.copytree(Path(v1["work_dir"]), migrated_work)
+    backup = output_root / "assignment-migration-backup"
+    observed = tree_bytes(migrated_work)
+    transaction = migrate_profile_reference(migrated_work, backup, dry_run=True)
+    if tree_bytes(migrated_work) != observed:
+        raise RuntimeError("migration dry-run changed existing WORK")
+    if migrate_profile_reference(migrated_work, backup) != transaction:
+        raise RuntimeError("migration differs from its dry-run plan")
+    _run_pipeline_stage("source-audit", migrated_work)
+    _run_script("init_glossary.py", migrated_work)
+    _run_pipeline_stage("prepare", migrated_work, "--max-source-chars", "1000")
+    migrated = finish_assignment_document_chain(migrated_work, build_candidate_v2(v1_profile))
+    for key in ("projection", "docx_projection", "render_projection"):
+        if migrated[key] != v2[key]:
+            raise RuntimeError(f"existing WORK migration differs from fresh V2: {key}")
+    write_json(output_root / "existing-work-migration.json", {
+        "transaction": transaction, "dry_run_zero_write": True,
+        "source_audit_rebuilt": "passed", "fresh_v2_equal": True,
+        "finalize": migrated["finalize"],
+    })
+    if v1["projection"] != v2["projection"]:
+        raise RuntimeError("assignment V1/V2 normalized visible projection drifted")
+    if v1["docx_projection"] != v2["docx_projection"]:
+        raise RuntimeError("assignment V1/V2 normalized DOCX structure drifted")
+    if v1["render_projection"] != v2["render_projection"]:
+        raise RuntimeError("assignment V1/V2 per-page render projection drifted")
+    for result in (v1, v2):
+        if result["docx_audit"].get("status") != "passed":
+            raise RuntimeError("assignment DOCX audit did not pass")
+        if result["compile_audit"].get("automated_status") != "passed":
+            raise RuntimeError("assignment PDF compile did not pass")
+        if not result["compile_audit"].get("contact_sheets"):
+            raise RuntimeError("assignment compile lacks visual contact sheets")
+        if result["gate_statuses"].get("qa_report") == "passed":
+            raise RuntimeError("assignment final QA must remain human-review gated")
+        if (
+            result["finalize"]["returncode"] == 0
+            or not result["finalize"]["gate_hashes_unchanged"]
+            or result["finalize"]["qa_passed"]
+        ):
+            raise RuntimeError(f"assignment finalize fail-closed drifted: {result['finalize']}")
+    return {
+        "v1": {
+            "work_dir": v1["work_dir"],
+            "profile_schema_version": v1["profile_schema_version"],
+            "docx_audit_sha256": sha256_file(
+                Path(v1["work_dir"]) / "output" / "docx-audit.json"
+            ),
+            "compile_audit_sha256": sha256_file(
+                Path(v1["work_dir"]) / "output" / "compile-audit.json"
+            ),
+            "docx_sha256": v1["docx_sha256"],
+            "pdf_sha256": v1["pdf_sha256"],
+            "finalize": v1["finalize"],
+        },
+        "v2": {
+            "work_dir": v2["work_dir"],
+            "profile_schema_version": v2["profile_schema_version"],
+            "docx_audit_sha256": sha256_file(
+                Path(v2["work_dir"]) / "output" / "docx-audit.json"
+            ),
+            "compile_audit_sha256": sha256_file(
+                Path(v2["work_dir"]) / "output" / "compile-audit.json"
+            ),
+            "docx_sha256": v2["docx_sha256"],
+            "pdf_sha256": v2["pdf_sha256"],
+            "finalize": v2["finalize"],
+        },
+        "normalized_projection": v1["projection"],
+        "normalized_docx_projection": v1["docx_projection"],
+        "per_page_render_projection": v1["render_projection"],
+        "finalization_without_human_visual_review": "blocked",
+    }
+
+
+
+def assert_production_base_visible(output_root: Path, toolchain: dict) -> dict:
+    baseline = read_json(REPOSITORY / "tests/fixtures/profiles/production-v2-base-visible.json")
+    if baseline["toolchain"] != toolchain:
+        raise RuntimeError("production base comparison requires the frozen exact toolchain; regenerate both sides together")
+    evidence = {}
+    for profile, expected in baseline["profiles"].items():
+        output = output_root / profile / "output"
+        compile_report = read_json(output / "compile-audit.json")
+        actual = {"docx": _docx_projection(output / compile_report["docx"]),
+                  "render": _render_projection(output / "pdf-renders")}
+        if actual != expected:
+            raise RuntimeError(f"{profile} DOCX paragraphs or page renders drifted from exact base {baseline['base_sha']}")
+        evidence[profile] = actual
+    return {"base_sha": baseline["base_sha"], "base_run_id": baseline["run_id"],
+            "base_artifact_id": baseline["artifact_id"], "status": "passed", "profiles": evidence}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run V2.3 academic-paper and lecture-notes automated forward tests."
@@ -336,6 +446,16 @@ def main() -> None:
     assignment_v1_render = assert_assignment_v1_render(
         output_root, office, pdftoppm, pdftotext
     )
+    assignment_migration = assert_assignment_migration_forward(output_root)
+    from v2_assignment_chain_diff_test import write_repeated_visual_source
+    repeated_source = write_repeated_visual_source(output_root / "repeated-visuals.pdf")
+    repeated = run_assignment_document_chain(
+        output_root / "assignment-repeated-visuals",
+        build_candidate_v2(load_profile("assignment-en-zh")), repeated_source,
+    )
+    if repeated["docx_audit"]["role_occurrence_evidence"]["math-with-text"]["visual"] != 2:
+        raise RuntimeError("repeated visual asset occurrences were lost")
+    write_json(output_root / "repeated-visuals-report.json", repeated)
     report = {
         "schema_version": 1,
         "status": "passed",
@@ -352,7 +472,9 @@ def main() -> None:
         },
         "profiles": results,
         "assignment_v1_render": assignment_v1_render,
+        "assignment_migration": assignment_migration,
     }
+    report["production_base_visible"] = assert_production_base_visible(output_root, report["toolchain"])
     write_json(output_root / "v23-e2e-report.json", report)
     print(json.dumps(report, ensure_ascii=False, indent=2))
 

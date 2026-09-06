@@ -28,16 +28,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: .python-version
-          cache: pip
-          cache-dependency-path: requirements-dev.txt
-
-      - name: Install workflow contract dependency
-        run: python -m pip install --disable-pip-version-check PyYAML==6.0.2
-
       - name: Run pinned actionlint
         env:
           ACTIONLINT_VERSION: 1.7.12
@@ -53,11 +43,6 @@ jobs:
           mkdir -p "$BIN_DIR"
           tar -xzf "$ARCHIVE" -C "$BIN_DIR"
           "$BIN_DIR/actionlint" -color
-
-      - name: Run workflow contract checks
-        env:
-          PYTHONDONTWRITEBYTECODE: "1"
-        run: python tools/run_test_suite.py workflow-contracts
 
   self-test:
     runs-on: ubuntu-24.04

@@ -201,6 +201,11 @@ def parse_expected_roles(values: list[str]) -> dict[str, int]:
     return result
 
 
+def image_placement_count(page: fitz.Page) -> int:
+    """Count drawing placements, including reuse of one PDF image resource."""
+    return len(page.get_image_info())
+
+
 def normalized_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
@@ -218,6 +223,35 @@ def searchable_sources(node: dict[str, Any]) -> list[str]:
         ]
         candidates.extend([" ".join(entries), "• " + " • ".join(entries)])
     return [item for item in candidates if item]
+
+
+
+def textual_occurrence_needles(
+    node: dict[str, Any], identifier: str | None, translations: dict[str, str]
+) -> list[str]:
+    if node.get("type") == "math_with_text" and node.get("semantic", {}).get("output") == "bilingual":
+        # English exists in the bound source crop; the PDF's searchable evidence
+        # is the audited target text, never an English copy added to translation.
+        target = translations.get(node["id"], "")
+        return [normalized_text(target)] if target.strip() else []
+    if identifier:
+        return [normalized_text(str(identifier))]
+    return [normalized_text(item) for item in searchable_sources(node)]
+
+
+
+def textual_occurrence_present(
+    node: dict[str, Any], identifier: str | None,
+    translations: dict[str, str], pdf_text: str,
+) -> bool:
+    needles = textual_occurrence_needles(node, identifier, translations)
+    if node.get("type") == "math_with_text" and node.get("semantic", {}).get("output") == "bilingual":
+        # PDF extraction may insert/remove spaces at CJK/Latin run boundaries.
+        needles = [re.sub(r"\s+", "", item) for item in needles]
+        pdf_text = re.sub(r"\s+", "", pdf_text)
+    else:
+        pdf_text = normalized_text(pdf_text)
+    return any(needle and needle in pdf_text for needle in needles)
 
 
 def load_v2_context(work_dir: Path, docx_path: Path) -> dict[str, Any]:
@@ -615,7 +649,7 @@ def main() -> None:
         full_text.append(text)
         page_sizes.append([round(page.rect.width, 2), round(page.rect.height, 2)])
         text_lengths.append(len(re.sub(r"\s+", "", text)))
-        pdf_image_count += len(page.get_images(full=True))
+        pdf_image_count += image_placement_count(page)
         pixmap = page.get_pixmap(matrix=fitz.Matrix(0.5, 0.5), colorspace=fitz.csGRAY, alpha=False)
         nonwhite_fractions.append(
             round(sum(value < 248 for value in pixmap.samples) / len(pixmap.samples), 6)
@@ -653,6 +687,12 @@ def main() -> None:
         normalized_pdf = normalized_text(joined)
         nodes = {node["id"]: node for node in ir.get("nodes", [])}
         role_presence_counts = {role: 0 for role in role_counts}
+        translation_path = work_dir / "translation" / "translations-merged.jsonl"
+        translations = {
+            row["id"]: row["translation"]
+            for line in read_artifact_text(translation_path, boundary=work_dir).splitlines()
+            if line.strip() for row in [json_loads_strict(line)]
+        } if _artifact_exists(translation_path, work_dir) else {}
         for group in ir.get("semantic_groups", []):
             role = group["role"]
             anchor = nodes[group["anchor_node_id"]]
@@ -660,12 +700,7 @@ def main() -> None:
             if output in {"visual-once", "artifact-omitted"}:
                 continue
             identifier = group.get("identifier")
-            needles = (
-                [normalized_text(str(identifier))]
-                if identifier
-                else [normalized_text(item) for item in searchable_sources(anchor)]
-            )
-            present = any(needle and needle in normalized_pdf for needle in needles)
+            present = textual_occurrence_present(anchor, identifier, translations, normalized_pdf)
             occurrence_presence[group["id"]] = present
             if present:
                 role_presence_counts[role] += 1
@@ -705,15 +740,11 @@ def main() -> None:
         "expected_cjk_font_embedded": cjk_font_embedded,
     }
     if context and context["schema_version"] == 2:
-        visual_occurrences = sum(
-            nodes[group["anchor_node_id"]].get("semantic", {}).get("output")
-            == "visual-once"
-            for group in context["ir"].get("semantic_groups", [])
-        )
+        # Assets are unique visuals. Several contained nodes may share one crop.
+        visual_occurrences = len(context["build"].get("assets", []))
         checks["all_textual_role_occurrences_present"] = all(occurrence_presence.values())
         checks["visual_role_occurrences_present"] = (
-            len(context["build"].get("assets", [])) >= visual_occurrences
-            and pdf_image_count >= visual_occurrences
+            pdf_image_count == visual_occurrences
         )
         checks["profile_target_text_extractable"] = bool(
             target_text_pattern(context["profile"]).search(joined)
