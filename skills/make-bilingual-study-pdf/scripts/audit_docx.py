@@ -207,7 +207,13 @@ def _docx_audit_producer_errors(
         value = report.get(field)
         if not _strict_nonnegative_int(value) or value != expected:
             errors.append(f"DOCX audit {field} does not match the current build")
-    if report.get("problem_ids") != problem_ids:
+    reported_problem_ids = report.get("problem_ids")
+    if (
+        not isinstance(reported_problem_ids, list)
+        or any(not isinstance(item, str) or not item for item in reported_problem_ids)
+        or len(reported_problem_ids) != len(problem_ids)
+        or set(reported_problem_ids) != set(problem_ids)
+    ):
         errors.append("DOCX audit problem_ids do not match the current build")
     if report.get("external_links") != sorted(external_uris):
         errors.append("DOCX audit external_links do not match the current build")

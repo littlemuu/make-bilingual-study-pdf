@@ -156,6 +156,42 @@ def test_v2_audit_palette_covers_assignment_styles() -> None:
     assert audit_docx.STYLE_COLORS["tip"] == docx_style.TIP
 
 
+def test_docx_binding_accepts_problem_ids_in_document_order() -> None:
+    build = {
+        "markdown": "fixture.md",
+        "problem_ids": ["alpha", "beta"],
+        "role_inventory": {
+            "example": {"occurrence_count": 0},
+            "tip": {"occurrence_count": 0},
+        },
+        "external_uris": [],
+        "assets": [],
+    }
+    report = {
+        "status": "passed",
+        "docx": str(Path("output/fixture.docx").resolve()),
+        "checks": {name: True for name in audit_docx.V1_DOCX_AUDIT_CHECKS},
+        "problem_count": 2,
+        "problem_ids": ["beta", "alpha"],
+        "problem_range_count": 2,
+        "example_count": 0,
+        "low_resource_tip_count": 0,
+        "external_link_count": 0,
+        "external_links": [],
+        "image_count": 0,
+        "chinese_character_count": 1,
+    }
+
+    errors = audit_docx._docx_audit_producer_errors(
+        report,
+        build,
+        Path("output/fixture.docx").resolve(),
+        schema_v2=False,
+    )
+
+    assert errors == [], errors
+
+
 def test_generic_ast() -> None:
     profile = load_profile("lecture-notes-en-zh")
     document = {
@@ -1025,6 +1061,7 @@ def main() -> None:
     test_legacy_transform_rejects_language_and_identifier_mismatches()
     test_page_header_omits_unresolvable_styleref()
     test_v2_audit_palette_covers_assignment_styles()
+    test_docx_binding_accepts_problem_ids_in_document_order()
     test_generic_ast()
     test_v2_normalizes_pre_segment_page_anchor_like_v1()
     test_shared_style_roles()
