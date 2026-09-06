@@ -19,8 +19,9 @@ an opaque generated name.
 
 V2.3 uses a versioned Profile plus a unified document IR. The supported Profiles are
 `assignment-en-zh`, `academic-paper-en-zh`, and `lecture-notes-en-zh`. The assignment
-Profile retains its schema V1 bytes and behavior; the paper and lecture Profiles use
-schema V2 role inventories and the frozen MinerU importer. Read
+Profile now uses the schema V2 role inventory while preserving its frozen visible
+behavior; the paper and lecture Profiles also use schema V2 with the frozen MinerU
+importer. Read
 [profile-ir.md](references/profile-ir.md) before adding a document type, language,
 parser, renderer, or QA policy.
 
@@ -39,6 +40,22 @@ python3 "$SKILL_DIR/scripts/pipeline.py" import-mineru SOURCE.pdf MINERU_OUTPUT_
   --work-dir "$WORK_DIR" --profile academic-paper-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" status "$WORK_DIR"
 ```
+
+An existing WORK bound to the exact historical assignment schema V1 must be migrated
+explicitly. First inspect a zero-write plan, then use a new backup directory outside
+both WORK and the installed Skill root. `pipeline.py status` keeps reporting the
+current V1 gates and includes this migration instruction:
+
+```bash
+python3 "$SKILL_DIR/scripts/pipeline.py" migrate-profile "$WORK_DIR" \
+  --backup "$BACKUP_DIR" --dry-run
+python3 "$SKILL_DIR/scripts/pipeline.py" migrate-profile "$WORK_DIR" \
+  --backup "$BACKUP_DIR"
+```
+
+The command rejects customized or unknown V1 Profiles. A successful migration removes
+all old downstream gates; rerun `source-audit`, glossary initialization, translation,
+build, DOCX/compile, visual review, and final QA.
 
 The entry point runs deterministic stages and stops at glossary review, translation,
 and visual-review checkpoints. Its status output names the next safe resumable action.

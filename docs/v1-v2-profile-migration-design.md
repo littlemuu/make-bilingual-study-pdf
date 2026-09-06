@@ -1,14 +1,13 @@
-# V1→V2 assignment Profile migration design (work package A)
+# V1→V2 assignment Profile migration contract and implementation
 
-> 状态：设计合同（工包 A）。本文件只冻结迁移器的输入/输出/失效/回滚合同，不实现
-> 生产迁移；生产实现属于工包 B。历史 V1 真值见
+> 状态：工包 A 合同已由工包 B 的生产命令实现。历史 V1 真值见
 > [`tests/fixtures/profiles/assignment-en-zh-v1.json`](../tests/fixtures/profiles/assignment-en-zh-v1.json)
 > 与 [`assignment-en-zh-v1-contract.json`](../tests/fixtures/profiles/assignment-en-zh-v1-contract.json)。
 
 测试组织按 [2026-09-06 减重计划](lightweight-core-roadmap.md#2026-09-06-复审先减少测试维护负担)
 调整：不再以全源码 AST 快照验收迁移，历史输入与可见行为差分继续保留。本文件的原地
-迁移仍是现有参考驱动的合同；工包 B 如改为生成新 WORK，须同步替换这里的发布/恢复
-合同及参考驱动测试，不同时维护两套迁移方案。B 接入真实 CLI 后移除参考事务实现。
+迁移采用已验证的原地三文件事务；测试直接调用生产 `pipeline.py migrate-profile`，不再
+维护第二套参考事务实现。
 
 ## 1. 目标与边界
 
@@ -78,7 +77,7 @@ V2-only role inventory、Profile canonical hash
 
 ## 4. 一次性迁移命令
 
-建议入口 `pipeline.py migrate-profile WORK_DIR [--profile assignment-en-zh]`，
+正式入口为 `pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR [--dry-run]`，
 并复用 `safe_artifacts.py` 的 `inspect_artifact_file` / `read_artifact_bytes` /
 `atomic_write_bytes` / `recheck_artifact_file` primitive，不建立新的文件系统框架。
 
@@ -138,15 +137,10 @@ V2-only role inventory、Profile canonical hash
 
 ### 4.3 可执行的现存 WORK 合同
 
-`tests/migrate_profile_contract_test.py` 是**工包 A 的测试参考驱动**，不进入安装负载，
-不是 `pipeline.py` 新增的生产迁移命令。它在真实 native V1 WORK 的安全副本上执行
-`migrate-profile --dry-run` 和实际三文件发布，复用生产 IR builder 与文件安全 primitive。
-回归覆盖零写入、每个发布中断点、三方 hash、旧 gate 失效和三文件 source-binding 回滚；
-迁移与回滚后都真正重跑生产 source audit。CI forward 另外复制已通过 DOCX/compile 的
-V1 WORK，迁移后重建整条 V2 链，并与 fresh V2 的 DOCX/render 比较。
-
-工包 B 才能将此合同接入生产 CLI；届时必须让同一组断言改为调用真实 `pipeline.py
-migrate-profile`，不能用 fresh source 重建替代现存 WORK 迁移。
+`tests/migrate_profile_contract_test.py` 直接调用安装负载中的生产 CLI，在真实 native V1
+WORK 的安全副本上覆盖干跑零写入、blank/early/full 三阶段、旧 gate 失效、幂等重跑和
+修改版 V1 拒绝。CI forward 复制已通过 DOCX/compile 的 V1 WORK，迁移后重建整条 V2
+链，并与 fresh V2 的 DOCX/render 比较。
 
 ## 5. 幂等与重复迁移
 

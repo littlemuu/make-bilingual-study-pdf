@@ -58,8 +58,14 @@ def target(text: str) -> dict:
     return {"t": "BlockQuote", "c": [paragraph(text)]}
 
 
+def load_legacy_assignment_profile() -> dict:
+    return json.loads(
+        (REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json").read_text(encoding="utf-8")
+    )
+
+
 def test_legacy_transform() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     document = {
         "pandoc-api-version": [1, 23],
         "meta": {},
@@ -79,7 +85,7 @@ def test_legacy_transform() -> None:
 
 
 def test_legacy_transform_pairs_real_build_output_markdown() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     converted = subprocess.run(
         ["pandoc", "--from", "markdown", "--to", "json"],
         input="**Problem (p1): source half**\n\n> **问题（p1）：目标半部分**\n",
@@ -97,7 +103,7 @@ def test_legacy_transform_pairs_real_build_output_markdown() -> None:
 
 
 def test_legacy_transform_rejects_language_and_identifier_mismatches() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     cases = (
         (
             paragraph("Problem (p1): source half"),
@@ -265,10 +271,11 @@ def test_v2_normalizes_pre_segment_page_anchor_like_v1() -> None:
             target("普通目标段落"),
         ],
     }
-    legacy = transform(document, load_profile("assignment-en-zh"))["blocks"]
+    legacy_profile = load_legacy_assignment_profile()
+    legacy = transform(document, legacy_profile)["blocks"]
     from v2_migration_contract_test import build_candidate_v2
     generic = transform(
-        document, build_candidate_v2(load_profile("assignment-en-zh")),
+        document, load_profile("assignment-en-zh"),
         semantic_groups=[],
     )["blocks"]
     for profile_id in ("academic-paper-en-zh", "lecture-notes-en-zh"):

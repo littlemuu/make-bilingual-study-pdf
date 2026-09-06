@@ -31,9 +31,9 @@ from profile import (
 from semantic_registry import registered_constraint_ids, registered_style_ids
 
 
-ASSIGNMENT_FILE_SHA256 = "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2"
+ASSIGNMENT_FILE_SHA256 = "6edfc4fb40ca8b9a0475805adbc96ee63e8b1292888a83da41df5202ff2d0443"
 ASSIGNMENT_CANONICAL_SHA256 = (
-    "8ce2863ab72adc1ac11f415576060afbbdf39ab7d4f62fc7f25b88b31539c774"
+    "7d608f86a741e770587a04d446af726f892b5fedf1df2de41819ffd6e34a315e"
 )
 
 
@@ -63,38 +63,28 @@ def main() -> None:
     assert hashlib.sha256(repository_bytes).hexdigest() == ASSIGNMENT_FILE_SHA256
     assignment = load_profile("assignment-en-zh")
     assert canonical_profile_sha256(assignment) == ASSIGNMENT_CANONICAL_SHA256
-    results.append("assignment Profile byte and canonical hashes are unchanged")
+    results.append("assignment Profile byte and canonical hashes match the frozen V2 target")
 
     assignment_before = copy.deepcopy(assignment)
     assignment_contract = profile_contract(assignment)
     assert assignment == assignment_before
-    assert assignment_contract["source_schema_version"] == 1
+    assert assignment_contract["source_schema_version"] == 2
     assert assignment_contract["adapter"] == "native-text-pdf"
-    assert list(assignment_contract["role_inventory"]) == [
-        "problem",
-        "example",
-        "tip",
-    ]
-    assert all(
-        item["minimum"] == 0
-        and item["maximum"] is None
-        and item["output"] == "bilingual"
-        for item in assignment_contract["role_inventory"].values()
-    )
+    assert list(assignment_contract["role_inventory"])[:3] == ["problem", "example", "tip"]
+    assert all(item["minimum"] == 0 and item["maximum"] is None
+               for item in assignment_contract["role_inventory"].values())
     problem_match = semantic_match(
         assignment, "Problem (profile_fixture): Test", include_target=True
     )
-    assert problem_match == {
-        **assignment["semantics"]["groups"][0],
-        "matched_language": "source",
-        "identifier": "profile_fixture",
-    }
+    assert problem_match["role"] == "problem"
+    assert problem_match["matched_language"] == "source"
+    assert problem_match["identifier"] == "profile_fixture"
     assert semantic_match(assignment, "示例（fixture）：测试")["role"] == "example"
     assert semantic_match(assignment, "Low-Resource Tip: Test")["role"] == "tip"
     mutable_inventory = role_inventory(assignment)
     mutable_inventory["problem"]["minimum"] = 99
     assert role_inventory(assignment)["problem"]["minimum"] == 0
-    results.append("schema V1 behavior is preserved through an immutable compatibility view")
+    results.append("assignment schema V2 preserves the frozen semantic behavior")
 
     academic = load_profile("academic-paper-en-zh")
     lecture = load_profile("lecture-notes-en-zh")

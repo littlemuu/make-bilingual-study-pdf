@@ -14,6 +14,7 @@ from audit_docx import (
 )
 from common import json_loads_strict
 from job_state import report_status, translation_plan_status
+from migrate_profile import MigrationRejected, migrate_profile
 from profile import (
     load_profile,
     load_work_profile,
@@ -102,6 +103,11 @@ def build_parser() -> argparse.ArgumentParser:
     import_mineru.add_argument("--render-dpi", type=int, default=120)
     import_mineru.add_argument("--force", action="store_true")
 
+    migrate = subparsers.add_parser("migrate-profile")
+    migrate.add_argument("work_dir", type=Path)
+    migrate.add_argument("--backup", type=Path, required=True)
+    migrate.add_argument("--dry-run", action="store_true")
+
     source_audit = subparsers.add_parser("source-audit")
     source_audit.add_argument("work_dir", type=Path)
 
@@ -167,7 +173,31 @@ def main() -> None:
         return
 
     if args.command == "status":
-        print(json.dumps(report_status(args.work_dir), ensure_ascii=False, indent=2))
+        report = report_status(args.work_dir)
+        try:
+            profile = load_work_profile(args.work_dir)
+        except ValueError:
+            profile = None
+        if profile is not None and profile.get("schema_version") == 1:
+            report["migration_instruction"] = {
+                "required_for_v2": True,
+                "dry_run_first": True,
+                "command": (
+                    "pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR"
+                ),
+            }
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return
+
+    if args.command == "migrate-profile":
+        try:
+            report = migrate_profile(args.work_dir, args.backup, dry_run=args.dry_run)
+        except MigrationRejected as exc:
+            print(json.dumps(exc.report, ensure_ascii=False, indent=2))
+            raise SystemExit(2) from exc
+        except (ArtifactSafetyError, ValueError) as exc:
+            raise SystemExit(str(exc)) from exc
+        print(json.dumps(report, ensure_ascii=False, indent=2))
         return
 
     if args.command == "source":

@@ -142,11 +142,9 @@ class V1FixtureFreezeTests(unittest.TestCase):
     def test_fixture_file_hash_is_frozen(self) -> None:
         self.assertEqual(_lf_sha256(V1_FIXTURE), FROZEN_LF_SHA256)
 
-    def test_fixture_bytes_match_the_production_profile(self) -> None:
-        self.assertEqual(
-            V1_FIXTURE.read_bytes().replace(b"\r\n", b"\n"),
-            PRODUCTION_PROFILE.read_bytes().replace(b"\r\n", b"\n"),
-        )
+    def test_production_profile_is_the_frozen_candidate_v2(self) -> None:
+        production = profile_module.load_profile(PRODUCTION_PROFILE)
+        self.assertEqual(production, self.candidate_v2)
 
     def test_fixture_identity(self) -> None:
         self.assertEqual(self.fixture["schema_version"], 1)

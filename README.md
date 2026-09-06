@@ -21,8 +21,9 @@ live branch/tag ruleset 已迁移到新聚合 context。该阶段不迁移 Profi
 
 2026-09-03 的产品路线收敛进一步确定：**原生文本 PDF 是默认轻量核心，MinerU 是
 显式选择、只导入预生成结果的高级后端。** 近期保留现有 MinerU importer 和回归，但
-不扩展版本、backend、云端执行或 OCR 自动通过能力。下一阶段先完成
-`assignment-en-zh` 的 V1→V2 等价迁移；再优先建设原生 PDF 适用性预检和通用
+不扩展版本、backend、云端执行或 OCR 自动通过能力。`assignment-en-zh` 的 V1→V2
+等价迁移现已进入工包 B：新任务默认绑定 V2，精确历史
+V1 工作目录通过显式命令迁移；下一步是兼容层收尾，再建设原生 PDF 适用性预检和通用
 作业/handout 能力。巨型模块拆分改为由真实功能改动驱动，不再优先拆 MinerU。
 
 当前后续产品路线见
@@ -165,6 +166,18 @@ Windows PowerShell：
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py import-mineru SOURCE.pdf MINERU_OUTPUT_DIR --work-dir WORK_DIR --profile academic-paper-en-zh
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py status WORK_DIR
 ```
+
+已有的历史 assignment V1 工作目录不会自动迁移。先用一个位于 WORK 和 Skill 根目录
+之外、尚不存在的备份目录执行干跑，再执行正式迁移：
+
+```text
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR --dry-run
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR
+```
+
+迁移器仅接受仓库冻结的原始 `assignment-en-zh` V1；自定义或未知 V1 会失败关闭。正式
+迁移会使旧 source audit、translation、output、DOCX、compile、visual 与 final QA 证据
+全部失效，随后须从 `source-audit` 开始重建。
 
 完整工作流包含源文件清点与审计、术语表冻结、可恢复翻译批次、确定性构建、
 PDF 渲染以及逐页人工视觉复核。只有最终 `output/qa-report.json` 为 `passed` 时，

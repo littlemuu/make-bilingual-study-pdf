@@ -37,6 +37,12 @@ from job_state import evaluate_job  # noqa: E402
 from profile import canonical_profile_sha256, load_profile, profile_contract  # noqa: E402
 
 
+def load_legacy_assignment_profile() -> dict:
+    return json.loads(
+        (REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json").read_text(encoding="utf-8")
+    )
+
+
 def digest(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -268,7 +274,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
         translation.mkdir(exist_ok=True)
         responses = translation / "responses"
         responses.mkdir(exist_ok=True)
-        profile = load_profile("assignment-en-zh")
+        profile = load_legacy_assignment_profile()
         glossary_path = translation / "glossary.json"
         self.write_json(glossary_path, {"terms": []})
         manifest = json.loads(
@@ -333,7 +339,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
         )
 
     def write_source_gate(self, work_dir: Path) -> None:
-        profile = load_profile("assignment-en-zh")
+        profile = load_legacy_assignment_profile()
         self.write_json(work_dir / "profile.json", profile)
         (work_dir / "blocks.jsonl").write_bytes(b"")
         (work_dir / "oracle.txt").write_text("fixture\f", encoding="utf-8")
@@ -448,7 +454,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
                 "semantic_constraint_checks": {
                     item["id"]: True
                     for item in profile_contract(
-                        load_profile("assignment-en-zh")
+                        load_legacy_assignment_profile()
                     )["constraints"]
                 },
                 "failures": [],
@@ -574,7 +580,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
     def make_docx_finalizable_work(self, root: Path) -> tuple[Path, dict]:
         work_dir, compile_report = self.make_finalizable_work(root)
         output = work_dir / "output"
-        profile = load_profile("assignment-en-zh")
+        profile = load_legacy_assignment_profile()
         markdown = output / "fixture.md"
         markdown.write_text("English fixture.\n\n中文夹具。\n", encoding="utf-8")
         build_path = output / "build-manifest.json"
@@ -1206,7 +1212,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
                         Path(option(arguments, "--output")),
                         {
                             "status": "passed",
-                            "profile": load_profile("assignment-en-zh")["id"],
+                            "profile": load_legacy_assignment_profile()["id"],
                             "profile_file_sha256": digest(
                                 (work / "profile.json").read_bytes()
                             ),
@@ -1758,7 +1764,7 @@ class CompileFinalArtifactBoundaryTests(unittest.TestCase):
             root = Path(temp)
             work, paths = self.make_compile_work(root)
             output = work / "output"
-            profile = load_profile("assignment-en-zh")
+            profile = load_legacy_assignment_profile()
             self.write_json(work / "profile.json", profile)
             bindings = {
                 "profile": profile["id"],

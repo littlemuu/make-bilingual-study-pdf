@@ -28,7 +28,7 @@ SEMVER_PATTERN = (
 SEMVER_RE = re.compile(rf"^{SEMVER_PATTERN}$")
 
 PROFILE_CONTRACTS = {
-    "assignment-en-zh": (1, "native-text-pdf"),
+    "assignment-en-zh": (2, "native-text-pdf"),
     "academic-paper-en-zh": (2, "mineru-import"),
     "lecture-notes-en-zh": (2, "mineru-import"),
 }

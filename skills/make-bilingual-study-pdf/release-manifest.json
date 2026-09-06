@@ -3,12 +3,12 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "077e64c486a79f997d1e81e7e560678d2970a12206d7ae022b4b097a8662cac8",
+  "tree_sha256": "d10c63ee9369e9eb71b3dc329eb6822f01ce3faff4304adf3241b2b6b4bd876f",
   "files": [
     {
       "path": "SKILL.md",
-      "size": 14055,
-      "sha256": "7bf2e80195451e144cb796041e44aec85eb6db616936e0ee889c0d51ea18154c"
+      "size": 14834,
+      "sha256": "7bf3d378a29630a4e98e351c9ae8f51244f0cfb123abd70979615479da7353f9"
     },
     {
       "path": "VERSION",
@@ -37,8 +37,8 @@
     },
     {
       "path": "profiles/assignment-en-zh.json",
-      "size": 1894,
-      "sha256": "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2"
+      "size": 5175,
+      "sha256": "6edfc4fb40ca8b9a0475805adbc96ee63e8b1292888a83da41df5202ff2d0443"
     },
     {
       "path": "profiles/lecture-notes-en-zh.json",
@@ -57,8 +57,8 @@
     },
     {
       "path": "references/profile-ir.md",
-      "size": 6982,
-      "sha256": "d27a93eb2507ffdc260a7dbf354968bb3895270456623d6e6d35a8f6b3dadfcd"
+      "size": 7096,
+      "sha256": "0c1c19aab7af09c8055d5c11382359a86cbf312c501aa5d24cc1485816b80d4d"
     },
     {
       "path": "references/qa-rules.md",
@@ -186,9 +186,14 @@
       "sha256": "bf5fc15d8ae9de0a618c0accf3e5bdfa00c0e8dbb235c60d0ddb15ec97f37a8f"
     },
     {
+      "path": "scripts/migrate_profile.py",
+      "size": 11984,
+      "sha256": "820fa19c2e94aeb4efb97d4eae4a86754aef0da17fa78c77134b6b89029b7941"
+    },
+    {
       "path": "scripts/pipeline.py",
-      "size": 13053,
-      "sha256": "cb73f7447c8a3907af627cb8d5c20ce7c9d67414cd39964ffe8285de10c555dc"
+      "size": 14309,
+      "sha256": "609e1948afa6ff23d420ef2161b2f709d8d00b8dc81ba997f058d945c1c8a055"
     },
     {
       "path": "scripts/prepare_translation.py",
@@ -208,7 +213,7 @@
     {
       "path": "scripts/release_check.py",
       "size": 37038,
-      "sha256": "8218beab771d22b0cc9c96ebf39130e35318f3f73b626f1cb638fcdd353c4a32"
+      "sha256": "b0bd3c3eea949de9d16a385e3369b4ff778f8bd52985b0021db5fff32dd2e25c"
     },
     {
       "path": "scripts/safe_artifacts.py",
@@ -217,8 +222,8 @@
     },
     {
       "path": "scripts/self_test.py",
-      "size": 35014,
-      "sha256": "d7dd591095c81c506e1a1ac85c076c47730a5e9e3a8aa22826c3054f1ec91487"
+      "size": 36116,
+      "sha256": "f9540592808fe7337ba3901782e0b8a0497787db5eb295b57357e194152113d5"
     },
     {
       "path": "scripts/semantic_registry.py",

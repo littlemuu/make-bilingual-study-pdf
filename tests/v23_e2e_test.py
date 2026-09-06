@@ -33,6 +33,7 @@ from profile import load_profile
 
 FIXTURE_ROOT = REPOSITORY / "tests" / "fixtures" / "mineru" / "pipeline-3.4.4"
 PROFILES = ("academic-paper-en-zh", "lecture-notes-en-zh")
+ASSIGNMENT_V1 = REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json"
 
 
 def run_script(script: str, *arguments: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -207,7 +208,7 @@ def assert_assignment_v1_render(
     """Render a real V1 Problem pair and reject visible STYLEREF errors."""
     probe = output_root / "assignment-v1-render"
     probe.mkdir()
-    profile = load_profile("assignment-en-zh")
+    profile = json.loads(ASSIGNMENT_V1.read_text(encoding="utf-8"))
     converted_ast = subprocess.run(
         ["pandoc", "--from", "markdown", "--to", "json"],
         input=(
@@ -323,25 +324,26 @@ def assert_assignment_migration_forward(output_root: Path) -> dict[str, Any]:
     contact sheets, verifies the production document gates, and proves final QA
     remains blocked until a human has inspected those images.
     """
-    v1_profile = load_profile("assignment-en-zh")
+    v1_profile = json.loads(ASSIGNMENT_V1.read_text(encoding="utf-8"))
+    v2_profile = load_profile("assignment-en-zh")
     v1 = run_assignment_document_chain(output_root / "assignment-v1", v1_profile)
     v2 = run_assignment_document_chain(
-        output_root / "assignment-v2", build_candidate_v2(v1_profile)
+        output_root / "assignment-v2", v2_profile
     )
-    from migrate_profile_contract_test import migrate_profile_reference, tree_bytes
+    from migrate_profile_contract_test import run_migration, tree_bytes
     migrated_work = output_root / "assignment-existing-migrated" / "work"
     shutil.copytree(Path(v1["work_dir"]), migrated_work)
     backup = output_root / "assignment-migration-backup"
     observed = tree_bytes(migrated_work)
-    transaction = migrate_profile_reference(migrated_work, backup, dry_run=True)
+    _, transaction = run_migration(migrated_work, backup, "--dry-run")
     if tree_bytes(migrated_work) != observed:
         raise RuntimeError("migration dry-run changed existing WORK")
-    if migrate_profile_reference(migrated_work, backup) != transaction:
+    if run_migration(migrated_work, backup)[1] != transaction:
         raise RuntimeError("migration differs from its dry-run plan")
     _run_pipeline_stage("source-audit", migrated_work)
     _run_script("init_glossary.py", migrated_work)
     _run_pipeline_stage("prepare", migrated_work, "--max-source-chars", "1000")
-    migrated = finish_assignment_document_chain(migrated_work, build_candidate_v2(v1_profile))
+    migrated = finish_assignment_document_chain(migrated_work, v2_profile)
     for key in ("projection", "docx_projection", "render_projection"):
         if migrated[key] != v2[key]:
             raise RuntimeError(f"existing WORK migration differs from fresh V2: {key}")
@@ -451,7 +453,7 @@ def main() -> None:
     repeated_source = write_repeated_visual_source(output_root / "repeated-visuals.pdf")
     repeated = run_assignment_document_chain(
         output_root / "assignment-repeated-visuals",
-        build_candidate_v2(load_profile("assignment-en-zh")), repeated_source,
+        load_profile("assignment-en-zh"), repeated_source,
     )
     if repeated["docx_audit"]["role_occurrence_evidence"]["math-with-text"]["visual"] != 2:
         raise RuntimeError("repeated visual asset occurrences were lost")

@@ -1,8 +1,10 @@
 # Profile and document IR contract
 
 Read this reference when adding a document type, language pair, parser adapter,
-renderer, or QA policy. V2.3 ships `assignment-en-zh` (schema V1 compatibility),
-`academic-paper-en-zh`, and `lecture-notes-en-zh` (schema V2).
+renderer, or QA policy. All three installed Profiles—`assignment-en-zh`,
+`academic-paper-en-zh`, and `lecture-notes-en-zh`—use schema V2. The one-time
+`pipeline.py migrate-profile` command alone accepts the exact frozen historical
+assignment V1 binding.
 
 ## Profile boundary
 
