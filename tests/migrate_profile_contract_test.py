@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import shutil
 import subprocess
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.dont_write_bytecode = True
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -17,6 +19,10 @@ SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
 sys.path[:0] = [str(SCRIPTS), str(REPOSITORY / "tests")]
 
 import v2_assignment_chain_diff_test as chain
+import migrate_profile as migration_module
+import pipeline as pipeline_module
+from migrate_profile import MigrationFailed
+from safe_artifacts import ArtifactSafetyError
 from profile import canonical_profile_sha256
 
 
@@ -47,6 +53,11 @@ def run_migration(work: Path, backup: Path, *extra: str, check: bool = True) -> 
 
 
 class ExistingWorkMigrationTests(unittest.TestCase):
+    def seed_v1_work(self, root: Path) -> Path:
+        v1 = json.loads(V1_FIXTURE.read_text(encoding="utf-8"))
+        chain.run_assignment_chain(root / "seed", v1)
+        return root / "seed" / "work"
+
     def test_public_cli_migrates_blank_early_and_full_v1_work(self) -> None:
         with tempfile.TemporaryDirectory(prefix="existing-v1-migration-") as temporary:
             root = Path(temporary)
@@ -115,6 +126,178 @@ class ExistingWorkMigrationTests(unittest.TestCase):
             self.assertTrue(any("frozen historical V1" in reason for reason in report["reason"]))
             self.assertEqual(tree_bytes(work), before)
             self.assertFalse((root / "backup").exists())
+
+    def test_backup_creation_race_preserves_competing_backup_and_work(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="migration-backup-race-") as temporary:
+            root = Path(temporary)
+            work = self.seed_v1_work(root)
+            before = tree_bytes(work)
+            backup = root / "backup"
+            sentinel = backup / "manifest.json"
+            original = migration_module.load_adapter_source_evidence
+            injected = False
+
+            def create_competing_backup(*args: object, **kwargs: object) -> object:
+                nonlocal injected
+                result = original(*args, **kwargs)
+                if not injected:
+                    backup.mkdir()
+                    sentinel.write_bytes(b"competing migration\n")
+                    injected = True
+                return result
+
+            with mock.patch.object(
+                migration_module,
+                "load_adapter_source_evidence",
+                side_effect=create_competing_backup,
+            ):
+                with self.assertRaises(MigrationFailed) as raised:
+                    migration_module.migrate_profile(work, backup)
+
+            report = raised.exception.report
+            self.assertEqual(report["failed_stage"], "create-backup")
+            self.assertEqual(report["backup"]["status"], "incomplete-or-unavailable")
+            self.assertEqual(set(report["upstream_state"].values()), {"old"})
+            self.assertEqual(sentinel.read_bytes(), b"competing migration\n")
+            self.assertEqual(tree_bytes(work), before)
+
+    def test_real_migration_reports_each_write_phase_failure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="migration-failures-") as temporary:
+            root = Path(temporary)
+            seed = self.seed_v1_work(root)
+            cases = (
+                ("prepared", "prepare-publication", None, {name: "old" for name in UPSTREAM}),
+                ("invalidated", "invalidate", None, {name: "old" for name in UPSTREAM}),
+                (
+                    "manifest-replace",
+                    "publish:manifest.json",
+                    "manifest.json",
+                    {name: "old" for name in UPSTREAM},
+                ),
+                (
+                    "manifest",
+                    "publish:manifest.json",
+                    "manifest.json",
+                    {"manifest.json": "new", "profile.json": "old", "document-ir.json": "old"},
+                ),
+                (
+                    "profile",
+                    "publish:profile.json",
+                    "profile.json",
+                    {"manifest.json": "new", "profile.json": "new", "document-ir.json": "old"},
+                ),
+                (
+                    "document-ir",
+                    "publish:document-ir.json",
+                    "document-ir.json",
+                    {name: "new" for name in UPSTREAM},
+                ),
+            )
+
+            for label, failed_stage, publish_name, expected_state in cases:
+                with self.subTest(stage=label):
+                    work = root / label / "work"
+                    shutil.copytree(seed, work)
+                    original_bytes = {
+                        name: (work / name).read_bytes() for name in UPSTREAM
+                    }
+                    backup = root / f"{label}-backup"
+                    original_write = migration_module.atomic_write_bytes
+                    original_invalidate = migration_module._invalidate
+
+                    def interrupted_write(
+                        path: object, payload: object, **kwargs: object
+                    ) -> Path:
+                        target = Path(path)
+                        if (
+                            label == "prepared"
+                            and target.name == "manifest.json"
+                            and target.parent.name.startswith("migration-prepared-")
+                        ):
+                            raise ArtifactSafetyError("simulated prepared write failure")
+                        if (
+                            label == "manifest-replace"
+                            and target == work / "manifest.json"
+                        ):
+                            raise ArtifactSafetyError("simulated replace failure")
+                        published = original_write(path, payload, **kwargs)
+                        if publish_name and target == work / publish_name:
+                            raise ArtifactSafetyError(
+                                "simulated fsync failure after replace"
+                            )
+                        return published
+
+                    def interrupted_invalidation(value: Path) -> None:
+                        original_invalidate(value)
+                        raise ArtifactSafetyError("simulated invalidation interruption")
+
+                    patches = [
+                        mock.patch.object(
+                            migration_module,
+                            "atomic_write_bytes",
+                            side_effect=interrupted_write,
+                        )
+                    ]
+                    if label == "invalidated":
+                        patches.append(
+                            mock.patch.object(
+                                migration_module,
+                                "_invalidate",
+                                side_effect=interrupted_invalidation,
+                            )
+                        )
+                    for patcher in patches:
+                        patcher.start()
+                    try:
+                        with self.assertRaises(MigrationFailed) as raised:
+                            migration_module.migrate_profile(work, backup)
+                    finally:
+                        for patcher in reversed(patches):
+                            patcher.stop()
+
+                    report = raised.exception.report
+                    self.assertEqual(report["failed_stage"], failed_stage)
+                    self.assertEqual(report["backup"]["status"], "complete")
+                    self.assertEqual(report["upstream_state"], expected_state)
+                    for name, data in original_bytes.items():
+                        self.assertEqual((backup / name).read_bytes(), data)
+
+                    if label == "prepared":
+                        self.assertEqual(report["gate_state"]["source-audit.json"], "present")
+                        self.assertEqual(report["gate_state"]["output/"], "present")
+                        self.assertEqual(report["gate_state"]["translation/"], "present")
+                    else:
+                        self.assertEqual(report["gate_state"]["source-audit.json"], "missing")
+                        self.assertEqual(report["gate_state"]["output/"], "missing")
+                        self.assertEqual(report["gate_state"]["translation/"], "missing")
+
+                    if label == "profile":
+                        for name in UPSTREAM:
+                            (work / name).write_bytes((backup / name).read_bytes())
+                        chain._run_pipeline_stage("source-audit", work)
+                        self.assertEqual(
+                            chain.read_json(work / "source-audit.json")["status"],
+                            "passed",
+                        )
+
+    def test_cli_prints_structured_recovery_report(self) -> None:
+        expected = {"status": "failed", "failed_stage": "publish:profile.json"}
+        arguments = [
+            "pipeline.py",
+            "migrate-profile",
+            "work",
+            "--backup",
+            "backup",
+        ]
+        with mock.patch.object(sys, "argv", arguments), mock.patch.object(
+            pipeline_module,
+            "migrate_profile",
+            side_effect=MigrationFailed(expected),
+        ), mock.patch("sys.stdout", new_callable=io.StringIO) as output:
+            with self.assertRaises(SystemExit) as raised:
+                pipeline_module.main()
+        self.assertEqual(raised.exception.code, 3)
+        self.assertEqual(json.loads(output.getvalue()), expected)
 
 
 if __name__ == "__main__":

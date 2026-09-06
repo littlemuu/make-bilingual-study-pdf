@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "d10c63ee9369e9eb71b3dc329eb6822f01ce3faff4304adf3241b2b6b4bd876f",
+  "tree_sha256": "714eddcf9e25ba3f290ba313043d4eaf1d782a48fdae53cb1adbe75761730bb6",
   "files": [
     {
       "path": "SKILL.md",
@@ -187,13 +187,13 @@
     },
     {
       "path": "scripts/migrate_profile.py",
-      "size": 11984,
-      "sha256": "820fa19c2e94aeb4efb97d4eae4a86754aef0da17fa78c77134b6b89029b7941"
+      "size": 19395,
+      "sha256": "479679ca78b0f494f14c025e945d1675ecb9b5953b3d5d19531b5ff1d3cc4c2d"
     },
     {
       "path": "scripts/pipeline.py",
-      "size": 14309,
-      "sha256": "609e1948afa6ff23d420ef2161b2f709d8d00b8dc81ba997f058d945c1c8a055"
+      "size": 14478,
+      "sha256": "9c3832651af9687721e2d3cfad2b8589e6901571b683a386571ff4d810a9dd53"
     },
     {
       "path": "scripts/prepare_translation.py",
@@ -217,8 +217,8 @@
     },
     {
       "path": "scripts/safe_artifacts.py",
-      "size": 46385,
-      "sha256": "2788db7dc45e6a9eaf6f730b7b5cf3eb9ed4076bf726999e5fc00ed9f29a5c50"
+      "size": 47895,
+      "sha256": "2cc69cddc8fcef60916f41ddaa36c41591e0354517718cacf2144d79c20e1f19"
     },
     {
       "path": "scripts/self_test.py",

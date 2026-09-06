@@ -410,6 +410,45 @@ def prepare_artifact_directory(
     return absolute
 
 
+def create_artifact_directory_exclusive(
+    path: str | os.PathLike[str],
+    *,
+    boundary: str | os.PathLike[str] | None = None,
+    mode: int = 0o700,
+) -> Path:
+    """Create one missing leaf directory and reject any competing entry."""
+    absolute, _ = _bounded_path(path, boundary, allow_boundary=False)
+    _, parent_identities = _inspect_directory(absolute.parent, boundary=boundary)
+    _recheck_directories(parent_identities)
+    try:
+        os.mkdir(absolute, mode)
+    except FileExistsError as exc:
+        raise ArtifactSafetyError(
+            f"artifact directory already exists: {absolute}"
+        ) from exc
+    except OSError as exc:
+        raise ArtifactSafetyError(
+            f"cannot create artifact directory exclusively: {exc}"
+        ) from exc
+    try:
+        created = os.lstat(absolute)
+        _require_directory(created, absolute)
+        _recheck_directories(parent_identities)
+        _fsync_directory(absolute.parent, parent_identities[-1].status)
+        current = os.lstat(absolute)
+        _require_directory(current, absolute)
+        if not _same_directory(created, current):
+            raise ArtifactSafetyError(
+                f"created artifact directory identity changed: {absolute}"
+            )
+        _recheck_directories(parent_identities)
+    except OSError as exc:
+        raise ArtifactSafetyError(
+            f"cannot verify created artifact directory: {exc}"
+        ) from exc
+    return absolute
+
+
 def _artifact_file_status(path: Path) -> os.stat_result | None:
     try:
         status = os.lstat(path)
@@ -1304,6 +1343,7 @@ __all__ = [
     "atomic_write_bytes",
     "atomic_write_text",
     "clear_artifact_directory",
+    "create_artifact_directory_exclusive",
     "lexical_absolute_path",
     "lexical_paths_overlap",
     "prepare_artifact_directory",

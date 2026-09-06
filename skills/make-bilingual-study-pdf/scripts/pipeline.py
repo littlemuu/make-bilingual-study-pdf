@@ -14,7 +14,7 @@ from audit_docx import (
 )
 from common import json_loads_strict
 from job_state import report_status, translation_plan_status
-from migrate_profile import MigrationRejected, migrate_profile
+from migrate_profile import MigrationFailed, MigrationRejected, migrate_profile
 from profile import (
     load_profile,
     load_work_profile,
@@ -195,6 +195,9 @@ def main() -> None:
         except MigrationRejected as exc:
             print(json.dumps(exc.report, ensure_ascii=False, indent=2))
             raise SystemExit(2) from exc
+        except MigrationFailed as exc:
+            print(json.dumps(exc.report, ensure_ascii=False, indent=2))
+            raise SystemExit(3) from exc
         except (ArtifactSafetyError, ValueError) as exc:
             raise SystemExit(str(exc)) from exc
         print(json.dumps(report, ensure_ascii=False, indent=2))

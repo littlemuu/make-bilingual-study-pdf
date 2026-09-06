@@ -20,8 +20,10 @@ from profile import canonical_profile_sha256, load_profile, profile_contract, va
 from safe_artifacts import (
     atomic_write_bytes,
     clear_artifact_directory,
+    create_artifact_directory_exclusive,
     inspect_artifact_file,
     lexical_absolute_path,
+    lexical_paths_overlap,
     prepare_artifact_directory,
     read_artifact_bytes,
     recheck_artifact_file,
@@ -54,6 +56,12 @@ class MigrationRejected(ValueError):
         super().__init__("migration input did not match the frozen historical V1")
 
 
+class MigrationFailed(RuntimeError):
+    def __init__(self, report: dict[str, Any]):
+        self.report = report
+        super().__init__("migration stopped; follow the recovery report")
+
+
 def _payload(value: dict[str, Any]) -> bytes:
     return (
         json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
@@ -80,14 +88,6 @@ def _json(data: bytes, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"invalid {label}: expected JSON object")
     return value
-
-
-def _inside(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
 
 
 def _target_profile() -> dict[str, Any]:
@@ -124,6 +124,122 @@ def _invalidate(work_dir: Path) -> None:
             remove_artifact_file(path, boundary=work_dir)
     for name in ("output", "translation"):
         clear_artifact_directory(work_dir / name, boundary=work_dir, remove_directory=True)
+
+
+def _upstream_state(
+    work_dir: Path,
+    before: dict[str, bytes],
+    after: dict[str, bytes],
+) -> dict[str, str]:
+    state: dict[str, str] = {}
+    for name in UPSTREAM:
+        try:
+            observed = read_artifact_bytes(work_dir / name, boundary=work_dir)
+        except Exception:
+            state[name] = "unknown"
+            continue
+        if observed == before[name]:
+            state[name] = "old"
+        elif observed == after[name]:
+            state[name] = "new"
+        else:
+            state[name] = "unknown"
+    return state
+
+
+def _gate_state(work_dir: Path) -> dict[str, str]:
+    roots: dict[str, str] = {}
+    for name in ("output", "translation"):
+        try:
+            roots[f"{name}/"] = (
+                "present"
+                if validate_artifact_tree(work_dir / name, work_dir) is not None
+                else "missing"
+            )
+        except Exception:
+            roots[f"{name}/"] = "unknown"
+
+    state: dict[str, str] = {}
+    for name in GATE_FILES:
+        root = name.split("/", 1)[0]
+        if "/" in name and roots.get(f"{root}/") == "missing":
+            state[name] = "missing"
+            continue
+        try:
+            snapshot = inspect_artifact_file(
+                work_dir / name, boundary=work_dir, allow_missing=True
+            )
+            state[name] = "present" if snapshot.exists else "missing"
+        except Exception:
+            state[name] = "unknown"
+    state.update(roots)
+    return state
+
+
+def _failure_report(
+    report: dict[str, Any],
+    *,
+    work_dir: Path,
+    backup_dir: Path,
+    before: dict[str, bytes],
+    after: dict[str, bytes],
+    failed_stage: str,
+    completed_steps: list[str],
+    backup_complete: bool,
+    backup_snapshots: dict[str, Any],
+    error: Exception,
+) -> dict[str, Any]:
+    upstream = _upstream_state(work_dir, before, after)
+    verified_backup = backup_complete and set(backup_snapshots) == set(UPSTREAM)
+    if verified_backup:
+        try:
+            verified_backup = all(
+                read_artifact_bytes(
+                    backup_dir / name,
+                    boundary=backup_dir,
+                    expected=backup_snapshots[name],
+                )
+                == before[name]
+                for name in UPSTREAM
+            )
+        except Exception:
+            verified_backup = False
+    changed_or_unknown = any(value != "old" for value in upstream.values())
+    if verified_backup and changed_or_unknown:
+        recovery_action = (
+            "stop; restore manifest.json, profile.json, and document-ir.json from "
+            "the backup, verify their source binding, then rebuild from source-audit"
+        )
+    elif verified_backup:
+        recovery_action = (
+            "WORK upstream files remain at V1; keep this backup, inspect the failure, "
+            "and retry only with a new backup path"
+        )
+    else:
+        recovery_action = (
+            "WORK upstream files were safely reread above; do not use this incomplete "
+            "backup, inspect the failure, and retry only with a new backup path"
+        )
+    failed = copy.deepcopy(report)
+    failed.update(
+        {
+            "status": "failed",
+            "failed_stage": failed_stage,
+            "completed_steps": list(completed_steps),
+            "error": {"type": type(error).__name__, "message": str(error)},
+            "backup": {
+                "path": str(backup_dir),
+                "status": "complete" if verified_backup else "incomplete-or-unavailable",
+                "files": {name: _digest(data) for name, data in before.items()}
+                if verified_backup
+                else {},
+            },
+            "upstream_state": upstream,
+            "gate_state": _gate_state(work_dir),
+            "next_action": recovery_action,
+        }
+    )
+    return failed
 
 
 def migrate_profile(work_dir: Path, backup_dir: Path, *, dry_run: bool = False) -> dict[str, Any]:
@@ -196,10 +312,10 @@ def migrate_profile(work_dir: Path, backup_dir: Path, *, dry_run: bool = False) 
             },
             "next_action": "leave WORK unchanged and inspect the rejected V1 binding",
         })
-    if _inside(backup_dir, work_dir) or _inside(backup_dir, SKILL_DIR):
+    if lexical_paths_overlap(backup_dir, work_dir) or lexical_paths_overlap(
+        backup_dir, SKILL_DIR
+    ):
         raise ValueError("backup must be outside WORK and the installed Skill root")
-    if backup_dir.exists():
-        raise ValueError("backup directory must not already exist")
 
     target_manifest = copy.deepcopy(manifest)
     target_manifest["profile"] = target_binding
@@ -242,37 +358,131 @@ def migrate_profile(work_dir: Path, backup_dir: Path, *, dry_run: bool = False) 
     if dry_run:
         return report
 
-    prepare_artifact_directory(backup_dir)
-    for name, data in before.items():
-        atomic_write_bytes(backup_dir / name, data, boundary=backup_dir)
-    with tempfile.TemporaryDirectory(prefix="migration-prepared-", dir=backup_dir.parent) as temporary:
-        prepared = Path(temporary)
-        for name, data in after.items():
-            atomic_write_bytes(prepared / name, data, boundary=prepared)
-            if read_artifact_bytes(prepared / name, boundary=prepared) != data:
-                raise ValueError(f"prepared {name} failed byte verification")
-        for snapshot in snapshots.values():
-            recheck_artifact_file(snapshot)
-        recheck_artifact_file(blocks_snapshot)
-        if read_artifact_bytes(blocks_path, boundary=work_dir, expected=blocks_snapshot) != blocks_bytes:
-            raise ValueError("blocks.jsonl changed during migration")
-        _current_evidence, current_freeze = load_adapter_source_evidence(work_dir, manifest)
-        if current_freeze != adapter_freeze:
-            raise ValueError("adapter source evidence changed during migration")
-        validate_artifact_tree(work_dir, work_dir, allow_missing=False)
-        _invalidate(work_dir)
-        for index, name in enumerate(UPSTREAM):
-            for remaining in UPSTREAM[index:]:
-                recheck_artifact_file(snapshots[remaining])
+    failed_stage = "create-backup"
+    completed_steps: list[str] = []
+    backup_complete = False
+    backup_snapshots: dict[str, Any] = {}
+    try:
+        prepare_artifact_directory(backup_dir.parent)
+        if lexical_paths_overlap(backup_dir, work_dir) or lexical_paths_overlap(
+            backup_dir, SKILL_DIR
+        ):
+            raise ValueError(
+                "backup path began overlapping WORK or the installed Skill root"
+            )
+        create_artifact_directory_exclusive(backup_dir)
+        completed_steps.append("backup-directory-created")
+        backup_targets = {
+            name: inspect_artifact_file(
+                backup_dir / name, boundary=backup_dir, allow_missing=True
+            )
+            for name in UPSTREAM
+        }
+        for name, data in before.items():
+            failed_stage = f"backup:{name}"
+            atomic_write_bytes(
+                backup_dir / name,
+                data,
+                boundary=backup_dir,
+                expected=backup_targets[name],
+            )
+            backup_snapshots[name] = inspect_artifact_file(
+                backup_dir / name, boundary=backup_dir
+            )
+            if read_artifact_bytes(
+                backup_dir / name,
+                boundary=backup_dir,
+                expected=backup_snapshots[name],
+            ) != data:
+                raise ValueError(f"backup {name} failed byte verification")
+            for verified_name, verified_snapshot in backup_snapshots.items():
                 if read_artifact_bytes(
-                    work_dir / remaining, boundary=work_dir, expected=snapshots[remaining]
-                ) != before[remaining]:
-                    raise ValueError("upstream binding changed during migration")
-            atomic_write_bytes(work_dir / name, after[name], boundary=work_dir, expected=snapshots[name])
+                    backup_dir / verified_name,
+                    boundary=backup_dir,
+                    expected=verified_snapshot,
+                ) != before[verified_name]:
+                    raise ValueError(
+                        f"backup {verified_name} changed during backup publication"
+                    )
+            completed_steps.append(f"backup:{name}")
+        backup_complete = True
+        completed_steps.append("backup-complete")
 
-    for name, data in after.items():
-        if read_artifact_bytes(work_dir / name, boundary=work_dir) != data:
-            raise ValueError(f"published {name} failed byte verification")
-    if validate_ir_against_sources(work_dir, target_profile):
-        raise ValueError("published V2 document IR failed source binding verification")
+        failed_stage = "prepare-publication"
+        with tempfile.TemporaryDirectory(
+            prefix="migration-prepared-", dir=backup_dir.parent
+        ) as temporary:
+            prepared = Path(temporary)
+            for name, data in after.items():
+                atomic_write_bytes(prepared / name, data, boundary=prepared)
+                if read_artifact_bytes(prepared / name, boundary=prepared) != data:
+                    raise ValueError(f"prepared {name} failed byte verification")
+            completed_steps.append("prepared")
+
+            failed_stage = "recheck-inputs"
+            for snapshot in snapshots.values():
+                recheck_artifact_file(snapshot)
+            recheck_artifact_file(blocks_snapshot)
+            if read_artifact_bytes(
+                blocks_path, boundary=work_dir, expected=blocks_snapshot
+            ) != blocks_bytes:
+                raise ValueError("blocks.jsonl changed during migration")
+            _current_evidence, current_freeze = load_adapter_source_evidence(
+                work_dir, manifest
+            )
+            if current_freeze != adapter_freeze:
+                raise ValueError("adapter source evidence changed during migration")
+            validate_artifact_tree(work_dir, work_dir, allow_missing=False)
+            completed_steps.append("inputs-rechecked")
+
+            failed_stage = "invalidate"
+            _invalidate(work_dir)
+            completed_steps.append("invalidated")
+            for index, name in enumerate(UPSTREAM):
+                failed_stage = f"publish:{name}"
+                for remaining in UPSTREAM[index:]:
+                    recheck_artifact_file(snapshots[remaining])
+                    if read_artifact_bytes(
+                        work_dir / remaining,
+                        boundary=work_dir,
+                        expected=snapshots[remaining],
+                    ) != before[remaining]:
+                        raise ValueError("upstream binding changed during migration")
+                atomic_write_bytes(
+                    work_dir / name,
+                    after[name],
+                    boundary=work_dir,
+                    expected=snapshots[name],
+                )
+                completed_steps.append(f"published:{name}")
+
+        failed_stage = "verify-publication"
+        for name, data in after.items():
+            if read_artifact_bytes(work_dir / name, boundary=work_dir) != data:
+                raise ValueError(f"published {name} failed byte verification")
+        if validate_ir_against_sources(work_dir, target_profile):
+            raise ValueError("published V2 document IR failed source binding verification")
+        failed_stage = "verify-backup"
+        for name, snapshot in backup_snapshots.items():
+            if read_artifact_bytes(
+                backup_dir / name, boundary=backup_dir, expected=snapshot
+            ) != before[name]:
+                raise ValueError(f"backup {name} changed during migration")
+    except Exception as exc:
+        if isinstance(exc, MigrationFailed):
+            raise
+        raise MigrationFailed(
+            _failure_report(
+                report,
+                work_dir=work_dir,
+                backup_dir=backup_dir,
+                before=before,
+                after=after,
+                failed_stage=failed_stage,
+                completed_steps=completed_steps,
+                backup_complete=backup_complete,
+                backup_snapshots=backup_snapshots,
+                error=exc,
+            )
+        ) from exc
     return report

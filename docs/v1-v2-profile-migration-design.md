@@ -106,7 +106,9 @@ V2-only role inventory、Profile canonical hash
 1. 读取并校验现存 V1 的 `manifest.json`、`profile.json`、`document-ir.json` 与其源证据。
    对三份正式对象保存 inode/父目录快照和精确字节/hash；验证 manifest Profile binding
    与当前 Profile canonical hash 一致，IR 的 `source.manifest_sha256` 等于原 manifest
-   精确字节 hash。回滚备份包含三者，放在所有 active WORK/Skills roots 之外。
+   精确字节 hash。回滚备份包含三者，放在所有 active WORK/Skills roots 之外；物理路径
+   别名也视为重叠。备份叶目录必须独占创建，三份文件以“预期不存在”约束发布并固定
+   目录身份，竞争者创建的同名目录或文件不得被接管、覆盖。
 2. 在 owned 临时位置先生成目标 Profile，再构造目标 manifest：只更新其 Profile binding，
    其余源证据不变。先序列化目标 manifest，**使用这份精确序列化字节的 SHA** 构造 V2 IR；
    不得用旧 manifest、canonical JSON hash 或发布后重新序列化的另一个版本代替。
@@ -121,6 +123,12 @@ V2-only role inventory、Profile canonical hash
 5. 复读三份已发布文件，核对目标 hash、manifest/Profile canonical binding、IR/Profile binding
    及 IR `source.manifest_sha256`。三者全部一致才报告完成，下一步为重新 `source-audit`，
    然后重新 prepare/translation/output/DOCX/compile/visual/final QA。
+
+正式写入阶段失败时，CLI 以退出码 3 输出结构化恢复报告：`failed_stage`、
+`completed_steps`、经安全复读判定的三份 `upstream_state`（`old` / `new` / `unknown`）、
+重新验证后的外部 `backup` 状态、`gate_state` 与人工 `next_action`。发布函数抛错不代表
+目标仍是旧字节；即使异常发生在 replace 后的目录 fsync，也必须以复读结果为准。迁移器
+不自动回滚，也不把未验证的备份或回滚写成成功。
 
 | 中断点 | 正式上游状态 | 门禁与恢复 |
 | --- | --- | --- |
@@ -138,9 +146,11 @@ V2-only role inventory、Profile canonical hash
 ### 4.3 可执行的现存 WORK 合同
 
 `tests/migrate_profile_contract_test.py` 直接调用安装负载中的生产 CLI，在真实 native V1
-WORK 的安全副本上覆盖干跑零写入、blank/early/full 三阶段、旧 gate 失效、幂等重跑和
-修改版 V1 拒绝。CI forward 复制已通过 DOCX/compile 的 V1 WORK，迁移后重建整条 V2
-链，并与 fresh V2 的 DOCX/render 比较。
+WORK 的安全副本上覆盖干跑零写入、blank/early/full 三阶段、备份创建竞态、准备/失效/
+逐文件发布中断、旧 gate 状态、备份字节、人工恢复后的 source binding、幂等重跑和修改版
+V1 拒绝。原生大小写路径别名仅在 macOS APFS safety job 执行，其他平台明确 skip。CI
+forward 复制已通过 DOCX/compile 的 V1 WORK，迁移后重建整条 V2 链，并与 fresh V2 的
+DOCX/render 比较。
 
 ## 5. 幂等与重复迁移
 
