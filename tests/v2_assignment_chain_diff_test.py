@@ -419,16 +419,7 @@ class AssignmentChainDiffTests(unittest.TestCase):
                 payload = payload.replace(b"\r\n", b"\n")
             self.assertEqual(hashlib.sha256(payload).hexdigest(), expected, name)
 
-    def test_expanded_v1_snapshot_is_frozen(self) -> None:
-        frozen = json.loads(SNAPSHOT_FIXTURE.read_text(encoding="utf-8"))
-        with tempfile.TemporaryDirectory(prefix="assignment-chain-diff-") as temp:
-            snapshot = run_assignment_chain(Path(temp))
-        self.assertEqual({
-            key: value for key, value in snapshot.items()
-            if key not in {"cross_schema_projection", "expected_schema_changes"}
-        }, frozen)
-
-    def test_v1_and_candidate_v2_match_the_normalized_projection(self) -> None:
+    def test_v1_snapshot_and_candidate_v2_match_frozen_projection(self) -> None:
         from v2_migration_contract_test import build_candidate_v2
         v1 = load_profile("assignment-en-zh")
         v2 = build_candidate_v2(v1)
@@ -436,6 +427,10 @@ class AssignmentChainDiffTests(unittest.TestCase):
             root = Path(temp)
             v1_result = run_assignment_chain(root / "v1", v1)
             v2_result = run_assignment_chain(root / "v2", v2)
+        self.assertEqual({
+            key: value for key, value in v1_result.items()
+            if key not in {"cross_schema_projection", "expected_schema_changes"}
+        }, json.loads(SNAPSHOT_FIXTURE.read_text(encoding="utf-8")))
         self.assertEqual(v1_result["cross_schema_projection"], v2_result["cross_schema_projection"])
         self.assertEqual(
             v1_result["cross_schema_projection"],

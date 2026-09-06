@@ -183,7 +183,6 @@ def validate_contracts(root: Path = ROOT) -> None:
 
     baseline_runs = "\n".join(_run_text(_mapping(job, "baseline job")) for job in jobs.values())
     for required in (
-        "tools/run_test_suite.py workflow-contracts",
         "tools/run_test_suite.py \"$SUITE\"",
         "tests/v23_e2e_test.py",
     ):

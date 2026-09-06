@@ -10,14 +10,11 @@ contract is proven byte-equivalent to the frozen V1 contract.
 
 from __future__ import annotations
 
-import ast
 import copy
 import hashlib
 import json
 import sys
-import tempfile
 import unittest
-from collections import Counter
 from pathlib import Path
 
 
@@ -41,65 +38,6 @@ FROZEN_CANONICAL_SHA256 = "8ce2863ab72adc1ac11f415576060afbbdf39ab7d4f62fc7f25b8
 
 AUXILIARY_OMITTED = {role: "artifact-omitted" for role in sorted(AUXILIARY_ROLES)}
 
-# A line-number independent, explicit source allowlist.  It is intentionally
-# conservative: every remaining V1/legacy profile branch in normal runtime is
-# named here, including the two generic schema-1 metadata readers that sit on
-# the freeze chain.  Work package C must shrink this list; a newly added branch
-# or a stale documented entry fails closed.
-V1_RUNTIME_ALLOWLIST = Counter({
-    ('audit_docx.py', 'function', '_freeze_v1_expected_counts'): 1,
-    ('audit_docx.py', 'function', '_preflight_v1_paths'): 1,
-    ('audit_docx.py', 'schema-branch', "ir.get('schema_version') != 2"): 1,
-    ('audit_docx.py', 'schema-branch', "profile.get('schema_version') != 2"): 1,
-    ('audit_docx.py', 'schema-branch', "profile.get('schema_version') == 2"): 2,
-    ('audit_docx.py', 'symbol', 'V1_DOCX_AUDIT_CHECKS'): 2,
-    ('audit_outputs.py', 'schema-branch', "profile.get('schema_version') == 2"): 1,
-    ('audit_outputs.py', 'schema-branch', "semantic_contract['source_schema_version'] == 2"): 1,
-    ('audit_source.py', 'schema-branch', "evidence.get('schema_version') != 1"): 1,
-    ('audit_source.py', 'schema-branch', "profile.get('schema_version') == 2"): 1,
-    ('audit_translation.py', 'schema-branch', "plan.get('schema_version') != 2"): 2,
-    ('build_docx.py', 'function', '_preflight_v1_paths'): 1,
-    ('build_docx.py', 'schema-branch', "ir.get('schema_version') != 2"): 1,
-    ('build_docx.py', 'schema-branch', "profile.get('schema_version') == 1"): 1,
-    ('build_docx.py', 'schema-branch', "profile['schema_version'] == 1"): 4,
-    ('build_docx.py', 'schema-branch', "profile['schema_version'] == 2"): 6,
-    ('build_docx.py', 'schema-branch', "requested_profile.get('schema_version') == 2"): 2,
-    ('build_outputs.py', 'function', '_legacy_output_policy'): 1,
-    ('build_outputs.py', 'schema-branch', "contract['source_schema_version'] == 1"): 2,
-    ('build_outputs.py', 'schema-branch', "contract['source_schema_version'] == 2"): 2,
-    ('build_outputs.py', 'schema-branch', "semantic_contract['source_schema_version'] == 2"): 1,
-    ('compile_docx_pdf.py', 'schema-branch', "context['schema_version'] == 1"): 2,
-    ('compile_docx_pdf.py', 'schema-branch', "context['schema_version'] == 2"): 3,
-    ('compile_docx_pdf.py', 'schema-branch', "ir.get('schema_version') != 2"): 1,
-    ('compile_docx_pdf.py', 'schema-branch', "profile.get('schema_version') != 2"): 1,
-    ('document_ir.py', 'function', '_build_document_ir_v1'): 1,
-    ('document_ir.py', 'schema-branch', "profile.get('schema_version') == 1"): 1,
-    ('docx_ast.py', 'function', '_transform_v1'): 1,
-    ('docx_ast.py', 'schema-branch', "active_profile.get('schema_version') == 1"): 1,
-    ('job_state.py', 'derived-schema', "requires_docx = schema_v2 or any((key in compile_hint for key in ('docx', 'docx_audit_sha256', 'docx_audit_bindings')))"): 1,
-    ('job_state.py', 'derived-schema', "schema_v2 = profile.get('schema_version') == 2 or ir.get('schema_version') == 2 or 'docx_audit_bindings' in compile_hint"): 1,
-    ('job_state.py', 'schema-branch', "ir.get('schema_version') == 2"): 1,
-    ('job_state.py', 'schema-branch', "profile.get('schema_version') == 2"): 1,
-    ('pipeline.py', 'schema-branch', "profile.get('schema_version') == 2"): 3,
-    ('prepare_translation.py', 'schema-branch', "contract['source_schema_version'] == 1"): 2,
-    ('prepare_translation.py', 'schema-branch', "contract['source_schema_version'] == 2"): 3,
-    ('profile.py', 'function', '_validate_v1'): 1,
-    ('profile.py', 'schema-branch', "profile.get('schema_version') == 1"): 2,
-    ('profile.py', 'schema-branch', "profile['schema_version'] == 1"): 1,
-    ('profile.py', 'schema-branch', 'schema_version == 1'): 1,
-    ('profile.py', 'schema-branch', 'schema_version == 2'): 2,
-    ('profile.py', 'schema-branch', 'schema_version not in {1, 2}'): 1,
-    ('profile.py', 'schema-branch', 'type(schema_version) is not int'): 1,
-    ('release_check.py', 'profile-contracts', 'PROFILE_CONTRACTS'): 1,
-    ('release_check.py', 'schema-branch', "manifest.get('schema_version') != 1"): 1,
-    ('release_check.py', 'schema-branch', 'type(actual_schema_version) is not int'): 1,
-    ('release_check.py', 'schema-branch', "type(manifest.get('schema_version')) is not int"): 1,
-    ('translation_utils.py', 'schema-branch', "glossary.get('schema_version') != 1"): 1,
-    ('visual_utils.py', 'derived-schema', "schema_v2 = 'docx_audit_bindings' in compile_report"): 1,
-    ('visual_utils.py', 'derived-schema', "schema_v2 = schema_v2 or profile.get('schema_version') == 2"): 1,
-    ('visual_utils.py', 'schema-branch', "profile.get('schema_version') == 2"): 1,
-})
-
 NATIVE_KIND_ROLE_SPECS = (
     ("heading", "heading", "section-heading", "bilingual"),
     ("list-item", "list", "body", "bilingual"),
@@ -113,45 +51,6 @@ NATIVE_KIND_ROLE_SPECS = (
     ("caption-continuation", "caption_continuation", "caption", "bilingual"),
     ("visual-content", "visual_content", "visual", "visual-once"),
 )
-
-
-def collect_v1_runtime_markers(root: Path = SCRIPTS) -> Counter[tuple[str, str, str]]:
-    """Collect syntax-level V1 branches without trusting line numbers."""
-    markers: list[tuple[str, str, str]] = []
-    for path in root.rglob("*.py"):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        relative = path.relative_to(root).as_posix()
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
-                "v1" in node.name.lower() or node.name == "_legacy_output_policy"
-            ):
-                markers.append((relative, "function", node.name))
-            elif isinstance(node, ast.Name) and node.id.startswith("V1_"):
-                markers.append((relative, "symbol", node.id))
-            elif isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name) and target.id == "PROFILE_CONTRACTS"
-                for target in node.targets
-            ):
-                markers.append((relative, "profile-contracts", "PROFILE_CONTRACTS"))
-            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                for target in targets:
-                    if isinstance(target, ast.Name) and target.id in {
-                        "schema_v2",
-                        "requires_docx",
-                    }:
-                        markers.append(
-                            (relative, "derived-schema", f"{target.id} = {ast.unparse(node.value)}")
-                        )
-            elif isinstance(node, ast.Compare):
-                expression = ast.unparse(node)
-                schema_expression = (
-                    "schema_version" in expression
-                    or "source_schema_version" in expression
-                )
-                if schema_expression:
-                    markers.append((relative, "schema-branch", expression))
-    return Counter(markers)
 
 
 def _lf_sha256(path: Path) -> str:
@@ -430,79 +329,6 @@ class CandidateV2DifferentialTests(unittest.TestCase):
             self.assertEqual(v1["role"], v2["role"], text)
             self.assertEqual(v1["matched_language"], v2["matched_language"], text)
             self.assertEqual(v1["identifier"], v2["identifier"], text)
-
-
-class V1BranchAuditTests(unittest.TestCase):
-    """The documented V1 source audit must be executable and fail closed."""
-
-    def test_runtime_markers_match_the_complete_allowlist(self) -> None:
-        self.assertEqual(collect_v1_runtime_markers(), V1_RUNTIME_ALLOWLIST)
-
-    def test_unregistered_v1_branch_is_detected(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="v1-source-audit-extra-") as temp:
-            root = Path(temp)
-            (root / "new_runtime.py").write_text(
-                "def _validate_v1(profile):\n"
-                "    return profile.get('schema_version') == 1\n",
-                encoding="utf-8",
-            )
-            self.assertEqual(
-                set(collect_v1_runtime_markers(root)),
-                {
-                    ("new_runtime.py", "function", "_validate_v1"),
-                    (
-                        "new_runtime.py",
-                        "schema-branch",
-                        "profile.get('schema_version') == 1",
-                    ),
-                },
-            )
-
-    def test_duplicate_dispatch_addition_and_removal_change_inventory(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="v1-duplicate-dispatch-") as temp:
-            root = Path(temp)
-            path = root / "pipeline.py"
-            statement = "if profile.get('schema_version') == 2: pass\n"
-            key = ("pipeline.py", "schema-branch", "profile.get('schema_version') == 2")
-            for count in (3, 4, 2):
-                path.write_text(statement * count, encoding="utf-8")
-                self.assertEqual(collect_v1_runtime_markers(root)[key], count)
-
-    def test_missing_allowlist_entry_is_detected(self) -> None:
-        actual = collect_v1_runtime_markers()
-        incomplete = V1_RUNTIME_ALLOWLIST - Counter({
-            ("profile.py", "function", "_validate_v1"): 1
-        })
-        self.assertNotEqual(actual, incomplete)
-
-    def test_schema_v2_comparison_and_derived_dispatch_are_detected(self) -> None:
-        with tempfile.TemporaryDirectory(prefix="v1-source-audit-v2-dispatch-") as temp:
-            root = Path(temp)
-            (root / "dispatch.py").write_text(
-                "schema_v2 = profile.get('schema_version') == 2\n"
-                "requires_docx = schema_v2 or bool(compile_hint)\n",
-                encoding="utf-8",
-            )
-            self.assertEqual(
-                set(collect_v1_runtime_markers(root)),
-                {
-                    (
-                        "dispatch.py",
-                        "derived-schema",
-                        "schema_v2 = profile.get('schema_version') == 2",
-                    ),
-                    (
-                        "dispatch.py",
-                        "derived-schema",
-                        "requires_docx = schema_v2 or bool(compile_hint)",
-                    ),
-                    (
-                        "dispatch.py",
-                        "schema-branch",
-                        "profile.get('schema_version') == 2",
-                    ),
-                },
-            )
 
 
 class V1AdversarialTests(unittest.TestCase):

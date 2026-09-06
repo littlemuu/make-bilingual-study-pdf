@@ -5,6 +5,11 @@
 > [`tests/fixtures/profiles/assignment-en-zh-v1.json`](../tests/fixtures/profiles/assignment-en-zh-v1.json)
 > 与 [`assignment-en-zh-v1-contract.json`](../tests/fixtures/profiles/assignment-en-zh-v1-contract.json)。
 
+测试组织按 [2026-09-06 减重计划](lightweight-core-roadmap.md#2026-09-06-复审先减少测试维护负担)
+调整：不再以全源码 AST 快照验收迁移，历史输入与可见行为差分继续保留。本文件的原地
+迁移仍是现有参考驱动的合同；工包 B 如改为生成新 WORK，须同步替换这里的发布/恢复
+合同及参考驱动测试，不同时维护两套迁移方案。B 接入真实 CLI 后移除参考事务实现。
+
 ## 1. 目标与边界
 
 把精确已知的历史 `assignment-en-zh` schema V1 工作目录一次性迁移到 schema V2，普通

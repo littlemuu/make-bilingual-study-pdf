@@ -28,6 +28,20 @@ that content-integrity, freeze-chain, source-review, font, render and visual-rev
 remain equivalent. It must not treat reduced test frequency as permission to weaken the
 release-candidate evidence.
 
+## Test maintenance after the 2026-09-06 review
+
+The current local cleanup follows the
+[test simplification plan](lightweight-core-roadmap.md#2026-09-06-复审先减少测试维护负担).
+`workflow-lint` runs actionlint; the four Python workflow-contract checks run once in
+`self-test` through `pr-fast` or `full`. The local `full` suite remains complete, and
+`workflow-contracts` remains available for targeted validation. Required aggregate
+contexts and release evidence are unchanged.
+
+Migration tests freeze historical inputs and observable behavior, not exact Python AST
+expressions. The V1 snapshot and V1/V2 projection share one V1 execution while retaining
+both frozen expectations. Fault tests keep independent mutable work directories.
+Production CLI tests will replace the migration reference driver in work package B.
+
 ## Create the environment
 
 On Linux or macOS:

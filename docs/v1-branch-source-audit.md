@@ -1,15 +1,15 @@
 # 普通运行时 V1 分支 source audit（工包 A）
 
-本清单是阶段二 B/C 的删除边界，而非人工维护的行号笔记。可执行真值在
-[`tests/v2_migration_contract_test.py`](../tests/v2_migration_contract_test.py) 的
-`V1_RUNTIME_ALLOWLIST`：测试使用 AST 扫描整个普通运行时 `scripts/` 目录中的 V1
-函数、`V1_` 符号、Profile contract 表、全部 `schema_version` /
-`source_schema_version` 比较（包括 `== 2`），以及 `schema_v2` / `requires_docx` 派生布尔。
-这会覆盖 `job_state.py` 的状态推导和 `pipeline.py` 的 DOCX/audit/compile 分派；新增未登记
-分支、allowlist 项已消失，都会 fail closed。清单是显式 Counter：同一表达式的每个 AST 实例均计数，pipeline 三处分派计为 3；新增第四处或删去一处也会失败。
+本清单保留阶段二 B/C 的职责与删除边界。2026-09-06 测试减重复审取消了
+`V1_RUNTIME_ALLOWLIST` 及全源码 AST Counter 门禁：函数名、条件表达式和出现次数
+不再作为产品合同，等价重构无需更新一份源码快照。
 
-工包 C 完成后，普通 `validate_profile`、Profile contract、IR、输出、DOCX、compile 和
-status 路径不得再保留这些条目；只允许一次性 migrator 与历史 fixture 测试读取 V1。
+[`v2_migration_contract_test.py`](../tests/v2_migration_contract_test.py) 继续冻结历史
+Profile、完整 contract、语义匹配及 V1/V2 行为；实际转换链继续验证内容与成品投影。
+B/C 审阅仍须检查下表对应的调用路径。工包 C 用真实 load/validate/CLI 行为证明普通
+入口拒绝 V1、接受 V2；V1 仅能作为迁移输入或历史 fixture，不能仅凭删除某个函数名
+宣称收尾完成。测试调整计划见
+[`lightweight-core-roadmap.md`](lightweight-core-roadmap.md#2026-09-06-复审先减少测试维护负担)。
 
 ## 当前职责清单
 
@@ -23,11 +23,9 @@ status 路径不得再保留这些条目；只允许一次性 migrator 与历史
 | `release_check.py` | `assignment-en-zh` schema 1 contract | 验证全部安装 Profile 为 schema 2 |
 | `audit_source.py` / `audit_translation.py` / `translation_utils.py` | freeze-chain 内遗留 schema-1 metadata 读取 | 仅保留与非-Profile 产物 schema 有关的项；不得伪装为 Profile V1 兼容 |
 
-`V1_RUNTIME_ALLOWLIST` 也记录以上最后一类 schema-1 metadata 分支，避免工包 C 删除
-Profile V1 路径时误删仍被独立产物格式使用的校验。审计不把 `Question`、`Exercise`、
-`Task`、`Part`、`Hint` 或 `Note` 当作迁移目标；当前 assignment 行为仍只冻结
-`problem`、`example`、`tip`，并只按既有 native kind 显式化 heading/list/prose/caption/
-math-with-text/code/math/image/artifact/caption-continuation/visual-content 的 V1 output policy。
+清理 Profile V1 时，仍须区分独立产物格式的 schema 1（如 glossary、manifest 和
+adapter evidence）；不得因为版本号相同就删除它们的校验。当前迁移不新增
+`Question`、`Exercise`、`Task` 等选择器，原生内容域的输出等价要求保持不变。
 
 ## 验证命令
 
@@ -35,5 +33,4 @@ math-with-text/code/math/image/artifact/caption-continuation/visual-content 的 
 .\.venv\Scripts\python.exe -B tests\v2_migration_contract_test.py
 ```
 
-该命令包含真实源码、漏项和新增分支三种回归。它不依赖源行号，因此重排或格式化不会让
-审计失效。
+该命令验证历史输入与候选 V2 行为，不再扫描或固定普通运行时的源码表达式。
