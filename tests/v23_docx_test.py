@@ -1071,6 +1071,21 @@ def test_compile_bilingual_text_uses_target_evidence() -> None:
     assert compile_docx_pdf.pdf_body_text([page_one, page_two]) == (
         "目标段落的前半部分\n和后半部分"
     )
+    trailing_header = (
+        "正文在提取顺序中先出现\n"
+        "Bilingual study edition · Title\n英中双语学习版 · 3"
+    )
+    assert compile_docx_pdf.pdf_body_text([trailing_header]) == (
+        "正文在提取顺序中先出现"
+    )
+    separated_header = (
+        "Bilingual study edition · Title\n"
+        "Figure 1: body caption\n中文译文：图 1 正文说明\n\n"
+        "英中双语学习版 · 4"
+    )
+    assert compile_docx_pdf.pdf_body_text([separated_header]) == (
+        "Figure 1: body caption\n中文译文：图 1 正文说明\n"
+    )
     long_target = "目标段落的前半部分和后半部分，这一整段中文应当跨页保持连续并且可以被审计。"
     long_node = {
         "id": "long-prose",

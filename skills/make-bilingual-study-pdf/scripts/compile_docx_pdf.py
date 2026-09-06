@@ -271,6 +271,14 @@ def pdf_body_text(page_texts: list[str]) -> str:
     bodies: list[str] = []
     for page_text in page_texts:
         lines = page_text.splitlines()
+        header_start = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.strip().startswith("Bilingual study edition")
+            ),
+            -1,
+        )
         header_end = next(
             (
                 index
@@ -279,7 +287,12 @@ def pdf_body_text(page_texts: list[str]) -> str:
             ),
             -1,
         )
-        bodies.append("\n".join(lines[header_end + 1:] if header_end >= 0 else lines))
+        removed = {index for index in (header_start, header_end) if index >= 0}
+        if 0 <= header_start < header_end and header_end - header_start <= 3:
+            removed.update(range(header_start, header_end + 1))
+        bodies.append(
+            "\n".join(line for index, line in enumerate(lines) if index not in removed)
+        )
     return "\n".join(bodies)
 
 
