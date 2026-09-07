@@ -15,6 +15,22 @@ Read [format-spec.md](references/format-spec.md) before translating and
 script path relative to this `SKILL.md` directory, even if the installed directory has
 an opaque generated name.
 
+## User approval comes before full production
+
+Before running a conversion, read
+[user-approval-workflow.md](references/user-approval-workflow.md). Follow this order:
+**confirm the format brief → produce a small real-content proof → show its PDF and
+renders → wait for explicit user approval → run full production → obtain final human
+acceptance**. Never translate or typeset the whole document first and ask about its
+format afterwards. Reuse requirements already confirmed by the user; ask only about
+missing choices. A default Profile or green CI run is not user approval.
+
+These are mandatory agent-orchestration checkpoints, not new CLI switches or machine
+states. The existing CLI does not enforce or report proof approval. Track it in the
+small local collaboration record described in the reference; do not fabricate an
+approval artifact, bypass a technical gate, or replace final visual review with a
+proof approval. User formatting choices do not expand the supported scope below.
+
 ## Profile and IR
 
 V2.3 uses a versioned Profile plus a unified document IR. The supported Profiles are
@@ -41,7 +57,8 @@ python3 "$SKILL_DIR/scripts/pipeline.py" status "$WORK_DIR"
 ```
 
 The entry point runs deterministic stages and stops at glossary review, translation,
-and visual-review checkpoints. Its status output names the next safe resumable action.
+and visual-review checkpoints. Its status output names the next safe technical action;
+the agent must also check format/proof approval before executing it for a full job.
 
 ## Scope gate
 
@@ -87,6 +104,27 @@ unsafe relative metadata before reading, clearing, or replacing a stage's artifa
 authorizes following a link or modifying another inode. Do not work around an artifact
 boundary error with manual deletion or copying. Inspect the reported entry, move any
 legitimate backup completely outside the active work directory, and rerun the stage.
+
+### 0. Confirm format, then work at proof scope
+
+Summarize the user's known requirements and propose defaults only for unresolved
+choices: paragraph/container reading order, typography/callouts, code/math/visual
+preservation, page furniture, deliverables, and intended reading use. Confirm the
+brief before translating. Do not ask again whether a Problem must include its body
+when the user has already required it.
+
+First run stages 1–5 below only on a separate, bounded `PROOF_WORK`, using complete
+representative excerpts and real translations through the same production pipeline.
+Include difficult structure and cross-page behavior, not just a cover or a title.
+The reference explains source/hash mapping and proof/full workspace isolation; an
+excerpt audit is never full-source evidence. Necessary source preflight is allowed,
+but proof approval must precede full translation or full output construction.
+
+After rendering, show the user the actual proof PDF and viewable page images, state
+what was covered, and stop for approval. Requested changes go through another proof;
+do not continue full production while waiting. After explicit approval, use the
+confirmed configuration for the full WORK and run stages 1–5 with all normal audits.
+On resume, verify the recorded approval and version instead of guessing consent.
 
 ### 1. Extract and prove the source inventory
 
@@ -137,6 +175,10 @@ Do this before planning; later glossary edits deliberately invalidate the plan.
 
 ### 3. Create resumable translation batches
 
+For a proof WORK, translate only its complete bounded source. For a full WORK, first
+verify explicit approval of the current proof and format. Do not turn an incomplete
+full-document translation into a supposedly complete sample by dropping source IDs.
+
 Run:
 
 ```bash
@@ -184,6 +226,11 @@ English members first, inserts one separator, then gathers its complete Chinese 
 An `anchor-only` role styles only its anchor and never absorbs neighboring paragraphs.
 Headings and ordinary prose remain English-first paragraph pairs.
 
+When the agreed format requires a complete Problem, an anchor-only title box does
+not satisfy it even if technical counts pass. Stop at proof scope to obtain valid
+structural evidence or repair the production path; never guess membership or silently
+weaken the agreed format. Check the last member and the first outside paragraph.
+
 Run:
 
 ```bash
@@ -224,7 +271,12 @@ Inspect every `output/contact/contact-NNN.png`; open full-resolution output rend
 the title page, every page with a figure/table, pages around section transitions, the
 last page, and every page flagged by logs or contact-sheet review. Check English-before-
 Chinese order, clipping, overlap, broken URLs, isolated headings, tiny formulas, and
-unintended blank space. Then record what was actually inspected:
+unintended blank space. For a proof, show the PDF/renders and wait for the user's
+production approval; do not reuse that response as whole-document visual approval.
+For a full job, present the final PDF and review material for human acceptance. The
+following attestation commands may run only after the required actual human review;
+never mark all pages reviewed on the basis of a sample or the agent's own inspection.
+Record only what was actually inspected:
 
 ```bash
 python3 "$SKILL_DIR/scripts/record_visual_review.py" "$WORK_DIR" \
@@ -268,7 +320,12 @@ filenames stay the same.
 
 ## Completion rule
 
-Call the job complete only when `output/qa-report.json` is `passed`. For the V2 profile,
+Call the job complete only when `output/qa-report.json` is `passed`, the required
+human review covers the current full output, and the user has accepted the final
+edition against the agreed format. Until then label any deliverable a candidate
+awaiting acceptance. Proof approval authorizes production, not completion. Changes
+that affect presentation require a renewed proof; all original stale-gate rules remain.
+For the V2 profile,
 deliver the bilingual `.md`, editable `.docx`, matching `.pdf`, and QA report; include
 the editable `.tex` when requested or when the project uses the XeLaTeX profile. State
 any warnings from the report. If a gate is blocked by missing software, fonts, an

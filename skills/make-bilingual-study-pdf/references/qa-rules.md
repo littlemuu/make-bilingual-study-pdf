@@ -2,6 +2,27 @@
 
 All gates are mandatory. A later gate never excuses an earlier failure.
 
+## 0. User format and proof checkpoints (agent-enforced)
+
+Read [user-approval-workflow.md](user-approval-workflow.md). Before full translation
+or full output construction, require a confirmed format brief and explicit user
+approval of a small, viewable, real-content proof made with the production pipeline.
+Until then, only necessary preflight and bounded proof work are authorized. Missing
+approval, requested proof changes, or material presentation drift means stop and
+return to the user. Green CI, default settings, old approvals, and a worker's self-review
+cannot substitute for this checkpoint.
+
+This is an agent workflow requirement, not a status currently calculated by
+`pipeline.py` or `qa-report.json`. Keep the local collaboration record separately from
+machine audit files and do not introduce fake passed gates. The proof must retain
+complete representative structures, including the last Problem member and the outside
+boundary where applicable. An anchor-only title box cannot satisfy an agreed complete
+Problem layout. Synthetic translation stubs are regression inputs, not user proofs.
+
+The proof's audits cover only its own source and output. Never transplant them into
+the full WORK. Proof approval does not waive any source, translation, output, compile,
+or final human visual requirement below.
+
 ## 1. Source gate
 
 Pass only when:
@@ -128,6 +149,12 @@ failure.
 
 ## 5. Visual gate
 
+Present the current full PDF, page previews, and risk-page index to the user for final
+human review and acceptance against the confirmed brief. Agent image inspection is
+preflight assistance, not human attestation. Record actual human coverage; partial
+inspection or approval of a short proof never justifies `reviewed-pages all` or a
+full-document passed visual report.
+
 Inspect every output contact sheet. At full resolution inspect the title page, last
 page, every figure/table page, section boundaries, pages with dense math/code, and all
 pages named by warnings. Fail for:
@@ -158,7 +185,10 @@ test this gate and may reach `automated_status: passed`, but it must not write a
 
 ## Completion language
 
-Only a passed `qa-report.json` permits “complete,” “verified,” or equivalent wording.
+A passed `qa-report.json` is necessary, not sufficient for user acceptance. Require
+valid human visual evidence for the current full output and the user's final acceptance
+against the confirmed brief before saying “complete,” “verified,” or equivalent.
+While waiting, label delivered files as candidates awaiting human acceptance.
 Otherwise report the gate and exact blocker. Never infer success from a readable sample
 page, a zero exit from extraction alone, or a model's statement that it translated the
 whole document.

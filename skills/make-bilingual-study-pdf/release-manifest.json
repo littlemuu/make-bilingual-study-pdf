@@ -3,12 +3,12 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "077e64c486a79f997d1e81e7e560678d2970a12206d7ae022b4b097a8662cac8",
+  "tree_sha256": "43574005aff9696da9ba472e2274f6807ad56552875e656e5b6a166d340c82c0",
   "files": [
     {
       "path": "SKILL.md",
-      "size": 14055,
-      "sha256": "7bf2e80195451e144cb796041e44aec85eb6db616936e0ee889c0d51ea18154c"
+      "size": 17798,
+      "sha256": "dffdc5676b5427b0250c10c1d6694134556a2530f82715b8f92033624a1d0357"
     },
     {
       "path": "VERSION",
@@ -62,13 +62,18 @@
     },
     {
       "path": "references/qa-rules.md",
-      "size": 8280,
-      "sha256": "d61e2bd33c070934db02c4d50774d0837f025b8abfe830188dec9fd803bf2536"
+      "size": 10215,
+      "sha256": "36c3ebdb7791ed9f918be355f91825f6fee684e0d20db0064e2773707903446a"
     },
     {
       "path": "references/translation-protocol.md",
       "size": 1537,
       "sha256": "b9f8e6a76d385fd61fca8878401d2a0ed09e434d2bf5894b9c5e9a8d7b4e161d"
+    },
+    {
+      "path": "references/user-approval-workflow.md",
+      "size": 9521,
+      "sha256": "615937eed3f6a59c44d517202c67c891cebdd84757f12beb54dad9aaafc41469"
     },
     {
       "path": "requirements.txt",
