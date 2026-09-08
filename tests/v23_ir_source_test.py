@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
@@ -36,7 +37,7 @@ from document_ir import (
     expected_ir,
     validate_ir_against_sources,
 )
-from extract_pdf import prepare_output
+from extract_pdf import command_version, prepare_output, run_text
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -88,6 +89,19 @@ def make_block(
 
 
 class V23IrSourceTests(unittest.TestCase):
+    def test_external_tool_output_decoding_is_locale_independent(self) -> None:
+        text_result = subprocess.CompletedProcess(
+            ["pdftotext"], 0, "paper—text".encode("utf-8"), b"\xbe warning"
+        )
+        version_result = subprocess.CompletedProcess(
+            ["pdftotext", "-v"], 0, b"\xbe Poppler 1.0\n", None
+        )
+        with patch("extract_pdf.subprocess.run", side_effect=[text_result, version_result]) as run:
+            self.assertEqual(run_text(["pdftotext"]), "paper—text")
+            self.assertEqual(command_version("pdftotext"), "� Poppler 1.0")
+        for call in run.call_args_list:
+            self.assertNotIn("text", call.kwargs)
+
     def setUp(self) -> None:
         self.profile = load_profile("academic-paper-en-zh")
 

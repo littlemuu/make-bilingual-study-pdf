@@ -116,9 +116,8 @@ def run_text(command: list[str]) -> str:
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
-    return completed.stdout
+    return completed.stdout.decode("utf-8", errors="replace")
 
 
 def command_version(command: str, flag: str = "-v") -> str:
@@ -127,9 +126,9 @@ def command_version(command: str, flag: str = "-v") -> str:
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
     )
-    return (completed.stdout or "").strip().splitlines()[0]
+    output = (completed.stdout or b"").decode("utf-8", errors="replace")
+    return output.strip().splitlines()[0]
 
 
 def invalid_pngs(paths: list[Path]) -> list[Path]:
