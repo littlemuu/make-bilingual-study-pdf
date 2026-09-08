@@ -539,6 +539,9 @@ def make_visuals(
                     "contained_block_ids": [block["id"]],
                 }
             )
+            if block["kind"] in {"math", "math_with_text"}:
+                block["translatable"] = False
+                block["adapter_role"] = "equation_visual"
 
         captions = [
             block
@@ -636,6 +639,19 @@ def make_visuals(
                     union.y0 = max(caption_rect.y1, union.y0 - 4)
                     union.y1 = min(page.rect.y1, union.y1 + 4)
                 elif not candidates:
+                    owned_ids = {item["anchor_id"] for item in visuals}
+                    nearby = [
+                        item
+                        for item in page_blocks
+                        if item["id"] in owned_ids and item["id"] != caption["id"]
+                    ]
+                    if nearby:
+                        caption["caption_parent"] = min(
+                            nearby,
+                            key=lambda item: abs(
+                                float(item["bbox"][3]) - float(caption["bbox"][1])
+                            ),
+                        )["id"]
                     unresolved.append(caption["id"])
                     continue
                 else:
@@ -694,6 +710,19 @@ def make_visuals(
                             caption_rect.y0 - 2, union.y1 + 4
                         )
                 if union.width < 40 or union.height < 30:
+                    owned_ids = {item["anchor_id"] for item in visuals}
+                    nearby = [
+                        item
+                        for item in page_blocks
+                        if item["id"] in owned_ids and item["id"] != caption["id"]
+                    ]
+                    if nearby:
+                        caption["caption_parent"] = min(
+                            nearby,
+                            key=lambda item: abs(
+                                float(item["bbox"][3]) - float(caption["bbox"][1])
+                            ),
+                        )["id"]
                     unresolved.append(caption["id"])
                     continue
 
@@ -713,6 +742,9 @@ def make_visuals(
                             candidate_block["translatable"] = False
                             if caption_is_table:
                                 candidate_block["adapter_role"] = "table_visual"
+
+                if contained:
+                    caption["caption_parent"] = contained[0]
 
                 visual_id = f"visual-{caption['id']}"
                 filename = f"{visual_id}.png"
@@ -834,6 +866,43 @@ def annotate_native_v2_evidence(
             r"(?:References|Bibliography)\s*[:.]?", source, re.I
         ):
             block["adapter_role"] = "reference"
+
+    if "references" in roles:
+        reference_index = next(
+            (
+                index
+                for index, block in enumerate(blocks)
+                if block.get("adapter_role") == "reference"
+            ),
+            None,
+        )
+        if reference_index is not None:
+            reference_heading = blocks[reference_index]
+            heading_page = int(reference_heading.get("page", 0))
+            heading_size = float(
+                reference_heading.get("stats", {}).get("median_font_size", 0)
+            )
+            for block in blocks[reference_index + 1 :]:
+                source = block.get("source", "").strip()
+                font_size = float(block.get("stats", {}).get("median_font_size", 0))
+                if (
+                    int(block.get("page", 0)) > heading_page
+                    and font_size >= heading_size * 0.95
+                    and 0 < len(source) <= 120
+                    and not source.startswith("[")
+                ):
+                    block["adapter_role"] = "heading"
+                    block["text_level"] = 1
+                    break
+                if block.get("kind") not in {
+                    "artifact",
+                    "image",
+                    "empty",
+                    "visual_content",
+                    "caption",
+                    "caption_continuation",
+                }:
+                    block["adapter_role"] = "reference"
 
     if "section" in roles or "subsection" in roles:
         for block in blocks:

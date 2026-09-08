@@ -3,7 +3,7 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "cfc1c908a59ae0a508cfb880b426fea552a093dbfa3765863f09eabd7223eba5",
+  "tree_sha256": "e2865303ef000133a82c4f8224efac2250ac799d12b05914f68125f5c02d426f",
   "files": [
     {
       "path": "SKILL.md",
@@ -102,13 +102,13 @@
     },
     {
       "path": "scripts/audit_docx.py",
-      "size": 73620,
-      "sha256": "d80274cd9586cbb72f8ec59dd1fbde5471e8a0e8a858574913961422784fafc8"
+      "size": 73806,
+      "sha256": "b1b84e1ac94de8e2c38705f4371ae0fcff4e4831a1d815d3609eaf9b2b84528c"
     },
     {
       "path": "scripts/audit_outputs.py",
-      "size": 52677,
-      "sha256": "110a89f5b153555f011d9809978b7e171bd0c642f03bb452cd04fa286cac2cdb"
+      "size": 52778,
+      "sha256": "f4e03ef9417acfe895f289ab3a25a7f0998087fe5f335c4e1e566b2d5504e174"
     },
     {
       "path": "scripts/audit_source.py",
@@ -162,8 +162,8 @@
     },
     {
       "path": "scripts/extract_pdf.py",
-      "size": 48861,
-      "sha256": "f73ea3a51a0b3f645da071c80361731678faa9f31b14ba82cee8b9e8d5583c11"
+      "size": 51772,
+      "sha256": "e58bd76f9a97b36416ad9d5c796e720e4bb88bb67444d8d0a1dba03b5e0c94b9"
     },
     {
       "path": "scripts/finalize_qa.py",

@@ -1129,11 +1129,11 @@ def main() -> None:
 
     constraint_checks: dict[str, bool] = {}
     if semantic_contract is not None and current_role_inventory:
-        actual_node_counts = Counter(
-            item.get("role")
-            for item in current_node_semantics.values()
-            if item.get("role") is not None
-        )
+        actual_node_counts = Counter()
+        for group_ids in current_groups_by_node.values():
+            for role in current_role_inventory:
+                if any(group_id.startswith(f"{role}:") for group_id in group_ids):
+                    actual_node_counts[role] += 1
         for role, inventory in current_role_inventory.items():
             count = inventory.get("occurrence_count")
             minimum = inventory.get("minimum")

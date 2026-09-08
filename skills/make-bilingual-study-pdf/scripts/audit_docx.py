@@ -1259,9 +1259,13 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         if group.get("membership") == "anchor-only"
         and role_specs[group["role"]]["grouping"] == "structural-container"
     ]
+    complete_member_ids = {
+        node_id for group in complete_groups for node_id in group["member_node_ids"]
+    }
     non_structural_anchor_groups = [
         group for group in ir.get("semantic_groups", [])
         if group.get("membership") == "anchor-only"
+        and group.get("anchor_node_id") not in complete_member_ids
         and role_specs[group["role"]]["grouping"] != "structural-container"
         and role_specs[group["role"]]["output"]
         not in {"artifact-omitted", "visual-once"}
