@@ -625,9 +625,12 @@ def make_visuals(
                     and horizontal_overlap_ratio(rect, left, right) >= 0.5
                 ]
                 if len(table_rules) >= 2:
-                    union = fitz.Rect(table_rules[0])
-                    for rect in table_rules[1:]:
-                        union.include_rect(rect)
+                    union = fitz.Rect(
+                        min(rect.x0 for rect in table_rules),
+                        min(rect.y0 for rect in table_rules),
+                        max(rect.x1 for rect in table_rules),
+                        max(rect.y1 for rect in table_rules),
+                    )
                     union.x0 = max(left, union.x0 - 4)
                     union.x1 = min(right, union.x1 + 4)
                     union.y0 = max(caption_rect.y1, union.y0 - 4)
