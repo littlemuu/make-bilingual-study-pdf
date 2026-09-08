@@ -604,41 +604,61 @@ def make_visuals(
                     and rect.y0 >= max(0.0, caption_rect.y0 - 400)
                     and horizontal_overlap_ratio(rect, left, right) >= 0.5
                 ]
+                full_height_candidates = [
+                    rect
+                    for rect in drawings
+                    if 36.0 <= rect.y0
+                    and rect.y1 <= caption_rect.y0 + 3
+                    and horizontal_overlap_ratio(rect, left, right) >= 0.5
+                ]
                 if not candidates:
                     unresolved.append(caption["id"])
                     continue
-                seed = max(
-                    candidates,
-                    key=lambda rect: (rect.y1, rect.get_area(), rect.width + rect.height),
+                dense_full_page_figure = (
+                    caption_rect.y0 >= page.rect.height * 0.65
+                    and len(full_height_candidates) >= 40
                 )
-                cluster = [seed]
-                union = fitz.Rect(seed)
-                changed = True
-                while changed:
-                    changed = False
-                    expanded = fitz.Rect(
-                        union.x0 - 8, union.y0 - 8, union.x1 + 8, union.y1 + 8
+                if dense_full_page_figure:
+                    union = fitz.Rect(full_height_candidates[0])
+                    for rect in full_height_candidates[1:]:
+                        union.include_rect(rect)
+                    union.x0 = max(left, union.x0 - 4)
+                    union.x1 = min(right, union.x1 + 4)
+                    union.y0 = max(0.0, union.y0 - 24)
+                    union.y1 = min(caption_rect.y0 - 2, union.y1 + 4)
+                else:
+                    seed = max(
+                        candidates,
+                        key=lambda rect: (rect.y1, rect.get_area(), rect.width + rect.height),
                     )
-                    for rect in candidates:
-                        if rect in cluster:
-                            continue
-                        if (
-                            not (rect & expanded).is_empty
-                            or expanded.contains(rect.tl)
-                            or expanded.contains(rect.br)
-                        ):
-                            cluster.append(rect)
-                            union = fitz.Rect(
-                                min(union.x0, rect.x0),
-                                min(union.y0, rect.y0),
-                                max(union.x1, rect.x1),
-                                max(union.y1, rect.y1),
-                            )
-                            changed = True
-                union.x0 = max(left, union.x0 - 4)
-                union.x1 = min(right, union.x1 + 4)
-                union.y0 = max(0.0, union.y0 - 4)
-                union.y1 = min(caption_rect.y0 - 2, union.y1 + 4)
+                    cluster = [seed]
+                    union = fitz.Rect(seed)
+                    changed = True
+                    while changed:
+                        changed = False
+                        expanded = fitz.Rect(
+                            union.x0 - 8, union.y0 - 8, union.x1 + 8, union.y1 + 8
+                        )
+                        for rect in candidates:
+                            if rect in cluster:
+                                continue
+                            if (
+                                not (rect & expanded).is_empty
+                                or expanded.contains(rect.tl)
+                                or expanded.contains(rect.br)
+                            ):
+                                cluster.append(rect)
+                                union = fitz.Rect(
+                                    min(union.x0, rect.x0),
+                                    min(union.y0, rect.y0),
+                                    max(union.x1, rect.x1),
+                                    max(union.y1, rect.y1),
+                                )
+                                changed = True
+                    union.x0 = max(left, union.x0 - 4)
+                    union.x1 = min(right, union.x1 + 4)
+                    union.y0 = max(0.0, union.y0 - 4)
+                    union.y1 = min(caption_rect.y0 - 2, union.y1 + 4)
                 if union.width < 40 or union.height < 30:
                     unresolved.append(caption["id"])
                     continue

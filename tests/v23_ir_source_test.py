@@ -37,7 +37,7 @@ from document_ir import (
     expected_ir,
     validate_ir_against_sources,
 )
-from extract_pdf import command_version, prepare_output, run_text
+from extract_pdf import command_version, make_visuals, prepare_output, run_text
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -101,6 +101,44 @@ class V23IrSourceTests(unittest.TestCase):
             self.assertEqual(command_version("pdftotext"), "� Poppler 1.0")
         for call in run.call_args_list:
             self.assertNotIn("text", call.kwargs)
+
+    def test_dense_full_page_figure_keeps_disconnected_panels(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native-dense-figure-") as temp:
+            root = Path(temp)
+            document = fitz.open()
+            page = document.new_page()
+            for top in (100, 420):
+                for offset in range(25):
+                    x = 80 + offset * 16
+                    page.draw_line((x, top), (x + 8, top + 80))
+            blocks = [
+                make_block(
+                    "p001-b001",
+                    "top panel label",
+                    kind="prose",
+                    role="paragraph",
+                    pointer="/0",
+                    item_hash="top",
+                ),
+                make_block(
+                    "p001-b002",
+                    "Figure 1: Two disconnected panels.",
+                    kind="caption",
+                    role="figure_caption",
+                    pointer="/1",
+                    item_hash="caption",
+                ),
+            ]
+            blocks[0]["bbox"] = [70.0, 82.0, 220.0, 105.0]
+            blocks[1]["bbox"] = [70.0, 700.0, 500.0, 725.0]
+            visuals, unresolved = make_visuals(document, blocks, root, 96)
+            document.close()
+            self.assertEqual(unresolved, [])
+            self.assertEqual(len(visuals), 1)
+            self.assertLessEqual(visuals[0]["bbox"][1], 82.0)
+            self.assertIn("p001-b001", visuals[0]["contained_block_ids"])
+            self.assertEqual(blocks[0]["kind"], "visual_content")
+            self.assertFalse(blocks[0]["translatable"])
 
     def setUp(self) -> None:
         self.profile = load_profile("academic-paper-en-zh")
