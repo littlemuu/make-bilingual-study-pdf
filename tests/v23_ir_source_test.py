@@ -136,6 +136,7 @@ class V23IrSourceTests(unittest.TestCase):
             self.assertEqual(unresolved, [])
             self.assertEqual(len(visuals), 1)
             self.assertLessEqual(visuals[0]["bbox"][1], 82.0)
+            self.assertEqual(visuals[0]["bbox"][3], 698.0)
             self.assertIn("p001-b001", visuals[0]["contained_block_ids"])
             self.assertEqual(blocks[0]["kind"], "visual_content")
             self.assertFalse(blocks[0]["translatable"])

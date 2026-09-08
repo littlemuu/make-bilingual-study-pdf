@@ -625,7 +625,7 @@ def make_visuals(
                     union.x0 = max(left, union.x0 - 4)
                     union.x1 = min(right, union.x1 + 4)
                     union.y0 = max(0.0, union.y0 - 24)
-                    union.y1 = min(caption_rect.y0 - 2, union.y1 + 4)
+                    union.y1 = caption_rect.y0 - 2
                 else:
                     seed = max(
                         candidates,
