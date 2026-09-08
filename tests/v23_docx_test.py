@@ -20,6 +20,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml.ns import qn
 
 import audit_docx
 import compile_docx_pdf
@@ -36,7 +37,15 @@ from common import (
     write_jsonl,
 )
 from document_ir import expected_ir
-from docx_ast import GENERIC_BEGIN, GENERIC_END, PROBLEM_BEGIN, PROBLEM_END, transform
+from docx_ast import (
+    GENERIC_BEGIN,
+    GENERIC_END,
+    PROBLEM_BEGIN,
+    PROBLEM_END,
+    _is_source_page_anchor,
+    stringify,
+    transform,
+)
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -129,7 +138,7 @@ def test_legacy_transform_rejects_language_and_identifier_mismatches() -> None:
         assert result["meta"]["v2-problem-group-count"]["c"] == "0"
 
 
-def test_page_header_omits_unresolvable_styleref() -> None:
+def test_page_header_is_static_across_heading_locales() -> None:
     no_heading = Document()
     no_heading.add_paragraph("Body only")
     docx_style.configure_page(
@@ -147,7 +156,26 @@ def test_page_header_omits_unresolvable_styleref() -> None:
     )
     header = with_heading.sections[0].header
     instructions = [node.text for node in header._element.xpath(".//w:instrText")]
-    assert any('STYLEREF "Heading 2"' in (text or "") for text in instructions)
+    assert not any("STYLEREF" in (text or "") for text in instructions)
+    assert header.paragraphs[0].text == "Bilingual study edition"
+
+
+def test_cjk_runs_keep_the_profile_latin_font_for_ascii_text() -> None:
+    document = Document()
+    run = document.add_paragraph().add_run("中文 Transformer 3.2")
+    previous_latin = docx_style.LATIN_FONT
+    previous_cjk = docx_style.CJK_FONT
+    try:
+        docx_style.LATIN_FONT = "Times New Roman"
+        docx_style.CJK_FONT = "Noto Sans CJK SC"
+        docx_style.set_run_font(run, docx_style.CJK_FONT, 10.2)
+        fonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+        assert fonts.get(qn("w:ascii")) == "Times New Roman"
+        assert fonts.get(qn("w:hAnsi")) == "Times New Roman"
+        assert fonts.get(qn("w:eastAsia")) == "Noto Sans CJK SC"
+    finally:
+        docx_style.LATIN_FONT = previous_latin
+        docx_style.CJK_FONT = previous_cjk
 
 
 def test_v2_audit_palette_covers_assignment_styles() -> None:
@@ -285,6 +313,77 @@ def test_generic_ast() -> None:
     )
     assert len(grouped_alias["blocks"]) == 1
     assert grouped_alias["blocks"][0]["t"] == "BlockQuote"
+
+
+def test_complete_group_ignores_source_page_anchors() -> None:
+    profile = load_profile("assignment-en-zh")
+    page_marker = {
+        "t": "Para",
+        "c": [
+            {"t": "RawInline", "c": ["html", '<a id="source-page-2">']},
+            {"t": "RawInline", "c": ["html", "</a>"]},
+            {"t": "SoftBreak"},
+            {"t": "RawInline", "c": ["html", "<!-- source-page: 2 -->"]},
+        ],
+    }
+    document = {
+        "pandoc-api-version": [1, 23],
+        "meta": {},
+        "blocks": [
+            marker("problem"),
+            paragraph("Problem (cross_page): source title"),
+            target("问题（cross_page）：中文标题"),
+            page_marker,
+            marker("continuation"),
+            paragraph("Final English deliverable"),
+            target("最后一项中文交付要求"),
+            {
+                "t": "RawBlock",
+                "c": [
+                    "html",
+                    "<!-- bilingual:source-only id=shared-code source_sha256=abc -->",
+                ],
+            },
+            {
+                "t": "CodeBlock",
+                "c": [["", ["text"], []], "uv run pytest -k test_example"],
+            },
+            marker("following"),
+            paragraph("Following content"),
+            target("题后内容"),
+        ],
+    }
+    groups = [
+        {
+            "id": "problem:cross_page",
+            "role": "problem",
+            "anchor_node_id": "problem",
+            "member_node_ids": ["problem", "continuation", "shared-code"],
+            "membership": "complete",
+        }
+    ]
+    result = transform(document, profile, semantic_groups=groups)
+    container = result["blocks"][0]
+    assert container["t"] == "BlockQuote"
+    assert sum(block.get("t") == "HorizontalRule" for block in container["c"]) == 1
+    assert all(not _is_source_page_anchor(block) for block in container["c"])
+    text = " ".join(stringify(block) for block in container["c"])
+    assert text.index("source title") < text.index("Final English deliverable")
+    assert text.index("Final English deliverable") < text.index("中文标题")
+    assert text.index("中文标题") < text.index("最后一项中文交付要求")
+    command_positions = [
+        index
+        for index, block in enumerate(container["c"])
+        if "uv run pytest -k test_example" in stringify(block)
+    ]
+    assert len(command_positions) == 2
+    separator_index = next(
+        index for index, block in enumerate(container["c"])
+        if block.get("t") == "HorizontalRule"
+    )
+    assert command_positions[0] < separator_index < command_positions[1]
+    assert all("Following content" not in stringify(block) for block in container["c"])
+    assert any("Following content" in stringify(block) for block in result["blocks"][1:])
 
 
 def test_v2_normalizes_pre_segment_page_anchor_like_v1() -> None:
@@ -1183,10 +1282,12 @@ def main() -> None:
     test_legacy_transform()
     test_legacy_transform_pairs_real_build_output_markdown()
     test_legacy_transform_rejects_language_and_identifier_mismatches()
-    test_page_header_omits_unresolvable_styleref()
+    test_page_header_is_static_across_heading_locales()
+    test_cjk_runs_keep_the_profile_latin_font_for_ascii_text()
     test_v2_audit_palette_covers_assignment_styles()
     test_docx_binding_accepts_problem_ids_in_document_order()
     test_generic_ast()
+    test_complete_group_ignores_source_page_anchors()
     test_v2_normalizes_pre_segment_page_anchor_like_v1()
     test_shared_style_roles()
     test_html_table_materialization()

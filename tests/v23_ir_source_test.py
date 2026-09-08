@@ -799,6 +799,98 @@ class V23IrSourceTests(unittest.TestCase):
                 with Image.open(visual) as image:
                     image.load()
 
+    def test_native_academic_profile_proves_small_paper_structure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native-academic-source-") as temp:
+            root = Path(temp)
+            payload = root / "skill"
+            shutil.copytree(SCRIPTS.parent, payload)
+            source = root / "paper.pdf"
+            document = fitz.open()
+            first = document.new_page()
+            first.insert_text(
+                (28, 350), "arXiv:fixture [cs.CL]", fontsize=12, rotate=90
+            )
+            first.insert_text((120, 90), "A Small Native Academic Paper", fontsize=18)
+            first.insert_text((170, 125), "Ada Example, Bob Example", fontsize=10)
+            first.insert_text((255, 170), "Abstract", fontsize=12)
+            first.insert_textbox(
+                fitz.Rect(90, 190, 505, 280),
+                "This native abstract contains enough complete source text to prove "
+                "that the semantic container consists of its heading and this one "
+                "bounded body paragraph.",
+                fontsize=10,
+            )
+            first.insert_text(
+                (90, 320),
+                "† Work performed for the deterministic native adapter fixture.",
+                fontsize=8,
+            )
+            second = document.new_page()
+            second.insert_text((72, 80), "1 Introduction", fontsize=14)
+            second.insert_textbox(
+                fitz.Rect(72, 105, 520, 190),
+                "Native text extraction keeps the paper body in source order and "
+                "provides a complete independent text oracle for this compact fixture. "
+                "The paragraph is intentionally long enough for the source gate.",
+                fontsize=10,
+            )
+            second.insert_text((72, 235), "References", fontsize=12)
+            second.insert_textbox(
+                fitz.Rect(72, 260, 520, 320),
+                "[1] A. Example. Deterministic native academic document processing "
+                "with auditable source bindings.",
+                fontsize=9,
+            )
+            document.save(source)
+            document.close()
+
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(payload / "scripts" / "pipeline.py"),
+                    "source",
+                    str(source),
+                    "--work-dir",
+                    str(root / "work"),
+                    "--profile",
+                    "academic-paper-native-en-zh",
+                    "--render-dpi",
+                    "96",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            work = root / "work"
+            audit = json.loads((work / "source-audit.json").read_text())
+            self.assertEqual(audit["status"], "passed")
+            ir = json.loads((work / "document-ir.json").read_text())
+            counts = ir["inventories"]["semantic_role_counts"]
+            self.assertEqual(counts["title"], 1)
+            self.assertEqual(counts["abstract"], 1)
+            self.assertGreaterEqual(counts["section"], 1)
+            self.assertGreaterEqual(counts["paragraph"], 1)
+            self.assertEqual(counts["references"], 1)
+            title = next(
+                node for node in ir["nodes"] if node["semantic"]["role"] == "title"
+            )
+            self.assertEqual(title["source"]["text"], "A Small Native Academic Paper")
+            abstract = next(
+                group
+                for group in ir["semantic_groups"]
+                if group["role"] == "abstract"
+            )
+            self.assertEqual(abstract["membership"], "complete")
+            self.assertEqual(len(abstract["member_node_ids"]), 2)
+
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)
     result = unittest.TextTestRunner(verbosity=2).run(suite)

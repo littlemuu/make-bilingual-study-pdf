@@ -1,8 +1,8 @@
 # Profile and document IR contract
 
 Read this reference when adding a document type, language pair, parser adapter,
-renderer, or QA policy. All three installed Profiles—`assignment-en-zh`,
-`academic-paper-en-zh`, and `lecture-notes-en-zh`—use schema V2. The one-time
+renderer, or QA policy. All four installed Profiles—`assignment-en-zh`,
+`academic-paper-native-en-zh`, `academic-paper-en-zh`, and `lecture-notes-en-zh`—use schema V2. The one-time
 `pipeline.py migrate-profile` command alone accepts the exact frozen historical
 assignment V1 binding.
 
@@ -78,6 +78,9 @@ the full visual extent of a colored callout. Such groups must use:
 ```
 
 Do not infer following paragraphs into the group without structural evidence. V2.3
+may mark a native abstract complete only when one body block is bounded by its heading
+and a clear page, heading, artifact, footnote, or smaller-type boundary. Other
+unproved structural containers remain anchor-only.
 accepts `complete` only when adapter evidence names every existing member and includes
 the anchor; pattern or geometric proximity remains `anchor-only`. Preserve the original
 adapter evidence so downstream renderers can distinguish proved containers from anchors.

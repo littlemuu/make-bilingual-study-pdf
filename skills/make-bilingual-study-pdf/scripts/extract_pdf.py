@@ -26,11 +26,12 @@ from common import (
     write_json,
     write_jsonl,
 )
-from document_ir import write_document_ir
+from document_ir import _classify_v2_block, write_document_ir
 from profile import (
     bind_profile,
     canonical_profile_sha256,
     load_profile,
+    profile_contract,
     validate_profile_binding_target,
 )
 from safe_artifacts import (
@@ -738,6 +739,150 @@ def classify_block(
     return "prose"
 
 
+def annotate_native_v2_evidence(
+    blocks: list[dict[str, Any]], profile: dict[str, Any]
+) -> None:
+    """Add conservative semantic evidence available from a native PDF layout.
+
+    The native adapter records only facts it can prove from typography, ordering,
+    and geometry.  Structural membership remains absent unless one complete
+    abstract body is bounded by a heading and a clear following boundary.
+    """
+    if (
+        profile.get("schema_version") != 2
+        or profile.get("input", {}).get("adapter") != "native-text-pdf"
+    ):
+        return
+
+    contract = profile_contract(profile)
+    roles = {item["role"] for item in contract["roles"]}
+    for block in blocks:
+        evidence = block.setdefault("evidence", {})
+        evidence.setdefault("adapter", "native-text-pdf")
+        evidence.setdefault("source_pointer", block["id"])
+        bbox = block.get("bbox", [0, 0, 0, 0])
+        width = max(0.0, float(bbox[2]) - float(bbox[0]))
+        height = max(0.0, float(bbox[3]) - float(bbox[1]))
+        if height > max(12.0, width * 3):
+            block["adapter_role"] = "aside_text"
+
+        source = block.get("source", "").strip()
+        if "abstract" in roles and re.fullmatch(
+            r"Abstract\s*[:.]?", source, re.I
+        ):
+            block["adapter_role"] = "abstract"
+        if "references" in roles and re.fullmatch(
+            r"(?:References|Bibliography)\s*[:.]?", source, re.I
+        ):
+            block["adapter_role"] = "reference"
+
+    if "section" in roles or "subsection" in roles:
+        for block in blocks:
+            if block.get("kind") != "heading":
+                continue
+            match = re.match(r"^(\d+(?:\.\d+)*)\s+\S", block["source"].strip())
+            if match:
+                block["adapter_role"] = "heading"
+                block["text_level"] = match.group(1).count(".") + 1
+
+    if "title" in roles:
+        first_page_headings = [
+            block
+            for block in blocks
+            if block.get("page") == 1
+            and block.get("kind") == "heading"
+            and block.get("adapter_role") != "aside_text"
+            and (
+                float(block.get("bbox", [0, 0, 0, 0])[2])
+                - float(block.get("bbox", [0, 0, 0, 0])[0])
+            )
+            > (
+                float(block.get("bbox", [0, 0, 0, 0])[3])
+                - float(block.get("bbox", [0, 0, 0, 0])[1])
+            )
+            and not re.match(
+                r"^(?:Abstract|References|Bibliography|\d+(?:\.\d+)*\s+)",
+                block["source"].strip(),
+                re.I,
+            )
+        ]
+        if first_page_headings:
+            title = max(
+                first_page_headings,
+                key=lambda block: float(block.get("stats", {}).get("max_font_size", 0)),
+            )
+            title["adapter_role"] = "title"
+
+            abstract_index = next(
+                (
+                    index
+                    for index, block in enumerate(blocks)
+                    if block.get("page") == 1
+                    and re.match(r"^Abstract(?:\s*[:.]|$)", block["source"].strip(), re.I)
+                ),
+                None,
+            )
+            title_index = blocks.index(title)
+            if abstract_index is not None and title_index < abstract_index:
+                for block in blocks[title_index + 1 : abstract_index]:
+                    if block.get("kind") not in {"artifact", "image", "empty"}:
+                        block["adapter_role"] = "author"
+
+    caption_roles = {
+        "Figure": "figure_caption",
+        "Table": "table_caption",
+        "Algorithm": "algorithm_caption",
+    }
+    for block in blocks:
+        if block.get("kind") not in {"caption", "caption_continuation"}:
+            continue
+        source = block["source"].lstrip()
+        for prefix, adapter_role in caption_roles.items():
+            if source.startswith(prefix):
+                block["adapter_role"] = adapter_role
+                break
+
+    if "page-footnote" in roles:
+        for block in blocks:
+            if block.get("kind") != "prose" or block.get("page") != 1:
+                continue
+            source = block["source"].lstrip()
+            if source.startswith(("*", "∗", "†", "‡")):
+                block["adapter_role"] = "footnote"
+
+    for index, anchor in enumerate(blocks[:-1]):
+        matched = _classify_v2_block(anchor, contract)
+        if not matched or matched["grouping"] != "structural-container":
+            continue
+        if matched["role"] != "abstract":
+            continue
+        body = blocks[index + 1]
+        if (
+            body.get("page") != anchor.get("page")
+            or body.get("kind") != "prose"
+            or body.get("bbox", [0, 0, 0, 0])[1]
+            < anchor.get("bbox", [0, 0, 0, 0])[3]
+        ):
+            continue
+        following = blocks[index + 2] if index + 2 < len(blocks) else None
+        body_size = float(body.get("stats", {}).get("median_font_size", 0))
+        clear_boundary = following is None or following.get("page") != body.get("page")
+        if following is not None and following.get("page") == body.get("page"):
+            following_size = float(
+                following.get("stats", {}).get("median_font_size", 0)
+            )
+            clear_boundary = (
+                following.get("kind") in {"heading", "artifact"}
+                or following["source"].lstrip().startswith(("*", "∗", "†", "‡"))
+                or following_size <= body_size - 1.0
+            )
+        if clear_boundary:
+            anchor["evidence"]["structural_membership"] = {
+                "status": "complete",
+                "member_node_ids": [anchor["id"], body["id"]],
+            }
+
+
 def margin_repetitions(raw_pages: list[list[dict[str, Any]]]) -> set[str]:
     counts: Counter[str] = Counter()
     for page_blocks in raw_pages:
@@ -958,8 +1103,11 @@ def main() -> None:
                     "code",
                     "math",
                 }
-            block.pop("page_height", None)
             blocks.append(block)
+
+    annotate_native_v2_evidence(blocks, profile)
+    for block in blocks:
+        block.pop("page_height", None)
 
     visuals, unresolved_visuals = make_visuals(
         doc, blocks, work_dir, args.render_dpi

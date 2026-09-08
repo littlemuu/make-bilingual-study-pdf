@@ -87,15 +87,17 @@ def main() -> None:
     results.append("assignment schema V2 preserves the frozen semantic behavior")
 
     academic = load_profile("academic-paper-en-zh")
+    native_academic = load_profile("academic-paper-native-en-zh")
     lecture = load_profile("lecture-notes-en-zh")
-    for value, expected_id in (
-        (academic, "academic-paper-en-zh"),
-        (lecture, "lecture-notes-en-zh"),
+    for value, expected_id, expected_adapter in (
+        (academic, "academic-paper-en-zh", "mineru-import"),
+        (native_academic, "academic-paper-native-en-zh", "native-text-pdf"),
+        (lecture, "lecture-notes-en-zh", "mineru-import"),
     ):
         contract = profile_contract(value)
         assert contract["source_schema_version"] == 2
         assert contract["profile_id"] == expected_id
-        assert contract["adapter"] == "mineru-import"
+        assert contract["adapter"] == expected_adapter
         assert set(contract["role_inventory"]) == {
             item["role"] for item in contract["roles"]
         }
@@ -104,7 +106,13 @@ def main() -> None:
             for policy in contract["role_inventory"].values()
         )
         assert set(contract["constraints"]) <= registered_constraint_ids()
-    results.append("academic-paper and lecture-notes schema V2 Profiles validate")
+    results.append("academic-paper native/MinerU and lecture-notes schema V2 Profiles validate")
+
+    assert native_academic["semantics"] == academic["semantics"]
+    assert native_academic["render"] == academic["render"]
+    assert native_academic["qa"] == academic["qa"]
+    assert native_academic["input"]["adapter"] == "native-text-pdf"
+    results.append("native academic-paper Profile changes only source binding metadata")
 
     academic_inventory = role_inventory(academic)
     assert academic_inventory["title"]["minimum"] == 1

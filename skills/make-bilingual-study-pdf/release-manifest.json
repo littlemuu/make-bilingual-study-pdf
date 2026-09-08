@@ -3,12 +3,12 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "5f22c3e549f7e38f7025cf2c81eb1dda36e3538a69e18375f9c536e627f995c8",
+  "tree_sha256": "cb1d08e05f40d691f769f2163ec0635ed9a511fd344c179a4cb078ad550733d9",
   "files": [
     {
       "path": "SKILL.md",
-      "size": 14834,
-      "sha256": "7bf3d378a29630a4e98e351c9ae8f51244f0cfb123abd70979615479da7353f9"
+      "size": 14939,
+      "sha256": "ed3dcdc618dcd46949e12fb40ca707d287e148d31954c4e3b810ec2632dcf019"
     },
     {
       "path": "VERSION",
@@ -32,8 +32,13 @@
     },
     {
       "path": "profiles/academic-paper-en-zh.json",
-      "size": 8374,
-      "sha256": "25e6d0f11b142b368691f43cf1ed5ab876d5917545bd9f1e9be75ab45e77df54"
+      "size": 8380,
+      "sha256": "8767936590d3a58771165c6b33dcadf00b2c56451fe1f4f1a94a8a1720bcdb96"
+    },
+    {
+      "path": "profiles/academic-paper-native-en-zh.json",
+      "size": 10479,
+      "sha256": "11b1d228b3c592e336a09ecfcee31d1aec475aed60144000e56edfadb6147b79"
     },
     {
       "path": "profiles/assignment-en-zh.json",
@@ -52,13 +57,13 @@
     },
     {
       "path": "references/format-spec.md",
-      "size": 9220,
-      "sha256": "284473906bb27f6396114e445b2033634c20f8b0ae2a47fde158db32c15ef094"
+      "size": 9254,
+      "sha256": "a80c68413ac66a6623d0920edbad0a82c5872243d631cba93f51960abf6e4f97"
     },
     {
       "path": "references/profile-ir.md",
-      "size": 7096,
-      "sha256": "0c1c19aab7af09c8055d5c11382359a86cbf312c501aa5d24cc1485816b80d4d"
+      "size": 7343,
+      "sha256": "08b55319274a78f0af32adc2438c64b9e5b29ace8b60f33004c9c642288c4dcd"
     },
     {
       "path": "references/qa-rules.md",
@@ -147,18 +152,18 @@
     },
     {
       "path": "scripts/docx_ast.py",
-      "size": 26031,
-      "sha256": "ff59e44cf9e5e24abbe997d32b57df24d4b4c0d7cebe6fd4668f6630d12a5518"
+      "size": 28111,
+      "sha256": "a658e769728eade5a7666020c3a7498861f3f409143c99ee9a8c4caf6a839d22"
     },
     {
       "path": "scripts/docx_style.py",
-      "size": 30973,
-      "sha256": "fe0a1c2811fa7ae2c624f28f7e73d4015a5fe64eed89ef1cbe8e4b8ce7a6cb89"
+      "size": 30767,
+      "sha256": "c44ca76232dcff99fab4f118cec0d6aeec07225e449b4a40bae80e56df2994f0"
     },
     {
       "path": "scripts/extract_pdf.py",
-      "size": 39944,
-      "sha256": "be5760783510708b986e65923b84ecb673bdf3266ddae8ca4fbf9f7f91db348a"
+      "size": 45788,
+      "sha256": "2bb0f91414034299e9806f2ce82ab91cb1981b4fe6bda544b3d956b0b68ca6f8"
     },
     {
       "path": "scripts/finalize_qa.py",
@@ -212,8 +217,8 @@
     },
     {
       "path": "scripts/release_check.py",
-      "size": 37038,
-      "sha256": "b0bd3c3eea949de9d16a385e3369b4ff778f8bd52985b0021db5fff32dd2e25c"
+      "size": 37097,
+      "sha256": "f3e4a9e6be576980991e7730d22f0ba0c75cb29dab26ee522239f0001e1b9b51"
     },
     {
       "path": "scripts/safe_artifacts.py",

@@ -47,7 +47,8 @@
 
 ## V2.3 generic Profile and MinerU contract
 
-- `academic-paper-en-zh` and `lecture-notes-en-zh` use schema V2 role inventories.
+- `academic-paper-native-en-zh`, `academic-paper-en-zh`, and `lecture-notes-en-zh`
+  use schema V2 role inventories.
   Every declared role is present in the inventory even when its allowed count is zero.
 - Every node has one explicit output: bilingual, source-only, visual-once, or
   artifact-omitted. Code/equation/table bodies appear once; their natural-language
