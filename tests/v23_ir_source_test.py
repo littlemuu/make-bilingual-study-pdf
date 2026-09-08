@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 SCRIPTS = REPOSITORY / "skills" / "make-bilingual-study-pdf" / "scripts"
@@ -36,7 +37,7 @@ from document_ir import (
     expected_ir,
     validate_ir_against_sources,
 )
-from extract_pdf import prepare_output
+from extract_pdf import command_version, make_visuals, prepare_output, run_text
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -88,6 +89,77 @@ def make_block(
 
 
 class V23IrSourceTests(unittest.TestCase):
+    def test_external_tool_output_decoding_is_locale_independent(self) -> None:
+        text_result = subprocess.CompletedProcess(
+            ["pdftotext"], 0, "paper—text".encode("utf-8"), b"\xbe warning"
+        )
+        version_result = subprocess.CompletedProcess(
+            ["pdftotext", "-v"], 0, b"\xbe Poppler 1.0\n", None
+        )
+        with patch("extract_pdf.subprocess.run", side_effect=[text_result, version_result]) as run:
+            self.assertEqual(run_text(["pdftotext"]), "paper—text")
+            self.assertEqual(command_version("pdftotext"), "� Poppler 1.0")
+        for call in run.call_args_list:
+            self.assertNotIn("text", call.kwargs)
+
+    def test_dense_full_page_figure_keeps_disconnected_panels(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native-dense-figure-") as temp:
+            root = Path(temp)
+            document = fitz.open()
+            page = document.new_page()
+            for top in (100, 420):
+                for offset in range(25):
+                    x = 80 + offset * 16
+                    page.draw_line((x, top), (x + 8, top + 80))
+            blocks = [
+                make_block(
+                    "p001-b001",
+                    "top panel label",
+                    kind="prose",
+                    role="paragraph",
+                    pointer="/0",
+                    item_hash="top",
+                ),
+                make_block(
+                    "p001-b002",
+                    "Figure 1: Two disconnected panels.",
+                    kind="caption",
+                    role="figure_caption",
+                    pointer="/1",
+                    item_hash="caption",
+                ),
+            ]
+            blocks[0]["bbox"] = [70.0, 82.0, 220.0, 105.0]
+            blocks[1]["bbox"] = [70.0, 700.0, 500.0, 725.0]
+            visuals, unresolved = make_visuals(document, blocks, root, 96)
+            document.close()
+            self.assertEqual(unresolved, [])
+            self.assertEqual(len(visuals), 1)
+            self.assertLessEqual(visuals[0]["bbox"][1], 82.0)
+            self.assertEqual(visuals[0]["bbox"][3], 698.0)
+            self.assertIn("p001-b001", visuals[0]["contained_block_ids"])
+            self.assertEqual(blocks[0]["kind"], "visual_content")
+            self.assertFalse(blocks[0]["translatable"])
+
+    def test_native_academic_profile_covers_lists_and_visual_content(self) -> None:
+        profile = load_profile(
+            SCRIPTS.parent / "profiles" / "academic-paper-native-en-zh.json"
+        )
+        contract = profile_contract(profile)
+        for kind, role in (("list", "paragraph"), ("visual_content", "figure")):
+            block = make_block(
+                f"p001-{kind}",
+                "fixture",
+                kind=kind,
+                role="",
+                pointer="/0",
+                item_hash=kind,
+            )
+            block.pop("adapter_role", None)
+            matched = _classify_v2_block(block, contract)
+            self.assertIsNotNone(matched)
+            self.assertEqual(matched["role"], role)
+
     def setUp(self) -> None:
         self.profile = load_profile("academic-paper-en-zh")
 
@@ -798,6 +870,98 @@ class V23IrSourceTests(unittest.TestCase):
                     image.verify()
                 with Image.open(visual) as image:
                     image.load()
+
+    def test_native_academic_profile_proves_small_paper_structure(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="native-academic-source-") as temp:
+            root = Path(temp)
+            payload = root / "skill"
+            shutil.copytree(SCRIPTS.parent, payload)
+            source = root / "paper.pdf"
+            document = fitz.open()
+            first = document.new_page()
+            first.insert_text(
+                (28, 350), "arXiv:fixture [cs.CL]", fontsize=12, rotate=90
+            )
+            first.insert_text((120, 90), "A Small Native Academic Paper", fontsize=18)
+            first.insert_text((170, 125), "Ada Example, Bob Example", fontsize=10)
+            first.insert_text((255, 170), "Abstract", fontsize=12)
+            first.insert_textbox(
+                fitz.Rect(90, 190, 505, 280),
+                "This native abstract contains enough complete source text to prove "
+                "that the semantic container consists of its heading and this one "
+                "bounded body paragraph.",
+                fontsize=10,
+            )
+            first.insert_text(
+                (90, 320),
+                "† Work performed for the deterministic native adapter fixture.",
+                fontsize=8,
+            )
+            second = document.new_page()
+            second.insert_text((72, 80), "1 Introduction", fontsize=14)
+            second.insert_textbox(
+                fitz.Rect(72, 105, 520, 190),
+                "Native text extraction keeps the paper body in source order and "
+                "provides a complete independent text oracle for this compact fixture. "
+                "The paragraph is intentionally long enough for the source gate.",
+                fontsize=10,
+            )
+            second.insert_text((72, 235), "References", fontsize=12)
+            second.insert_textbox(
+                fitz.Rect(72, 260, 520, 320),
+                "[1] A. Example. Deterministic native academic document processing "
+                "with auditable source bindings.",
+                fontsize=9,
+            )
+            document.save(source)
+            document.close()
+
+            env = os.environ.copy()
+            env.pop("PYTHONPATH", None)
+            env["PYTHONDONTWRITEBYTECODE"] = "1"
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(payload / "scripts" / "pipeline.py"),
+                    "source",
+                    str(source),
+                    "--work-dir",
+                    str(root / "work"),
+                    "--profile",
+                    "academic-paper-native-en-zh",
+                    "--render-dpi",
+                    "96",
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(
+                completed.returncode, 0, completed.stdout + completed.stderr
+            )
+            work = root / "work"
+            audit = json.loads((work / "source-audit.json").read_text())
+            self.assertEqual(audit["status"], "passed")
+            ir = json.loads((work / "document-ir.json").read_text())
+            counts = ir["inventories"]["semantic_role_counts"]
+            self.assertEqual(counts["title"], 1)
+            self.assertEqual(counts["abstract"], 1)
+            self.assertGreaterEqual(counts["section"], 1)
+            self.assertGreaterEqual(counts["paragraph"], 1)
+            self.assertEqual(counts["references"], 1)
+            title = next(
+                node for node in ir["nodes"] if node["semantic"]["role"] == "title"
+            )
+            self.assertEqual(title["source"]["text"], "A Small Native Academic Paper")
+            abstract = next(
+                group
+                for group in ir["semantic_groups"]
+                if group["role"] == "abstract"
+            )
+            self.assertEqual(abstract["membership"], "complete")
+            self.assertEqual(len(abstract["member_node_ids"]), 2)
 
 def main() -> None:
     suite = unittest.defaultTestLoader.loadTestsFromTestCase(V23IrSourceTests)

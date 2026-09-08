@@ -1056,18 +1056,18 @@ class ReleaseCheckTests(unittest.TestCase):
         cases = {
             "duplicate schema_version": (
                 original.replace(
-                    '  "schema_version": 1,',
-                    '  "schema_version": 1,\n  "schema_version": 1,',
+                    '  "schema_version": 2,',
+                    '  "schema_version": 2,\n  "schema_version": 2,',
                     1,
                 ),
                 "duplicate JSON object key: 'schema_version'",
             ),
             "floating-point schema_version": (
-                original.replace('  "schema_version": 1,', '  "schema_version": 1.0,', 1),
+                original.replace('  "schema_version": 2,', '  "schema_version": 2.0,', 1),
                 "schema_version must be an integer",
             ),
             "boolean schema_version": (
-                original.replace('  "schema_version": 1,', '  "schema_version": true,', 1),
+                original.replace('  "schema_version": 2,', '  "schema_version": true,', 1),
                 "schema_version must be an integer",
             ),
             "boolean coverage threshold": (

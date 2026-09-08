@@ -142,8 +142,9 @@ def set_run_font(run, name: str, size: float, *, color: str = INK, bold: bool | 
     run.font.name = name
     r_pr = run._element.get_or_add_rPr()
     r_fonts = r_pr.get_or_add_rFonts()
-    r_fonts.set(qn("w:ascii"), name)
-    r_fonts.set(qn("w:hAnsi"), name)
+    latin_name = LATIN_FONT if name == CJK_FONT else name
+    r_fonts.set(qn("w:ascii"), latin_name)
+    r_fonts.set(qn("w:hAnsi"), latin_name)
     r_fonts.set(qn("w:eastAsia"), CJK_FONT if name != CODE_FONT else CODE_FONT)
     run.font.size = Pt(size)
     run.font.color.rgb = RGBColor.from_string(color)
@@ -346,7 +347,10 @@ def style_table(table) -> None:
 
 
 def is_math_paragraph(paragraph) -> bool:
-    return bool(paragraph._p.xpath(".//m:oMath | .//m:oMathPara"))
+    return bool(
+        paragraph._p.xpath(".//m:oMath | .//m:oMathPara")
+        and not paragraph.text.strip()
+    )
 
 
 def find_callout_ranges(paragraphs) -> tuple[list[tuple[int, int, str]], list[int]]:
@@ -486,7 +490,13 @@ def style_callout(paragraphs, start: int, end: int, role: str) -> None:
             if role == "problem" or ACTIVE_SCHEMA_VERSION == 2:
                 clear_paragraph_content(paragraph)
             add_paragraph_border(
-                paragraph, color=color, left=True, right=True, top=True, size=8, space=6
+                paragraph,
+                color=color,
+                left=True,
+                right=True,
+                top=index == separator_index,
+                size=8,
+                space=6,
             )
             continue
         cjk = has_cjk(text)
@@ -535,10 +545,6 @@ def add_field(paragraph, instruction_text: str, fallback: str) -> None:
 
 
 def configure_page(document: Document, *, header_label: str, footer_label: str) -> None:
-    has_heading_two = any(
-        paragraph.style is not None and paragraph.style.name == "Heading 2"
-        for paragraph in document.paragraphs
-    )
     for section in document.sections:
         section.page_width = Cm(21.0)
         section.page_height = Cm(29.7)
@@ -554,12 +560,9 @@ def configure_page(document: Document, *, header_label: str, footer_label: str) 
         header.clear()
         header.alignment = WD_ALIGN_PARAGRAPH.LEFT
         set_spacing(header, line=1.0)
-        suffix = "  ·  " if has_heading_two else ""
         set_run_font(
-            header.add_run(f"{header_label}{suffix}"), LATIN_FONT, 8.2, color=MUTED
+            header.add_run(header_label), LATIN_FONT, 8.2, color=MUTED
         )
-        if has_heading_two:
-            add_field(header, 'STYLEREF "Heading 2"', "Bilingual study edition")
 
         footer = section.footer.paragraphs[0]
         footer.clear()

@@ -29,7 +29,9 @@ from safe_artifacts import (  # noqa: E402
     atomic_write_bytes,
     atomic_write_text,
     clear_artifact_directory,
+    create_artifact_directory_exclusive,
     inspect_artifact_file,
+    inspect_missing_artifact_file,
     lexical_absolute_path,
     lexical_paths_overlap,
     portable_artifact_basename,
@@ -232,6 +234,23 @@ class SafeArtifactTests(unittest.TestCase):
         remove_artifact_file(target, boundary=self.boundary, missing_ok=False)
         self.assertFalse(target.exists())
         remove_artifact_file(target, boundary=self.boundary)
+
+    def test_exclusive_directory_creation_rejects_existing_leaf(self) -> None:
+        parent = prepare_artifact_directory(
+            self.boundary / "backups", boundary=self.boundary
+        )
+        created = create_artifact_directory_exclusive(
+            parent / "migration", boundary=self.boundary
+        )
+        sentinel = created.path / "manifest.json"
+        sentinel.write_bytes(b"preserve\n")
+        with self.assertRaisesRegex(ArtifactSafetyError, "already exists"):
+            inspect_missing_artifact_file(sentinel, parent=created)
+        with self.assertRaisesRegex(ArtifactSafetyError, "already exists"):
+            create_artifact_directory_exclusive(
+                created.path, boundary=self.boundary
+            )
+        self.assertEqual(sentinel.read_bytes(), b"preserve\n")
 
     def test_atomic_replace_failure_preserves_original_and_cleans_temp(self) -> None:
         target = self.boundary / "artifact.bin"

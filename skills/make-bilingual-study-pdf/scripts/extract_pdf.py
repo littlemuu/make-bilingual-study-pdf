@@ -26,11 +26,12 @@ from common import (
     write_json,
     write_jsonl,
 )
-from document_ir import write_document_ir
+from document_ir import _classify_v2_block, write_document_ir
 from profile import (
     bind_profile,
     canonical_profile_sha256,
     load_profile,
+    profile_contract,
     validate_profile_binding_target,
 )
 from safe_artifacts import (
@@ -115,9 +116,8 @@ def run_text(command: list[str]) -> str:
         check=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
     )
-    return completed.stdout
+    return completed.stdout.decode("utf-8", errors="replace")
 
 
 def command_version(command: str, flag: str = "-v") -> str:
@@ -126,9 +126,9 @@ def command_version(command: str, flag: str = "-v") -> str:
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        text=True,
     )
-    return (completed.stdout or "").strip().splitlines()[0]
+    output = (completed.stdout or b"").decode("utf-8", errors="replace")
+    return output.strip().splitlines()[0]
 
 
 def invalid_pngs(paths: list[Path]) -> list[Path]:
@@ -539,6 +539,9 @@ def make_visuals(
                     "contained_block_ids": [block["id"]],
                 }
             )
+            if block["kind"] in {"math", "math_with_text"}:
+                block["translatable"] = False
+                block["adapter_role"] = "equation_visual"
 
         captions = [
             block
@@ -596,6 +599,19 @@ def make_visuals(
                             candidate_block["kind"] = "caption_continuation"
                             candidate_block["caption_parent"] = caption["id"]
                             continuations.append(candidate_block["id"])
+                caption_is_table = bool(
+                    re.match(r"^Table\s+\d+\s*:", caption["source"], re.I)
+                )
+                table_rules = [
+                    rect
+                    for rect in drawings
+                    if caption_is_table
+                    and caption_rect.y1 - 3 <= rect.y0
+                    and rect.y0 - caption_rect.y1 <= 300
+                    and rect.width >= max(60.0, (right - left) * 0.18)
+                    and rect.height <= 6.0
+                    and horizontal_overlap_ratio(rect, left, right) >= 0.5
+                ]
                 candidates = [
                     rect
                     for rect in drawings
@@ -604,42 +620,109 @@ def make_visuals(
                     and rect.y0 >= max(0.0, caption_rect.y0 - 400)
                     and horizontal_overlap_ratio(rect, left, right) >= 0.5
                 ]
-                if not candidates:
+                full_height_candidates = [
+                    rect
+                    for rect in drawings
+                    if 36.0 <= rect.y0
+                    and rect.y1 <= caption_rect.y0 + 3
+                    and horizontal_overlap_ratio(rect, left, right) >= 0.5
+                ]
+                if len(table_rules) >= 2:
+                    union = fitz.Rect(
+                        min(rect.x0 for rect in table_rules),
+                        min(rect.y0 for rect in table_rules),
+                        max(rect.x1 for rect in table_rules),
+                        max(rect.y1 for rect in table_rules),
+                    )
+                    union.x0 = max(left, union.x0 - 4)
+                    union.x1 = min(right, union.x1 + 4)
+                    union.y0 = max(caption_rect.y1, union.y0 - 4)
+                    union.y1 = min(page.rect.y1, union.y1 + 4)
+                elif not candidates:
+                    owned_ids = {item["anchor_id"] for item in visuals}
+                    nearby = [
+                        item
+                        for item in page_blocks
+                        if item["id"] in owned_ids and item["id"] != caption["id"]
+                    ]
+                    if nearby:
+                        caption["caption_parent"] = min(
+                            nearby,
+                            key=lambda item: abs(
+                                float(item["bbox"][3]) - float(caption["bbox"][1])
+                            ),
+                        )["id"]
                     unresolved.append(caption["id"])
                     continue
-                seed = max(
-                    candidates,
-                    key=lambda rect: (rect.y1, rect.get_area(), rect.width + rect.height),
-                )
-                cluster = [seed]
-                union = fitz.Rect(seed)
-                changed = True
-                while changed:
-                    changed = False
-                    expanded = fitz.Rect(
-                        union.x0 - 8, union.y0 - 8, union.x1 + 8, union.y1 + 8
+                else:
+                    dense_full_page_figure = (
+                    caption_rect.y0 >= page.rect.height * 0.65
+                    and len(full_height_candidates) >= 40
                     )
-                    for rect in candidates:
-                        if rect in cluster:
-                            continue
-                        if (
-                            not (rect & expanded).is_empty
-                            or expanded.contains(rect.tl)
-                            or expanded.contains(rect.br)
-                        ):
-                            cluster.append(rect)
-                            union = fitz.Rect(
-                                min(union.x0, rect.x0),
-                                min(union.y0, rect.y0),
-                                max(union.x1, rect.x1),
-                                max(union.y1, rect.y1),
+                    if dense_full_page_figure:
+                        union = fitz.Rect(full_height_candidates[0])
+                        for rect in full_height_candidates[1:]:
+                            union.include_rect(rect)
+                        union.x0 = max(left, union.x0 - 4)
+                        union.x1 = min(right, union.x1 + 4)
+                        union.y0 = max(0.0, union.y0 - 24)
+                        union.y1 = caption_rect.y0 - 2
+                    else:
+                        seed = max(
+                            candidates,
+                            key=lambda rect: (
+                                rect.y1,
+                                rect.get_area(),
+                                rect.width + rect.height,
+                            ),
+                        )
+                        cluster = [seed]
+                        union = fitz.Rect(seed)
+                        changed = True
+                        while changed:
+                            changed = False
+                            expanded = fitz.Rect(
+                                union.x0 - 8,
+                                union.y0 - 8,
+                                union.x1 + 8,
+                                union.y1 + 8,
                             )
-                            changed = True
-                union.x0 = max(left, union.x0 - 4)
-                union.x1 = min(right, union.x1 + 4)
-                union.y0 = max(0.0, union.y0 - 4)
-                union.y1 = min(caption_rect.y0 - 2, union.y1 + 4)
+                            for rect in candidates:
+                                if rect in cluster:
+                                    continue
+                                if (
+                                    not (rect & expanded).is_empty
+                                    or expanded.contains(rect.tl)
+                                    or expanded.contains(rect.br)
+                                ):
+                                    cluster.append(rect)
+                                    union = fitz.Rect(
+                                        min(union.x0, rect.x0),
+                                        min(union.y0, rect.y0),
+                                        max(union.x1, rect.x1),
+                                        max(union.y1, rect.y1),
+                                    )
+                                    changed = True
+                        union.x0 = max(left, union.x0 - 4)
+                        union.x1 = min(right, union.x1 + 4)
+                        union.y0 = max(0.0, union.y0 - 4)
+                        union.y1 = min(
+                            caption_rect.y0 - 2, union.y1 + 4
+                        )
                 if union.width < 40 or union.height < 30:
+                    owned_ids = {item["anchor_id"] for item in visuals}
+                    nearby = [
+                        item
+                        for item in page_blocks
+                        if item["id"] in owned_ids and item["id"] != caption["id"]
+                    ]
+                    if nearby:
+                        caption["caption_parent"] = min(
+                            nearby,
+                            key=lambda item: abs(
+                                float(item["bbox"][3]) - float(caption["bbox"][1])
+                            ),
+                        )["id"]
                     unresolved.append(caption["id"])
                     continue
 
@@ -657,6 +740,11 @@ def make_visuals(
                         if candidate_block["kind"] not in {"artifact", "image"}:
                             candidate_block["kind"] = "visual_content"
                             candidate_block["translatable"] = False
+                            if caption_is_table:
+                                candidate_block["adapter_role"] = "table_visual"
+
+                if contained:
+                    caption["caption_parent"] = contained[0]
 
                 visual_id = f"visual-{caption['id']}"
                 filename = f"{visual_id}.png"
@@ -736,6 +824,191 @@ def classify_block(
     if re.match(r"^(?:[•*-]|\d+[.)]|\([a-z]\))\s+", normalized, re.I):
         return "list"
     return "prose"
+
+
+def annotate_native_v2_evidence(
+    blocks: list[dict[str, Any]], profile: dict[str, Any]
+) -> None:
+    """Add conservative semantic evidence available from a native PDF layout.
+
+    The native adapter records only facts it can prove from typography, ordering,
+    and geometry.  Structural membership remains absent unless one complete
+    abstract body is bounded by a heading and a clear following boundary.
+    """
+    if (
+        profile.get("schema_version") != 2
+        or profile.get("input", {}).get("adapter") != "native-text-pdf"
+    ):
+        return
+
+    contract = profile_contract(profile)
+    roles = {item["role"] for item in contract["roles"]}
+    for block in blocks:
+        evidence = block.setdefault("evidence", {})
+        evidence.setdefault("adapter", "native-text-pdf")
+        evidence.setdefault("source_pointer", block["id"])
+        if block.get("kind") == "artifact" and re.fullmatch(
+            r"\d+", block.get("source", "").strip()
+        ):
+            block["adapter_role"] = "page-number"
+        bbox = block.get("bbox", [0, 0, 0, 0])
+        width = max(0.0, float(bbox[2]) - float(bbox[0]))
+        height = max(0.0, float(bbox[3]) - float(bbox[1]))
+        if height > max(12.0, width * 3):
+            block["adapter_role"] = "aside_text"
+
+        source = block.get("source", "").strip()
+        if "abstract" in roles and re.fullmatch(
+            r"Abstract\s*[:.]?", source, re.I
+        ):
+            block["adapter_role"] = "abstract"
+        if "references" in roles and re.fullmatch(
+            r"(?:References|Bibliography)\s*[:.]?", source, re.I
+        ):
+            block["adapter_role"] = "reference"
+
+    if "references" in roles:
+        reference_index = next(
+            (
+                index
+                for index, block in enumerate(blocks)
+                if block.get("adapter_role") == "reference"
+            ),
+            None,
+        )
+        if reference_index is not None:
+            reference_heading = blocks[reference_index]
+            heading_page = int(reference_heading.get("page", 0))
+            heading_size = float(
+                reference_heading.get("stats", {}).get("median_font_size", 0)
+            )
+            for block in blocks[reference_index + 1 :]:
+                source = block.get("source", "").strip()
+                font_size = float(block.get("stats", {}).get("median_font_size", 0))
+                if (
+                    int(block.get("page", 0)) > heading_page
+                    and font_size >= heading_size * 0.95
+                    and 0 < len(source) <= 120
+                    and not source.startswith("[")
+                ):
+                    block["adapter_role"] = "heading"
+                    block["text_level"] = 1
+                    break
+                if block.get("kind") not in {
+                    "artifact",
+                    "image",
+                    "empty",
+                    "visual_content",
+                    "caption",
+                    "caption_continuation",
+                }:
+                    block["adapter_role"] = "reference"
+
+    if "section" in roles or "subsection" in roles:
+        for block in blocks:
+            if block.get("kind") != "heading":
+                continue
+            match = re.match(r"^(\d+(?:\.\d+)*)\s+\S", block["source"].strip())
+            if match:
+                block["adapter_role"] = "heading"
+                block["text_level"] = match.group(1).count(".") + 1
+
+    if "title" in roles:
+        first_page_headings = [
+            block
+            for block in blocks
+            if block.get("page") == 1
+            and block.get("kind") == "heading"
+            and block.get("adapter_role") != "aside_text"
+            and (
+                float(block.get("bbox", [0, 0, 0, 0])[2])
+                - float(block.get("bbox", [0, 0, 0, 0])[0])
+            )
+            > (
+                float(block.get("bbox", [0, 0, 0, 0])[3])
+                - float(block.get("bbox", [0, 0, 0, 0])[1])
+            )
+            and not re.match(
+                r"^(?:Abstract|References|Bibliography|\d+(?:\.\d+)*\s+)",
+                block["source"].strip(),
+                re.I,
+            )
+        ]
+        if first_page_headings:
+            title = max(
+                first_page_headings,
+                key=lambda block: float(block.get("stats", {}).get("max_font_size", 0)),
+            )
+            title["adapter_role"] = "title"
+
+            abstract_index = next(
+                (
+                    index
+                    for index, block in enumerate(blocks)
+                    if block.get("page") == 1
+                    and re.match(r"^Abstract(?:\s*[:.]|$)", block["source"].strip(), re.I)
+                ),
+                None,
+            )
+            title_index = blocks.index(title)
+            if abstract_index is not None and title_index < abstract_index:
+                for block in blocks[title_index + 1 : abstract_index]:
+                    if block.get("kind") not in {"artifact", "image", "empty"}:
+                        block["adapter_role"] = "author"
+
+    caption_roles = {
+        "Figure": "figure_caption",
+        "Table": "table_caption",
+        "Algorithm": "algorithm_caption",
+    }
+    for block in blocks:
+        if block.get("kind") not in {"caption", "caption_continuation"}:
+            continue
+        source = block["source"].lstrip()
+        for prefix, adapter_role in caption_roles.items():
+            if source.startswith(prefix):
+                block["adapter_role"] = adapter_role
+                break
+
+    if "page-footnote" in roles:
+        for block in blocks:
+            if block.get("kind") != "prose" or block.get("page") != 1:
+                continue
+            source = block["source"].lstrip()
+            if source.startswith(("*", "∗", "†", "‡")):
+                block["adapter_role"] = "footnote"
+
+    for index, anchor in enumerate(blocks[:-1]):
+        matched = _classify_v2_block(anchor, contract)
+        if not matched or matched["grouping"] != "structural-container":
+            continue
+        if matched["role"] != "abstract":
+            continue
+        body = blocks[index + 1]
+        if (
+            body.get("page") != anchor.get("page")
+            or body.get("kind") != "prose"
+            or body.get("bbox", [0, 0, 0, 0])[1]
+            < anchor.get("bbox", [0, 0, 0, 0])[3]
+        ):
+            continue
+        following = blocks[index + 2] if index + 2 < len(blocks) else None
+        body_size = float(body.get("stats", {}).get("median_font_size", 0))
+        clear_boundary = following is None or following.get("page") != body.get("page")
+        if following is not None and following.get("page") == body.get("page"):
+            following_size = float(
+                following.get("stats", {}).get("median_font_size", 0)
+            )
+            clear_boundary = (
+                following.get("kind") in {"heading", "artifact"}
+                or following["source"].lstrip().startswith(("*", "∗", "†", "‡"))
+                or following_size <= body_size - 1.0
+            )
+        if clear_boundary:
+            anchor["evidence"]["structural_membership"] = {
+                "status": "complete",
+                "member_node_ids": [anchor["id"], body["id"]],
+            }
 
 
 def margin_repetitions(raw_pages: list[list[dict[str, Any]]]) -> set[str]:
@@ -958,8 +1231,11 @@ def main() -> None:
                     "code",
                     "math",
                 }
-            block.pop("page_height", None)
             blocks.append(block)
+
+    annotate_native_v2_evidence(blocks, profile)
+    for block in blocks:
+        block.pop("page_height", None)
 
     visuals, unresolved_visuals = make_visuals(
         doc, blocks, work_dir, args.render_dpi

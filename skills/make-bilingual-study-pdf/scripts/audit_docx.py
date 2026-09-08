@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import html
 import io
@@ -10,6 +11,7 @@ import json
 import os
 import posixpath
 import re
+import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
@@ -18,6 +20,7 @@ from typing import Any
 from lxml import etree
 from common import json_loads_strict
 from audit_outputs import validate_compile_output_binding, validate_output_audit_binding
+from build_outputs import prose_text
 from profile import load_profile, load_work_profile, profile_contract, semantic_group, target_text_pattern
 from safe_artifacts import (
     ArtifactSafetyError,
@@ -207,7 +210,13 @@ def _docx_audit_producer_errors(
         value = report.get(field)
         if not _strict_nonnegative_int(value) or value != expected:
             errors.append(f"DOCX audit {field} does not match the current build")
-    if report.get("problem_ids") != problem_ids:
+    reported_problem_ids = report.get("problem_ids")
+    if (
+        not isinstance(reported_problem_ids, list)
+        or any(not isinstance(item, str) or not item for item in reported_problem_ids)
+        or len(reported_problem_ids) != len(problem_ids)
+        or set(reported_problem_ids) != set(problem_ids)
+    ):
         errors.append("DOCX audit problem_ids do not match the current build")
     if report.get("external_links") != sorted(external_uris):
         errors.append("DOCX audit external_links do not match the current build")
@@ -263,6 +272,9 @@ def _docx_audit_producer_errors(
             errors.append("V2 document IR semantic evidence is invalid")
             semantic_groups = []
             nodes = []
+        nodes_by_id = {
+            node.get("id"): node for node in nodes if isinstance(node, dict)
+        }
         expected_nested_keys = {
             "complete_container_checks": {
                 group.get("id")
@@ -288,7 +300,9 @@ def _docx_audit_producer_errors(
                 and role_specs.get(group.get("role"), {}).get("grouping")
                 != "structural-container"
                 and role_specs.get(group.get("role"), {}).get("output")
-                != "artifact-omitted"
+                not in {"artifact-omitted", "visual-once"}
+                and nodes_by_id.get(group.get("anchor_node_id"), {}).get("type")
+                not in {"math_with_text", "table"}
             },
         }
         for field, expected_keys in expected_nested_keys.items():
@@ -580,26 +594,115 @@ def occurrence_count(haystack: str, needle: str) -> int:
     return normalized_text(haystack).count(needle) if needle else 0
 
 
+@functools.lru_cache(maxsize=4096)
+def source_comparison_text(value: str) -> str:
+    """Normalize DOCX typography and layout-only whitespace for source binding."""
+    value = unicodedata.normalize("NFKC", value)
+    value = value.translate(
+        str.maketrans({"‘": "'", "’": "'", "“": '"', "”": '"'})
+    )
+    return re.sub(r"\s+", "", value)
+
+
 def searchable_sources(node: dict[str, Any]) -> list[str]:
     source = node.get("source", {}).get("text", "")
-    candidates = [source]
+    candidates = [source, prose_text(source)]
     if node.get("type") == "table" and "<" in source:
         candidates.append(html.unescape(re.sub(r"<[^>]+>", " ", source)))
     if node.get("type") == "list":
         entries = [
-            re.sub(r"^\s*[-*+]\s+", "", line)
+            re.sub(
+                r"^\s*(?:[-*+•]|\(?[A-Za-z0-9]+\)[.)]?|\d+[.)])\s+",
+                "",
+                line,
+            )
             for line in source.splitlines()
             if line.strip()
         ]
-        candidates.extend([" ".join(entries), "• " + " • ".join(entries)])
-    return [item for item in candidates if item]
+        candidates.extend(
+            [
+                " ".join(entries),
+                "• " + " • ".join(entries),
+                prose_text(" ".join(entries)),
+            ]
+        )
+    return list(dict.fromkeys(item for item in candidates if item))
 
 
 def source_occurrence_count(haystack: str, node: dict[str, Any]) -> int:
     return max(
-        (occurrence_count(haystack, needle) for needle in searchable_sources(node)),
+        (
+            source_comparison_text(haystack).count(source_comparison_text(needle))
+            for needle in searchable_sources(node)
+            if source_comparison_text(needle)
+        ),
         default=0,
     )
+
+
+def source_only_occurrence_evidence(
+    nodes: list[dict[str, Any]], paragraphs: list[dict[str, Any]]
+) -> dict[str, int]:
+    """Bind each source-only node to distinct ordered DOCX text."""
+    result: dict[str, int] = {}
+    paragraph_spans: list[tuple[int, int, dict[str, Any]]] = []
+    chunks: list[str] = []
+    offset = 0
+    for paragraph in paragraphs:
+        chunk = source_comparison_text(paragraph["text"])
+        paragraph_spans.append((offset, offset + len(chunk), paragraph))
+        chunks.append(chunk)
+        offset += len(chunk)
+    document_text = "".join(chunks)
+    cursor = 0
+    for node in nodes:
+        if (
+            node.get("semantic", {}).get("output") != "source-only"
+            or not node.get("source", {}).get("text")
+        ):
+            continue
+        candidates = {
+            source_comparison_text(item)
+            for item in searchable_sources(node)
+            if source_comparison_text(item)
+        }
+        required_style = "SourceCode" if node.get("type") == "code" else None
+        if required_style:
+            matches = [
+                (start, end)
+                for start, end, paragraph in paragraph_spans
+                if start >= cursor
+                and paragraph["style"] == required_style
+                and source_comparison_text(paragraph["text"]) in candidates
+            ]
+        else:
+            matches = [
+                (position, position + len(candidate))
+                for candidate in candidates
+                if (position := document_text.find(candidate, cursor)) >= 0
+            ]
+        match = min(matches, default=None)
+        result[node["id"]] = int(match is not None)
+        if match is not None:
+            cursor = match[1]
+    return result
+
+
+def source_occurs_outside_structural_ranges(
+    node: dict[str, Any],
+    paragraphs: list[dict[str, Any]],
+    boxed_paragraph_indexes: set[int],
+) -> bool:
+    """Find source evidence in one contiguous run of unboxed paragraphs."""
+    segment: list[str] = []
+    for paragraph_index, paragraph in enumerate(paragraphs):
+        if paragraph_index in boxed_paragraph_indexes:
+            if segment and source_occurrence_count("\n".join(segment), node):
+                return True
+            segment = []
+        else:
+            segment.append(paragraph["text"])
+    return bool(segment and source_occurrence_count("\n".join(segment), node))
 
 
 def load_v2_context(
@@ -1018,7 +1121,10 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         relationships_xml = archive.read("word/_rels/document.xml.rels")
         root = etree.fromstring(document_xml)
         relationships = etree.fromstring(relationships_xml)
-        text = "\n".join(root.xpath("//w:t/text()", namespaces=W_NS))
+        text = "\n".join(
+            "".join(paragraph.xpath(".//w:t/text()", namespaces=W_NS))
+            for paragraph in root.xpath("//w:body//w:p", namespaces=W_NS)
+        )
         external_links = sorted(
             item.get("Target") for item in relationships if item.get("TargetMode") == "External"
         )
@@ -1095,8 +1201,20 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                     node.xpath("string(./w:pPr/w:ind/@w:left)", namespaces=W_NS),
                     node.xpath("string(./w:pPr/w:ind/@w:right)", namespaces=W_NS),
                 ),
+                "style": node.xpath(
+                    "string(./w:pPr/w:pStyle/@w:val)", namespaces=W_NS
+                ),
             }
         )
+    content_paragraphs = [
+        {
+            "text": "".join(node.xpath(".//w:t/text()", namespaces=W_NS)),
+            "style": node.xpath(
+                "string(./w:pPr/w:pStyle/@w:val)", namespaces=W_NS
+            ),
+        }
+        for node in root.xpath("//w:body//w:p", namespaces=W_NS)
+    ]
 
     expected_callout_colors = {
         STYLE_COLORS[spec["style"]]
@@ -1141,11 +1259,18 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
         if group.get("membership") == "anchor-only"
         and role_specs[group["role"]]["grouping"] == "structural-container"
     ]
+    complete_member_ids = {
+        node_id for group in complete_groups for node_id in group["member_node_ids"]
+    }
     non_structural_anchor_groups = [
         group for group in ir.get("semantic_groups", [])
         if group.get("membership") == "anchor-only"
+        and group.get("anchor_node_id") not in complete_member_ids
         and role_specs[group["role"]]["grouping"] != "structural-container"
-        and role_specs[group["role"]]["output"] != "artifact-omitted"
+        and role_specs[group["role"]]["output"]
+        not in {"artifact-omitted", "visual-once"}
+        and nodes[group["anchor_node_id"]].get("type")
+        not in {"math_with_text", "table"}
     ]
     target_re = target_text_pattern(profile)
     complete_container_checks: dict[str, bool] = {}
@@ -1194,7 +1319,11 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
                     }
                     valid = (
                         group["member_node_ids"] == [group["anchor_node_id"]]
-                        and normalized_text(before) in source_candidates
+                        and any(
+                            source_comparison_text(before)
+                            == source_comparison_text(candidate)
+                            for candidate in source_candidates
+                        )
                     )
                 else:
                     cursor = -1
@@ -1227,10 +1356,17 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             scoped_range_indexes.add(range_index)
 
     non_structural_anchor_unboxed: dict[str, bool] = {}
+    boxed_paragraph_indexes = {
+        paragraph_index
+        for item in ranges
+        for paragraph_index in range(item["start"], item["end"] + 1)
+    }
     for group in non_structural_anchor_groups:
         anchor_node = nodes[group["anchor_node_id"]]
-        non_structural_anchor_unboxed[group["id"]] = not any(
-            source_occurrence_count(item["text"], anchor_node) for item in ranges
+        non_structural_anchor_unboxed[group["id"]] = (
+            source_occurs_outside_structural_ranges(
+                anchor_node, paragraphs, boxed_paragraph_indexes
+            )
         )
 
     occurrence_evidence: dict[str, dict[str, int]] = {}
@@ -1257,12 +1393,9 @@ def audit_v2(args, profile: dict[str, Any]) -> None:
             "omitted": omitted,
         }
 
-    source_only_counts = {
-        node_id: source_occurrence_count(text, node)
-        for node_id, node in nodes.items()
-        if node.get("semantic", {}).get("output") == "source-only"
-        and node.get("source", {}).get("text")
-    }
+    source_only_counts = source_only_occurrence_evidence(
+        list(nodes.values()), content_paragraphs
+    )
     visual_occurrences = sum(
         item["visual"] for item in occurrence_evidence.values()
     )

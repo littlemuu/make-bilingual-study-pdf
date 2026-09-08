@@ -20,6 +20,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from docx import Document
 from docx.enum.style import WD_STYLE_TYPE
+from docx.oxml.ns import qn
 
 import audit_docx
 import compile_docx_pdf
@@ -36,7 +37,15 @@ from common import (
     write_jsonl,
 )
 from document_ir import expected_ir
-from docx_ast import GENERIC_BEGIN, GENERIC_END, PROBLEM_BEGIN, PROBLEM_END, transform
+from docx_ast import (
+    GENERIC_BEGIN,
+    GENERIC_END,
+    PROBLEM_BEGIN,
+    PROBLEM_END,
+    _is_source_page_anchor,
+    stringify,
+    transform,
+)
 from profile import canonical_profile_sha256, load_profile, profile_contract
 
 
@@ -58,8 +67,14 @@ def target(text: str) -> dict:
     return {"t": "BlockQuote", "c": [paragraph(text)]}
 
 
+def load_legacy_assignment_profile() -> dict:
+    return json.loads(
+        (REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json").read_text(encoding="utf-8")
+    )
+
+
 def test_legacy_transform() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     document = {
         "pandoc-api-version": [1, 23],
         "meta": {},
@@ -79,7 +94,7 @@ def test_legacy_transform() -> None:
 
 
 def test_legacy_transform_pairs_real_build_output_markdown() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     converted = subprocess.run(
         ["pandoc", "--from", "markdown", "--to", "json"],
         input="**Problem (p1): source half**\n\n> **问题（p1）：目标半部分**\n",
@@ -97,7 +112,7 @@ def test_legacy_transform_pairs_real_build_output_markdown() -> None:
 
 
 def test_legacy_transform_rejects_language_and_identifier_mismatches() -> None:
-    profile = load_profile("assignment-en-zh")
+    profile = load_legacy_assignment_profile()
     cases = (
         (
             paragraph("Problem (p1): source half"),
@@ -123,7 +138,7 @@ def test_legacy_transform_rejects_language_and_identifier_mismatches() -> None:
         assert result["meta"]["v2-problem-group-count"]["c"] == "0"
 
 
-def test_page_header_omits_unresolvable_styleref() -> None:
+def test_page_header_is_static_across_heading_locales() -> None:
     no_heading = Document()
     no_heading.add_paragraph("Body only")
     docx_style.configure_page(
@@ -141,13 +156,68 @@ def test_page_header_omits_unresolvable_styleref() -> None:
     )
     header = with_heading.sections[0].header
     instructions = [node.text for node in header._element.xpath(".//w:instrText")]
-    assert any('STYLEREF "Heading 2"' in (text or "") for text in instructions)
+    assert not any("STYLEREF" in (text or "") for text in instructions)
+    assert header.paragraphs[0].text == "Bilingual study edition"
+
+
+def test_cjk_runs_keep_the_profile_latin_font_for_ascii_text() -> None:
+    document = Document()
+    run = document.add_paragraph().add_run("中文 Transformer 3.2")
+    previous_latin = docx_style.LATIN_FONT
+    previous_cjk = docx_style.CJK_FONT
+    try:
+        docx_style.LATIN_FONT = "Times New Roman"
+        docx_style.CJK_FONT = "Noto Sans CJK SC"
+        docx_style.set_run_font(run, docx_style.CJK_FONT, 10.2)
+        fonts = run._element.get_or_add_rPr().get_or_add_rFonts()
+        assert fonts.get(qn("w:ascii")) == "Times New Roman"
+        assert fonts.get(qn("w:hAnsi")) == "Times New Roman"
+        assert fonts.get(qn("w:eastAsia")) == "Noto Sans CJK SC"
+    finally:
+        docx_style.LATIN_FONT = previous_latin
+        docx_style.CJK_FONT = previous_cjk
 
 
 def test_v2_audit_palette_covers_assignment_styles() -> None:
     assert audit_docx.STYLE_COLORS["problem"] == docx_style.PROBLEM
     assert audit_docx.STYLE_COLORS["example"] == docx_style.EXAMPLE
     assert audit_docx.STYLE_COLORS["tip"] == docx_style.TIP
+
+
+def test_docx_binding_accepts_problem_ids_in_document_order() -> None:
+    build = {
+        "markdown": "fixture.md",
+        "problem_ids": ["alpha", "beta"],
+        "role_inventory": {
+            "example": {"occurrence_count": 0},
+            "tip": {"occurrence_count": 0},
+        },
+        "external_uris": [],
+        "assets": [],
+    }
+    report = {
+        "status": "passed",
+        "docx": str(Path("output/fixture.docx").resolve()),
+        "checks": {name: True for name in audit_docx.V1_DOCX_AUDIT_CHECKS},
+        "problem_count": 2,
+        "problem_ids": ["beta", "alpha"],
+        "problem_range_count": 2,
+        "example_count": 0,
+        "low_resource_tip_count": 0,
+        "external_link_count": 0,
+        "external_links": [],
+        "image_count": 0,
+        "chinese_character_count": 1,
+    }
+
+    errors = audit_docx._docx_audit_producer_errors(
+        report,
+        build,
+        Path("output/fixture.docx").resolve(),
+        schema_v2=False,
+    )
+
+    assert errors == [], errors
 
 
 def test_generic_ast() -> None:
@@ -245,6 +315,77 @@ def test_generic_ast() -> None:
     assert grouped_alias["blocks"][0]["t"] == "BlockQuote"
 
 
+def test_complete_group_ignores_source_page_anchors() -> None:
+    profile = load_profile("assignment-en-zh")
+    page_marker = {
+        "t": "Para",
+        "c": [
+            {"t": "RawInline", "c": ["html", '<a id="source-page-2">']},
+            {"t": "RawInline", "c": ["html", "</a>"]},
+            {"t": "SoftBreak"},
+            {"t": "RawInline", "c": ["html", "<!-- source-page: 2 -->"]},
+        ],
+    }
+    document = {
+        "pandoc-api-version": [1, 23],
+        "meta": {},
+        "blocks": [
+            marker("problem"),
+            paragraph("Problem (cross_page): source title"),
+            target("问题（cross_page）：中文标题"),
+            page_marker,
+            marker("continuation"),
+            paragraph("Final English deliverable"),
+            target("最后一项中文交付要求"),
+            {
+                "t": "RawBlock",
+                "c": [
+                    "html",
+                    "<!-- bilingual:source-only id=shared-code source_sha256=abc -->",
+                ],
+            },
+            {
+                "t": "CodeBlock",
+                "c": [["", ["text"], []], "uv run pytest -k test_example"],
+            },
+            marker("following"),
+            paragraph("Following content"),
+            target("题后内容"),
+        ],
+    }
+    groups = [
+        {
+            "id": "problem:cross_page",
+            "role": "problem",
+            "anchor_node_id": "problem",
+            "member_node_ids": ["problem", "continuation", "shared-code"],
+            "membership": "complete",
+        }
+    ]
+    result = transform(document, profile, semantic_groups=groups)
+    container = result["blocks"][0]
+    assert container["t"] == "BlockQuote"
+    assert sum(block.get("t") == "HorizontalRule" for block in container["c"]) == 1
+    assert all(not _is_source_page_anchor(block) for block in container["c"])
+    text = " ".join(stringify(block) for block in container["c"])
+    assert text.index("source title") < text.index("Final English deliverable")
+    assert text.index("Final English deliverable") < text.index("中文标题")
+    assert text.index("中文标题") < text.index("最后一项中文交付要求")
+    command_positions = [
+        index
+        for index, block in enumerate(container["c"])
+        if "uv run pytest -k test_example" in stringify(block)
+    ]
+    assert len(command_positions) == 2
+    separator_index = next(
+        index for index, block in enumerate(container["c"])
+        if block.get("t") == "HorizontalRule"
+    )
+    assert command_positions[0] < separator_index < command_positions[1]
+    assert all("Following content" not in stringify(block) for block in container["c"])
+    assert any("Following content" in stringify(block) for block in result["blocks"][1:])
+
+
 def test_v2_normalizes_pre_segment_page_anchor_like_v1() -> None:
     prefix = {
         "t": "Para",
@@ -265,10 +406,11 @@ def test_v2_normalizes_pre_segment_page_anchor_like_v1() -> None:
             target("普通目标段落"),
         ],
     }
-    legacy = transform(document, load_profile("assignment-en-zh"))["blocks"]
+    legacy_profile = load_legacy_assignment_profile()
+    legacy = transform(document, legacy_profile)["blocks"]
     from v2_migration_contract_test import build_candidate_v2
     generic = transform(
-        document, build_candidate_v2(load_profile("assignment-en-zh")),
+        document, load_profile("assignment-en-zh"),
         semantic_groups=[],
     )["blocks"]
     for profile_id in ("academic-paper-en-zh", "lecture-notes-en-zh"):
@@ -974,7 +1116,7 @@ def test_frozen_audit() -> None:
 
 
 
-def test_compile_math_with_text_uses_target_evidence() -> None:
+def test_compile_bilingual_text_uses_target_evidence() -> None:
     node = {"id": "math-text", "type": "math_with_text",
             "source": {"text": "where x = 2 and y = 3"},
             "semantic": {"output": "bilingual"}}
@@ -994,6 +1136,76 @@ def test_compile_math_with_text_uses_target_evidence() -> None:
     assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == []
     node["semantic"]["output"] = "source-only"
     assert compile_docx_pdf.textual_occurrence_needles(node, None, {}) == [node["source"]["text"]]
+    prose_node = {
+        "id": "prose",
+        "type": "prose",
+        "source": {"text": "A 'smart' out-of-\nvocabulary token"},
+        "semantic": {"output": "bilingual"},
+    }
+    prose_target = "一个包含智能引号的词表外词元"
+    assert compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {"prose": prose_target},
+        "一个包含智能引号的\n词表外词元",
+    )
+    assert not compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {"prose": prose_target},
+        "A ‘smart’ out-of-vocabulary token",
+    )
+    prose_node["semantic"]["output"] = "source-only"
+    assert compile_docx_pdf.textual_occurrence_present(
+        prose_node,
+        None,
+        {},
+        "A ‘smart’ out-of-vocabulary token",
+    )
+    page_one = "Bilingual study edition · Title\n英中双语学习版 · 1\n目标段落的前半部分"
+    page_two = (
+        "Bilingual study edition · A wrapped title\ncontinued title\n"
+        "英中双语学习版 · 2\n和后半部分"
+    )
+    assert compile_docx_pdf.pdf_body_text([page_one, page_two]) == (
+        "目标段落的前半部分\n和后半部分"
+    )
+    trailing_header = (
+        "正文在提取顺序中先出现\n"
+        "Bilingual study edition · Title\n英中双语学习版 · 3"
+    )
+    assert compile_docx_pdf.pdf_body_text([trailing_header]) == (
+        "正文在提取顺序中先出现"
+    )
+    separated_header = (
+        "Bilingual study edition · Title\n"
+        "Figure 1: body caption\n中文译文：图 1 正文说明\n\n"
+        "英中双语学习版 · 4"
+    )
+    assert compile_docx_pdf.pdf_body_text([separated_header]) == (
+        "Figure 1: body caption\n中文译文：图 1 正文说明\n"
+    )
+    long_target = "目标段落的前半部分和后半部分，这一整段中文应当跨页保持连续并且可以被审计。"
+    long_node = {
+        "id": "long-prose",
+        "type": "prose",
+        "source": {"text": "A long source paragraph"},
+        "semantic": {"output": "bilingual"},
+    }
+    assert compile_docx_pdf.textual_occurrence_present(
+        long_node,
+        None,
+        {"long-prose": long_target},
+        compile_docx_pdf.pdf_body_text(
+            [
+                "Bilingual study edition · Title\n英中双语学习版 · 1\n"
+                "目标段落的前半部分",
+                "Bilingual study edition · A wrapped title\ncontinued title\n"
+                "英中双语学习版 · 2\n"
+                "和后半部分，这一整段中文应当跨页保持连续并且可以被审计。",
+            ]
+        ),
+    )
 
 
 
@@ -1012,19 +1224,77 @@ def test_pdf_counts_placements_not_shared_resources() -> None:
         assert compile_docx_pdf.image_placement_count(page) == 1
 
 
+def test_docx_source_evidence_handles_layout_and_duplicate_code() -> None:
+    nodes = [
+        {
+            "id": "code-one",
+            "type": "code",
+            "source": {"text": ">>> value\n1"},
+            "semantic": {"output": "source-only"},
+        },
+        {
+            "id": "code-two",
+            "type": "code",
+            "source": {"text": ">>> value\n1"},
+            "semantic": {"output": "source-only"},
+        },
+    ]
+    paragraphs = [
+        {"text": ">>> value1", "style": "SourceCode"},
+        {"text": "unrelated", "style": "BodyText"},
+        {"text": ">>> value1", "style": "SourceCode"},
+    ]
+    assert audit_docx.source_only_occurrence_evidence(nodes, paragraphs) == {
+        "code-one": 1,
+        "code-two": 1,
+    }
+    assert audit_docx.source_occurrence_count(
+        "A ‘smart’ out-of-vocabulary token",
+        {
+            "type": "prose",
+            "source": {"text": "A 'smart' out-of-\nvocabulary token"},
+        },
+    ) == 1
+    table_node = {
+        "id": "table",
+        "type": "table",
+        "source": {"text": "<table><tr><td>Left</td><td>Right</td></tr></table>"},
+        "semantic": {"output": "source-only"},
+    }
+    table_paragraphs = [
+        {"text": "Before", "style": "BodyText"},
+        {"text": "Left", "style": "TableText"},
+        {"text": "Right", "style": "TableText"},
+        {"text": "After", "style": "BodyText"},
+    ]
+    assert audit_docx.source_only_occurrence_evidence(
+        [table_node], table_paragraphs
+    ) == {"table": 1}
+    assert audit_docx.source_occurs_outside_structural_ranges(
+        table_node, table_paragraphs, set()
+    )
+    assert not audit_docx.source_occurs_outside_structural_ranges(
+        table_node, table_paragraphs, {2}
+    )
+
+
 def main() -> None:
     test_legacy_transform()
     test_legacy_transform_pairs_real_build_output_markdown()
     test_legacy_transform_rejects_language_and_identifier_mismatches()
-    test_page_header_omits_unresolvable_styleref()
+    test_page_header_is_static_across_heading_locales()
+    test_cjk_runs_keep_the_profile_latin_font_for_ascii_text()
     test_v2_audit_palette_covers_assignment_styles()
+    test_docx_binding_accepts_problem_ids_in_document_order()
     test_generic_ast()
+    test_complete_group_ignores_source_page_anchors()
     test_v2_normalizes_pre_segment_page_anchor_like_v1()
     test_shared_style_roles()
     test_html_table_materialization()
     test_frozen_audit()
-    test_compile_math_with_text_uses_target_evidence()
+    test_compile_bilingual_text_uses_target_evidence()
     test_pdf_counts_placements_not_shared_resources()
+    test_docx_source_evidence_handles_layout_and_duplicate_code()
     print(
         "V2.3 DOCX tests passed: legacy, structural AST, shared styles, "
         "native tables, frozen audit"

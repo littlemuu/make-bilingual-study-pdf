@@ -421,7 +421,7 @@ class AssignmentChainDiffTests(unittest.TestCase):
 
     def test_v1_snapshot_and_candidate_v2_match_frozen_projection(self) -> None:
         from v2_migration_contract_test import build_candidate_v2
-        v1 = load_profile("assignment-en-zh")
+        v1 = json.loads((FIXTURE_DIR / "assignment-en-zh-v1.json").read_text(encoding="utf-8"))
         v2 = build_candidate_v2(v1)
         with tempfile.TemporaryDirectory(prefix="assignment-v1-v2-projection-") as temp:
             root = Path(temp)
@@ -471,7 +471,7 @@ class CompositeDocxEvidenceTests(unittest.TestCase):
         from v2_migration_contract_test import build_candidate_v2
         with tempfile.TemporaryDirectory(prefix="assignment-composite-docx-") as temp:
             root = Path(temp)
-            profile = build_candidate_v2(load_profile("assignment-en-zh"))
+            profile = load_profile("assignment-en-zh")
             if repeated:
                 source = write_repeated_visual_source(root / "repeated.pdf")
                 work = build_work_dir(root, profile, source)
@@ -562,7 +562,7 @@ if __name__ == "__main__":
             v1 = run_assignment_chain(Path(temp) / "v1")
             from v2_migration_contract_test import build_candidate_v2
             v2 = run_assignment_chain(
-                Path(temp) / "v2", build_candidate_v2(load_profile("assignment-en-zh"))
+                Path(temp) / "v2", load_profile("assignment-en-zh")
             )
         snapshot = {key: value for key, value in v1.items() if key not in {
             "cross_schema_projection", "expected_schema_changes",

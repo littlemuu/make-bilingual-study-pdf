@@ -927,6 +927,12 @@ def main() -> None:
         markers = list(MARKER_RE.finditer(markdown))
         marker_counts = Counter(match.group("id") for match in markers)
         marker_by_id = {match.group("id"): match for match in markers}
+        marker_section_end = {
+            match.group("id"): (
+                markers[index + 1].start() if index + 1 < len(markers) else len(markdown)
+            )
+            for index, match in enumerate(markers)
+        }
         if generic_semantics:
             expected_marker_ids = {
                 block_id
@@ -1041,6 +1047,9 @@ def main() -> None:
                 if block is None or disposition == "artifact-omitted" or marker is None:
                     continue
                 marker_end = marker.end()
+                section_end = marker_section_end[block_id]
+                if marker.group("mode") == "grouped":
+                    continue
                 if disposition == "source-only":
                     try:
                         rendered_source = source_only_markdown_body(block)
@@ -1051,7 +1060,9 @@ def main() -> None:
                     rendered_source = block["source"]
                 else:
                     rendered_source = markdown_escape(block["source"])
-                source_position = markdown.find(rendered_source, marker_end)
+                source_position = markdown.find(
+                    rendered_source, marker_end, section_end
+                )
                 if disposition == "bilingual":
                     translation = translations.get(block_id)
                     if not isinstance(translation, str):
@@ -1059,7 +1070,7 @@ def main() -> None:
                         continue
                     if block["kind"] == "math_with_text":
                         target_position = markdown.find(
-                            markdown_escape(translation), marker_end
+                            markdown_escape(translation), marker_end, section_end
                         )
                         visuals = visuals_by_anchor.get(block_id, [])
                         asset = (
@@ -1077,12 +1088,17 @@ def main() -> None:
                             )
                     else:
                         target_position = markdown.find(
-                            markdown_escape(translation), max(marker_end, source_position)
+                            markdown_escape(translation),
+                            max(marker_end, source_position + len(rendered_source)),
+                            section_end,
                         )
                         if source_position < marker_end or target_position <= source_position:
                             content_failures.append(f"{block_id}:source-target-order")
                 elif disposition == "source-only":
-                    if source_position < marker_end or markdown.count(rendered_source) != 1:
+                    if (
+                        source_position < marker_end
+                        or markdown.count(rendered_source, marker_end, section_end) != 1
+                    ):
                         content_failures.append(f"{block_id}:source-only-count")
                     if block_id in translations:
                         content_failures.append(f"{block_id}:unexpected-translation")
@@ -1113,11 +1129,11 @@ def main() -> None:
 
     constraint_checks: dict[str, bool] = {}
     if semantic_contract is not None and current_role_inventory:
-        actual_node_counts = Counter(
-            item.get("role")
-            for item in current_node_semantics.values()
-            if item.get("role") is not None
-        )
+        actual_node_counts = Counter()
+        for group_ids in current_groups_by_node.values():
+            for role in current_role_inventory:
+                if any(group_id.startswith(f"{role}:") for group_id in group_ids):
+                    actual_node_counts[role] += 1
         for role, inventory in current_role_inventory.items():
             count = inventory.get("occurrence_count")
             minimum = inventory.get("minimum")

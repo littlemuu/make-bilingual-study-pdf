@@ -1,9 +1,9 @@
 {
   "schema_version": 2,
-  "id": "academic-paper-en-zh",
-  "label": "English academic paper to Simplified Chinese",
+  "id": "academic-paper-native-en-zh",
+  "label": "Native-text English academic paper to Simplified Chinese",
   "input": {
-    "adapter": "mineru-import",
+    "adapter": "native-text-pdf",
     "source_language": "en",
     "minimum_native_text_page_ratio": 0.7,
     "minimum_text_characters_per_page": 100
@@ -19,7 +19,9 @@
       {
         "role": "title",
         "selectors": [
-          {"adapter_role": "title"}
+          {
+            "adapter_role": "title"
+          }
         ],
         "style": "document-title",
         "grouping": "none",
@@ -28,10 +30,17 @@
       {
         "role": "author-affiliation",
         "selectors": [
-          {"adapter_role": "author"},
-          {"adapter_role": "affiliation"},
           {
-            "node_types": ["text", "prose"],
+            "adapter_role": "author"
+          },
+          {
+            "adapter_role": "affiliation"
+          },
+          {
+            "node_types": [
+              "text",
+              "prose"
+            ],
             "source_pattern": "^.+\\s+[—–-]\\s+(?:Department|School|Faculty|Institute|Laboratory|Lab|University)\\b"
           }
         ],
@@ -42,9 +51,14 @@
       {
         "role": "abstract",
         "selectors": [
-          {"adapter_role": "abstract"},
           {
-            "node_types": ["heading", "text"],
+            "adapter_role": "abstract"
+          },
+          {
+            "node_types": [
+              "heading",
+              "text"
+            ],
             "source_pattern": "^Abstract(?:\\s*[:.]|$)",
             "target_pattern": "^摘要(?:\\s*[:：。]|$)"
           }
@@ -56,8 +70,17 @@
       {
         "role": "section",
         "selectors": [
-          {"adapter_role": "section"},
-          {"node_types": ["heading"], "text_levels": [1]}
+          {
+            "adapter_role": "section"
+          },
+          {
+            "node_types": [
+              "heading"
+            ],
+            "text_levels": [
+              1
+            ]
+          }
         ],
         "style": "section-heading",
         "grouping": "none",
@@ -66,8 +89,21 @@
       {
         "role": "subsection",
         "selectors": [
-          {"adapter_role": "subsection"},
-          {"node_types": ["heading"], "text_levels": [2, 3, 4, 5, 6]}
+          {
+            "adapter_role": "subsection"
+          },
+          {
+            "node_types": [
+              "heading"
+            ],
+            "text_levels": [
+              2,
+              3,
+              4,
+              5,
+              6
+            ]
+          }
         ],
         "style": "section-heading",
         "grouping": "none",
@@ -76,8 +112,16 @@
       {
         "role": "paragraph",
         "selectors": [
-          {"adapter_role": "paragraph"},
-          {"node_types": ["text", "prose"]}
+          {
+            "adapter_role": "paragraph"
+          },
+          {
+            "node_types": [
+              "text",
+              "prose",
+              "list"
+            ]
+          }
         ],
         "style": "body",
         "grouping": "none",
@@ -86,8 +130,15 @@
       {
         "role": "figure",
         "selectors": [
-          {"adapter_role": "figure"},
-          {"node_types": ["image"]}
+          {
+            "adapter_role": "figure"
+          },
+          {
+            "node_types": [
+              "image",
+              "visual_content"
+            ]
+          }
         ],
         "style": "visual",
         "grouping": "none",
@@ -96,8 +147,14 @@
       {
         "role": "chart",
         "selectors": [
-          {"adapter_role": "chart"},
-          {"node_types": ["chart"]}
+          {
+            "adapter_role": "chart"
+          },
+          {
+            "node_types": [
+              "chart"
+            ]
+          }
         ],
         "style": "visual",
         "grouping": "none",
@@ -106,11 +163,21 @@
       {
         "role": "figure-caption",
         "selectors": [
-          {"adapter_role": "figure_caption"},
-          {"adapter_role": "image_caption"},
-          {"adapter_role": "chart_caption"},
-          {"adapter_role": "image_footnote"},
-          {"adapter_role": "chart_footnote"}
+          {
+            "adapter_role": "figure_caption"
+          },
+          {
+            "adapter_role": "image_caption"
+          },
+          {
+            "adapter_role": "chart_caption"
+          },
+          {
+            "adapter_role": "image_footnote"
+          },
+          {
+            "adapter_role": "chart_footnote"
+          }
         ],
         "style": "caption",
         "grouping": "none",
@@ -119,8 +186,14 @@
       {
         "role": "table",
         "selectors": [
-          {"adapter_role": "table"},
-          {"node_types": ["table"]}
+          {
+            "adapter_role": "table"
+          },
+          {
+            "node_types": [
+              "table"
+            ]
+          }
         ],
         "style": "table",
         "grouping": "none",
@@ -129,7 +202,9 @@
       {
         "role": "table-visual",
         "selectors": [
-          {"adapter_role": "table_visual"}
+          {
+            "adapter_role": "table_visual"
+          }
         ],
         "style": "table",
         "grouping": "none",
@@ -138,7 +213,9 @@
       {
         "role": "table-caption",
         "selectors": [
-          {"adapter_role": "table_caption"}
+          {
+            "adapter_role": "table_caption"
+          }
         ],
         "style": "caption",
         "grouping": "none",
@@ -147,7 +224,9 @@
       {
         "role": "table-footnote",
         "selectors": [
-          {"adapter_role": "table_footnote"}
+          {
+            "adapter_role": "table_footnote"
+          }
         ],
         "style": "footnote",
         "grouping": "none",
@@ -156,8 +235,16 @@
       {
         "role": "equation",
         "selectors": [
-          {"adapter_role": "equation"},
-          {"node_types": ["equation", "math", "math_with_text"]}
+          {
+            "adapter_role": "equation"
+          },
+          {
+            "node_types": [
+              "equation",
+              "math",
+              "math_with_text"
+            ]
+          }
         ],
         "style": "equation",
         "grouping": "none",
@@ -166,7 +253,9 @@
       {
         "role": "equation-visual",
         "selectors": [
-          {"adapter_role": "equation_visual"}
+          {
+            "adapter_role": "equation_visual"
+          }
         ],
         "style": "equation",
         "grouping": "none",
@@ -175,9 +264,18 @@
       {
         "role": "code-algorithm",
         "selectors": [
-          {"adapter_role": "code"},
-          {"adapter_role": "algorithm"},
-          {"node_types": ["code", "algorithm"]}
+          {
+            "adapter_role": "code"
+          },
+          {
+            "adapter_role": "algorithm"
+          },
+          {
+            "node_types": [
+              "code",
+              "algorithm"
+            ]
+          }
         ],
         "style": "code",
         "grouping": "none",
@@ -186,8 +284,12 @@
       {
         "role": "code-caption",
         "selectors": [
-          {"adapter_role": "code_caption"},
-          {"adapter_role": "algorithm_caption"}
+          {
+            "adapter_role": "code_caption"
+          },
+          {
+            "adapter_role": "algorithm_caption"
+          }
         ],
         "style": "caption",
         "grouping": "none",
@@ -196,8 +298,12 @@
       {
         "role": "code-footnote",
         "selectors": [
-          {"adapter_role": "code_footnote"},
-          {"adapter_role": "algorithm_footnote"}
+          {
+            "adapter_role": "code_footnote"
+          },
+          {
+            "adapter_role": "algorithm_footnote"
+          }
         ],
         "style": "footnote",
         "grouping": "none",
@@ -206,11 +312,25 @@
       {
         "role": "references",
         "selectors": [
-          {"adapter_role": "reference"},
-          {"adapter_role": "reference_entry"},
-          {"node_types": ["list"], "sub_types": ["reference", "references"]},
           {
-            "node_types": ["heading"],
+            "adapter_role": "reference"
+          },
+          {
+            "adapter_role": "reference_entry"
+          },
+          {
+            "node_types": [
+              "list"
+            ],
+            "sub_types": [
+              "reference",
+              "references"
+            ]
+          },
+          {
+            "node_types": [
+              "heading"
+            ],
             "source_pattern": "^(?:References|Bibliography)(?:\\s*[:.]|$)",
             "target_pattern": "^(?:参考文献|文献目录)(?:\\s*[:：。]|$)"
           }
@@ -222,9 +342,17 @@
       {
         "role": "page-footnote",
         "selectors": [
-          {"adapter_role": "footnote"},
-          {"adapter_role": "page_footnote"},
-          {"node_types": ["footnote"]}
+          {
+            "adapter_role": "footnote"
+          },
+          {
+            "adapter_role": "page_footnote"
+          },
+          {
+            "node_types": [
+              "footnote"
+            ]
+          }
         ],
         "style": "footnote",
         "grouping": "none",
@@ -251,26 +379,86 @@
   },
   "qa": {
     "role_inventory": {
-      "title": {"minimum": 1, "maximum": 1},
-      "author-affiliation": {"minimum": 0, "maximum": null},
-      "abstract": {"minimum": 1, "maximum": 1},
-      "section": {"minimum": 1, "maximum": null},
-      "subsection": {"minimum": 0, "maximum": null},
-      "paragraph": {"minimum": 1, "maximum": null},
-      "figure": {"minimum": 0, "maximum": null},
-      "chart": {"minimum": 0, "maximum": null},
-      "figure-caption": {"minimum": 0, "maximum": null},
-      "table": {"minimum": 0, "maximum": null},
-      "table-visual": {"minimum": 0, "maximum": null},
-      "table-caption": {"minimum": 0, "maximum": null},
-      "table-footnote": {"minimum": 0, "maximum": null},
-      "equation": {"minimum": 0, "maximum": null},
-      "equation-visual": {"minimum": 0, "maximum": null},
-      "code-algorithm": {"minimum": 0, "maximum": null},
-      "code-caption": {"minimum": 0, "maximum": null},
-      "code-footnote": {"minimum": 0, "maximum": null},
-      "references": {"minimum": 1, "maximum": null},
-      "page-footnote": {"minimum": 0, "maximum": null}
+      "title": {
+        "minimum": 1,
+        "maximum": 1
+      },
+      "author-affiliation": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "abstract": {
+        "minimum": 1,
+        "maximum": 1
+      },
+      "section": {
+        "minimum": 1,
+        "maximum": null
+      },
+      "subsection": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "paragraph": {
+        "minimum": 1,
+        "maximum": null
+      },
+      "figure": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "chart": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "figure-caption": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "table": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "table-visual": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "table-caption": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "table-footnote": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "equation": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "equation-visual": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "code-algorithm": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "code-caption": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "code-footnote": {
+        "minimum": 0,
+        "maximum": null
+      },
+      "references": {
+        "minimum": 1,
+        "maximum": null
+      },
+      "page-footnote": {
+        "minimum": 0,
+        "maximum": null
+      }
     },
     "constraints": [
       "academic-paper-order-v1",

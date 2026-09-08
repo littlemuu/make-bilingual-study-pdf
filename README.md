@@ -21,8 +21,9 @@ live branch/tag ruleset 已迁移到新聚合 context。该阶段不迁移 Profi
 
 2026-09-03 的产品路线收敛进一步确定：**原生文本 PDF 是默认轻量核心，MinerU 是
 显式选择、只导入预生成结果的高级后端。** 近期保留现有 MinerU importer 和回归，但
-不扩展版本、backend、云端执行或 OCR 自动通过能力。下一阶段先完成
-`assignment-en-zh` 的 V1→V2 等价迁移；再优先建设原生 PDF 适用性预检和通用
+不扩展版本、backend、云端执行或 OCR 自动通过能力。`assignment-en-zh` 的 V1→V2
+等价迁移现已进入工包 B：新任务默认绑定 V2，精确历史
+V1 工作目录通过显式命令迁移；下一步是兼容层收尾，再建设原生 PDF 适用性预检和通用
 作业/handout 能力。巨型模块拆分改为由真实功能改动驱动，不再优先拆 MinerU。
 
 当前后续产品路线见
@@ -62,10 +63,11 @@ DOCX 或 LaTeX 文档。
 | --- | --- | --- | --- |
 | `assignment-en-zh` | 英文作业与题目集 | 原生文本 PDF | 默认轻量路径；以 CS336 及相似作业为主要基线 |
 | `academic-paper-en-zh` | 英文学术论文 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 | 可选高级路径 |
+| `academic-paper-native-en-zh` | 原生文本英文学术论文 | 原生文本 PDF | 无需 MinerU 的轻量论文路径 |
 | `lecture-notes-en-zh` | 英文讲义 | 已冻结的 MinerU 3.x `pipeline` legacy 输出 | 可选高级路径 |
 
-上表描述当前真实行为：论文和讲义 Profile 目前仍要求预生成 MinerU 输出；路线更新
-本身没有把它们改成原生适配器。MinerU 不属于 Skill 的安装依赖，适配器只消费用户
+原生论文 Profile 只接受具有可靠文字层的 PDF；MinerU 论文和讲义 Profile 仍要求预生成
+MinerU 输出。MinerU 不属于 Skill 的安装依赖，适配器只消费用户
 已经生成的输出，不安装、不运行 MinerU，也不下载模型。扫描或严重乱码页面必须停在
 人工源文件审查门禁，不能仅凭解析器输出自动通过。
 
@@ -128,6 +130,7 @@ XeLaTeX、`latexmk`、`xeCJK`、`unicode-math` 和 Latin Modern Math。MinerU �
 "<VENV_DIR>/bin/python" scripts/self_test.py
 "<VENV_DIR>/bin/python" scripts/pipeline.py validate-profile assignment-en-zh
 "<VENV_DIR>/bin/python" scripts/pipeline.py validate-profile academic-paper-en-zh
+"<VENV_DIR>/bin/python" scripts/pipeline.py validate-profile academic-paper-native-en-zh
 "<VENV_DIR>/bin/python" scripts/pipeline.py validate-profile lecture-notes-en-zh
 ```
 
@@ -137,6 +140,7 @@ Windows PowerShell：
 & "<VENV_DIR>\Scripts\python.exe" scripts/self_test.py
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py validate-profile assignment-en-zh
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py validate-profile academic-paper-en-zh
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py validate-profile academic-paper-native-en-zh
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py validate-profile lecture-notes-en-zh
 ```
 
@@ -154,6 +158,7 @@ Windows PowerShell：
 
 ```text
 "<VENV_DIR>/bin/python" scripts/pipeline.py source SOURCE.pdf --work-dir WORK_DIR --profile assignment-en-zh
+"<VENV_DIR>/bin/python" scripts/pipeline.py source SOURCE.pdf --work-dir WORK_DIR --profile academic-paper-native-en-zh
 "<VENV_DIR>/bin/python" scripts/pipeline.py import-mineru SOURCE.pdf MINERU_OUTPUT_DIR --work-dir WORK_DIR --profile academic-paper-en-zh
 "<VENV_DIR>/bin/python" scripts/pipeline.py status WORK_DIR
 ```
@@ -162,9 +167,22 @@ Windows PowerShell：
 
 ```text
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py source SOURCE.pdf --work-dir WORK_DIR --profile assignment-en-zh
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py source SOURCE.pdf --work-dir WORK_DIR --profile academic-paper-native-en-zh
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py import-mineru SOURCE.pdf MINERU_OUTPUT_DIR --work-dir WORK_DIR --profile academic-paper-en-zh
 & "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py status WORK_DIR
 ```
+
+已有的历史 assignment V1 工作目录不会自动迁移。先用一个位于 WORK 和 Skill 根目录
+之外、尚不存在的备份目录执行干跑，再执行正式迁移：
+
+```text
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR --dry-run
+& "<VENV_DIR>\Scripts\python.exe" scripts/pipeline.py migrate-profile WORK_DIR --backup BACKUP_DIR
+```
+
+迁移器仅接受仓库冻结的原始 `assignment-en-zh` V1；自定义或未知 V1 会失败关闭。正式
+迁移会使旧 source audit、translation、output、DOCX、compile、visual 与 final QA 证据
+全部失效，随后须从 `source-audit` 开始重建。
 
 完整工作流包含源文件清点与审计、术语表冻结、可恢复翻译批次、确定性构建、
 PDF 渲染以及逐页人工视觉复核。只有最终 `output/qa-report.json` 为 `passed` 时，

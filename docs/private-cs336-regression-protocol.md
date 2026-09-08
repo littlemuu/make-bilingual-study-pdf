@@ -28,15 +28,15 @@ py -3.11 -m venv .venv
 # 后续按 pipeline 提示执行 source-audit / ir / prepare / 翻译 / build / docx / compile-docx / finalize
 ```
 
-工包 B 提供生产命令后，必须执行两条独立路径；当前工包 A 不在私有原件上实施迁移。
+工包 B 必须执行迁移副本与 fresh V2 两条独立路径；不得在私有原件上直接实施迁移。
 
 ### 2.1 现存 V1 WORK 的安全副本迁移
 
 1. 保留原 WORK，创建不含 symlink/hardlink 的独立安全副本；所有备份置于 active WORK/Skills
    之外。记录三份上游 manifest/Profile/IR 与下游 gate 的 before hash 和状态。
-2. 对副本执行 `pipeline.py migrate-profile COPY --dry-run` 两次，核对稳定 JSON，
+2. 对副本执行 `pipeline.py migrate-profile COPY --backup BACKUP --dry-run` 两次，核对稳定 JSON，
    完整树 hash/目录清单不变，backup 尚未创建。报告必须包含 manifest binding 的字段差异。
-3. 实际执行 `pipeline.py migrate-profile COPY`，记录正式发布顺序、失效集合与三份 after hash；
+3. 实际执行 `pipeline.py migrate-profile COPY --backup BACKUP`，记录正式发布顺序、失效集合与三份 after hash；
    校验 manifest Profile binding、IR Profile binding 与 IR manifest hash 三方一致。
 4. 确認 source/translation/output/DOCX/compile/visual/QA 旧证据失效，再按 next_action 重建
    source audit 及后续链。只更新报告 hash 不是重新审计。

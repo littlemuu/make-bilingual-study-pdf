@@ -29,6 +29,12 @@ from document_ir import expected_ir  # noqa: E402
 from profile import canonical_profile_sha256, load_profile  # noqa: E402
 
 
+def load_legacy_assignment_profile() -> dict:
+    return json.loads(
+        (REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json").read_text(encoding="utf-8")
+    )
+
+
 class DocxArtifactBoundaryTests(unittest.TestCase):
     @staticmethod
     def digest(payload: bytes) -> str:
@@ -58,8 +64,10 @@ class DocxArtifactBoundaryTests(unittest.TestCase):
     def make_work(self, root: Path, *, schema_v2: bool = False) -> Path:
         work = root / "work"
         work.mkdir()
-        profile = load_profile(
-            "lecture-notes-en-zh" if schema_v2 else "assignment-en-zh"
+        profile = (
+            load_profile("lecture-notes-en-zh")
+            if schema_v2
+            else load_legacy_assignment_profile()
         )
         (work / "profile.json").write_text(
             json.dumps(profile, ensure_ascii=False, indent=2) + "\n",
@@ -70,7 +78,7 @@ class DocxArtifactBoundaryTests(unittest.TestCase):
     def make_v1_output_gate(self, work: Path) -> tuple[Path, Path]:
         output = work / "output"
         output.mkdir(exist_ok=True)
-        profile = load_profile("assignment-en-zh")
+        profile = load_legacy_assignment_profile()
         self.write_json(work / "document-ir.json", {"fixture": True})
         (work / "blocks.jsonl").write_bytes(b"")
         (work / "oracle.txt").write_text("fixture\f", encoding="utf-8")

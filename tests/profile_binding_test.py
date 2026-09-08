@@ -93,7 +93,7 @@ class ProfileBindingTests(unittest.TestCase):
 
     def test_all_profiles_bind_with_frozen_exact_bytes(self) -> None:
         expected_sha256 = {
-            "assignment-en-zh": "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2",
+            "assignment-en-zh": "e2c0dc0fda16a648600bd3b91bbc2d5d6c2907a6ea703269c2049477bca4241b",
             "academic-paper-en-zh": "87e6fff952d19f25fc5acc00024c68d1eb3d91556e17b194b063278c20283ed0",
             "lecture-notes-en-zh": "06145025ddec4d301c3738225e314964b970dea7a85f6243fba3b6a13e6447bb",
         }

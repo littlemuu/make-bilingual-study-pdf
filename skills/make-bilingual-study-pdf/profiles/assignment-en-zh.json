@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "id": "assignment-en-zh",
   "label": "English academic assignment to Simplified Chinese",
   "input": {
@@ -15,29 +15,127 @@
     "policy": "English source first; faithful Simplified Chinese; preserve every placeholder exactly once."
   },
   "semantics": {
-    "groups": [
+    "roles": [
       {
         "role": "problem",
-        "source_pattern": "^Problem\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
-        "target_pattern": "^问题\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
-        "docx_regroup": true,
-        "style": "problem"
+        "selectors": [
+          {
+            "source_pattern": "^Problem\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+            "target_pattern": "^问题\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+          }
+        ],
+        "style": "problem",
+        "grouping": "structural-container",
+        "output": "bilingual"
       },
       {
         "role": "example",
-        "source_pattern": "^Example\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
-        "target_pattern": "^示例\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
-        "docx_regroup": false,
-        "style": "example"
+        "selectors": [
+          {
+            "source_pattern": "^Example\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]",
+            "target_pattern": "^示例\\s*[（(](?P<identifier>[a-z0-9_]+)[)）]"
+          }
+        ],
+        "style": "example",
+        "grouping": "none",
+        "output": "bilingual"
       },
       {
         "role": "tip",
-        "source_pattern": "^Low-Resource Tip(?:\\s*[:：]|$)",
-        "target_pattern": "^低资源提示(?:\\s*[:：]|$)",
-        "docx_regroup": false,
-        "style": "tip"
+        "selectors": [
+          {
+            "source_pattern": "^Low-Resource Tip(?:\\s*[:：]|$)",
+            "target_pattern": "^低资源提示(?:\\s*[:：]|$)"
+          }
+        ],
+        "style": "tip",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "heading",
+        "selectors": [{"node_types": ["heading"]}],
+        "style": "section-heading",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "list-item",
+        "selectors": [{"node_types": ["list"]}],
+        "style": "body",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "paragraph",
+        "selectors": [{"node_types": ["prose"]}],
+        "style": "body",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "caption",
+        "selectors": [{"node_types": ["caption"]}],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "math-with-text",
+        "selectors": [{"node_types": ["math_with_text"]}],
+        "style": "equation",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "code",
+        "selectors": [{"node_types": ["code"]}],
+        "style": "code",
+        "grouping": "none",
+        "output": "source-only"
+      },
+      {
+        "role": "math",
+        "selectors": [{"node_types": ["math"]}],
+        "style": "equation",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "image",
+        "selectors": [{"node_types": ["image"]}],
+        "style": "visual",
+        "grouping": "none",
+        "output": "visual-once"
+      },
+      {
+        "role": "artifact",
+        "selectors": [{"node_types": ["artifact"]}],
+        "style": "body",
+        "grouping": "none",
+        "output": "artifact-omitted"
+      },
+      {
+        "role": "caption-continuation",
+        "selectors": [{"node_types": ["caption_continuation"]}],
+        "style": "caption",
+        "grouping": "none",
+        "output": "bilingual"
+      },
+      {
+        "role": "visual-content",
+        "selectors": [{"node_types": ["visual_content"]}],
+        "style": "visual",
+        "grouping": "none",
+        "output": "visual-once"
       }
-    ]
+    ],
+    "auxiliary_dispositions": {
+      "marginalia": "artifact-omitted",
+      "page-footer": "artifact-omitted",
+      "page-header": "artifact-omitted",
+      "page-number": "artifact-omitted"
+    }
   },
   "render": {
     "page_size": "A4",
@@ -51,7 +149,23 @@
     }
   },
   "qa": {
-    "primary_semantic_role": "problem",
+    "role_inventory": {
+      "problem": {"minimum": 0, "maximum": null},
+      "example": {"minimum": 0, "maximum": null},
+      "tip": {"minimum": 0, "maximum": null},
+      "heading": {"minimum": 0, "maximum": null},
+      "list-item": {"minimum": 0, "maximum": null},
+      "paragraph": {"minimum": 0, "maximum": null},
+      "caption": {"minimum": 0, "maximum": null},
+      "math-with-text": {"minimum": 0, "maximum": null},
+      "code": {"minimum": 0, "maximum": null},
+      "math": {"minimum": 0, "maximum": null},
+      "image": {"minimum": 0, "maximum": null},
+      "artifact": {"minimum": 0, "maximum": null},
+      "caption-continuation": {"minimum": 0, "maximum": null},
+      "visual-content": {"minimum": 0, "maximum": null}
+    },
+    "constraints": [],
     "minimum_global_fivegram_coverage": 0.95,
     "warn_page_below": 0.75,
     "require_external_uri_inventory": true,

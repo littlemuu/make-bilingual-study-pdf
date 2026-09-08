@@ -280,7 +280,9 @@ def main() -> None:
         work_dir = Path(temp)
         output_dir = work_dir / "output"
         output_dir.mkdir()
-        profile = load_profile("assignment-en-zh")
+        profile = json.loads(
+            (REPOSITORY / "tests" / "fixtures" / "profiles" / "assignment-en-zh-v1.json").read_text(encoding="utf-8")
+        )
         write_json(work_dir / "profile.json", profile)
         write_json(work_dir / "document-ir.json", {"fixture": True})
         build_dir = output_dir / "build"

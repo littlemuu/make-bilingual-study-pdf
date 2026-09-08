@@ -18,9 +18,9 @@ an opaque generated name.
 ## Profile and IR
 
 V2.3 uses a versioned Profile plus a unified document IR. The supported Profiles are
-`assignment-en-zh`, `academic-paper-en-zh`, and `lecture-notes-en-zh`. The assignment
-Profile retains its schema V1 bytes and behavior; the paper and lecture Profiles use
-schema V2 role inventories and the frozen MinerU importer. Read
+`assignment-en-zh`, `academic-paper-native-en-zh`, `academic-paper-en-zh`, and
+`lecture-notes-en-zh`. The assignment and native-paper Profiles use the native PDF
+adapter; the paper and lecture MinerU Profiles use the frozen importer. Read
 [profile-ir.md](references/profile-ir.md) before adding a document type, language,
 parser, renderer, or QA policy.
 
@@ -35,10 +35,28 @@ Use the Profile-aware entry point for new jobs and recovery:
 python3 "$SKILL_DIR/scripts/pipeline.py" validate-profile assignment-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" source SOURCE.pdf \
   --work-dir "$WORK_DIR" --profile assignment-en-zh
+python3 "$SKILL_DIR/scripts/pipeline.py" source SOURCE.pdf \
+  --work-dir "$WORK_DIR" --profile academic-paper-native-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" import-mineru SOURCE.pdf MINERU_OUTPUT_DIR \
   --work-dir "$WORK_DIR" --profile academic-paper-en-zh
 python3 "$SKILL_DIR/scripts/pipeline.py" status "$WORK_DIR"
 ```
+
+An existing WORK bound to the exact historical assignment schema V1 must be migrated
+explicitly. First inspect a zero-write plan, then use a new backup directory outside
+both WORK and the installed Skill root. `pipeline.py status` keeps reporting the
+current V1 gates and includes this migration instruction:
+
+```bash
+python3 "$SKILL_DIR/scripts/pipeline.py" migrate-profile "$WORK_DIR" \
+  --backup "$BACKUP_DIR" --dry-run
+python3 "$SKILL_DIR/scripts/pipeline.py" migrate-profile "$WORK_DIR" \
+  --backup "$BACKUP_DIR"
+```
+
+The command rejects customized or unknown V1 Profiles. A successful migration removes
+all old downstream gates; rerun `source-audit`, glossary initialization, translation,
+build, DOCX/compile, visual review, and final QA.
 
 The entry point runs deterministic stages and stops at glossary review, translation,
 and visual-review checkpoints. Its status output names the next safe resumable action.
@@ -90,11 +108,11 @@ legitimate backup completely outside the active work directory, and rerun the st
 
 ### 1. Extract and prove the source inventory
 
-For the native adapter, run:
+For a native assignment or academic paper, run:
 
 ```bash
-python3 "$SKILL_DIR/scripts/extract_pdf.py" SOURCE.pdf --work-dir "$WORK_DIR"
-python3 "$SKILL_DIR/scripts/audit_source.py" "$WORK_DIR"
+python3 "$SKILL_DIR/scripts/pipeline.py" source SOURCE.pdf \
+  --work-dir "$WORK_DIR" --profile academic-paper-native-en-zh
 ```
 
 For an implemented schema V2 Profile, import an already-frozen MinerU output instead:

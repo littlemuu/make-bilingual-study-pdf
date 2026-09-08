@@ -20,7 +20,7 @@ B/C 审阅仍须检查下表对应的调用路径。工包 C 用真实 load/vali
 | `prepare_translation.py` / `build_outputs.py` / `audit_outputs.py` | V1 implicit prose/output policy 与 `source_schema_version` fallback | 只消费 V2 semantic contract |
 | `build_docx.py` / `audit_docx.py` / `docx_ast.py` | V1 Problem 双半区、expected-problems、V1 audit checks | 只保留 V2 role inventory 和迁移调用图所需最小读法 |
 | `compile_docx_pdf.py` / `job_state.py` / `pipeline.py` | V1 compile/status/CLI 分派 | 普通命令只接受 V2 WORK |
-| `release_check.py` | `assignment-en-zh` schema 1 contract | 验证全部安装 Profile 为 schema 2 |
+| `release_check.py` | 工包 B 已改为验证全部安装 Profile 为 schema 2 | 工包 C 保持该门禁 |
 | `audit_source.py` / `audit_translation.py` / `translation_utils.py` | freeze-chain 内遗留 schema-1 metadata 读取 | 仅保留与非-Profile 产物 schema 有关的项；不得伪装为 Profile V1 兼容 |
 
 清理 Profile V1 时，仍须区分独立产物格式的 schema 1（如 glossary、manifest 和

@@ -3,12 +3,12 @@
   "skill": "make-bilingual-study-pdf",
   "version": "2.3.0",
   "hash_algorithm": "sha256",
-  "tree_sha256": "077e64c486a79f997d1e81e7e560678d2970a12206d7ae022b4b097a8662cac8",
+  "tree_sha256": "e2865303ef000133a82c4f8224efac2250ac799d12b05914f68125f5c02d426f",
   "files": [
     {
       "path": "SKILL.md",
-      "size": 14055,
-      "sha256": "7bf2e80195451e144cb796041e44aec85eb6db616936e0ee889c0d51ea18154c"
+      "size": 14939,
+      "sha256": "ed3dcdc618dcd46949e12fb40ca707d287e148d31954c4e3b810ec2632dcf019"
     },
     {
       "path": "VERSION",
@@ -32,13 +32,18 @@
     },
     {
       "path": "profiles/academic-paper-en-zh.json",
-      "size": 8374,
-      "sha256": "25e6d0f11b142b368691f43cf1ed5ab876d5917545bd9f1e9be75ab45e77df54"
+      "size": 8380,
+      "sha256": "8767936590d3a58771165c6b33dcadf00b2c56451fe1f4f1a94a8a1720bcdb96"
+    },
+    {
+      "path": "profiles/academic-paper-native-en-zh.json",
+      "size": 10533,
+      "sha256": "49e13702aabc72997282536f6f001714a41d4c212ca09a486ce915eb3f980ac9"
     },
     {
       "path": "profiles/assignment-en-zh.json",
-      "size": 1894,
-      "sha256": "58920601161479315f3673c2505f8d3b8e1915decf6c92f7931769b0b35b72e2"
+      "size": 5175,
+      "sha256": "6edfc4fb40ca8b9a0475805adbc96ee63e8b1292888a83da41df5202ff2d0443"
     },
     {
       "path": "profiles/lecture-notes-en-zh.json",
@@ -52,13 +57,13 @@
     },
     {
       "path": "references/format-spec.md",
-      "size": 9220,
-      "sha256": "284473906bb27f6396114e445b2033634c20f8b0ae2a47fde158db32c15ef094"
+      "size": 9254,
+      "sha256": "a80c68413ac66a6623d0920edbad0a82c5872243d631cba93f51960abf6e4f97"
     },
     {
       "path": "references/profile-ir.md",
-      "size": 6982,
-      "sha256": "d27a93eb2507ffdc260a7dbf354968bb3895270456623d6e6d35a8f6b3dadfcd"
+      "size": 7343,
+      "sha256": "08b55319274a78f0af32adc2438c64b9e5b29ace8b60f33004c9c642288c4dcd"
     },
     {
       "path": "references/qa-rules.md",
@@ -97,13 +102,13 @@
     },
     {
       "path": "scripts/audit_docx.py",
-      "size": 68949,
-      "sha256": "06cd013d81f6bbcac6a4cf1ad6854fb493dcf5b009c90973744caf77f992fed1"
+      "size": 73806,
+      "sha256": "b1b84e1ac94de8e2c38705f4371ae0fcff4e4831a1d815d3609eaf9b2b84528c"
     },
     {
       "path": "scripts/audit_outputs.py",
-      "size": 52052,
-      "sha256": "2a4340f98640a640b92652eff6edb7d21dac01ea11558f549265b91c5f489541"
+      "size": 52778,
+      "sha256": "f4e03ef9417acfe895f289ab3a25a7f0998087fe5f335c4e1e566b2d5504e174"
     },
     {
       "path": "scripts/audit_source.py",
@@ -132,8 +137,8 @@
     },
     {
       "path": "scripts/compile_docx_pdf.py",
-      "size": 33756,
-      "sha256": "e2817b6c7471d33af28b7e614cfc71dcd35b7ed4c478ccaf4212e129b86628f9"
+      "size": 35225,
+      "sha256": "a17c58f8146ed2555e7dd5cbdc0617142ddeb7a18e661f50a094b4c1825b9ca1"
     },
     {
       "path": "scripts/compile_pdf.py",
@@ -147,18 +152,18 @@
     },
     {
       "path": "scripts/docx_ast.py",
-      "size": 26031,
-      "sha256": "ff59e44cf9e5e24abbe997d32b57df24d4b4c0d7cebe6fd4668f6630d12a5518"
+      "size": 28111,
+      "sha256": "a658e769728eade5a7666020c3a7498861f3f409143c99ee9a8c4caf6a839d22"
     },
     {
       "path": "scripts/docx_style.py",
-      "size": 30856,
-      "sha256": "811633ede154275006996233ee15b65488dbfeb17a3fea033fc6dc6868472bda"
+      "size": 30767,
+      "sha256": "c44ca76232dcff99fab4f118cec0d6aeec07225e449b4a40bae80e56df2994f0"
     },
     {
       "path": "scripts/extract_pdf.py",
-      "size": 39944,
-      "sha256": "be5760783510708b986e65923b84ecb673bdf3266ddae8ca4fbf9f7f91db348a"
+      "size": 51772,
+      "sha256": "e58bd76f9a97b36416ad9d5c796e720e4bb88bb67444d8d0a1dba03b5e0c94b9"
     },
     {
       "path": "scripts/finalize_qa.py",
@@ -186,9 +191,14 @@
       "sha256": "bf5fc15d8ae9de0a618c0accf3e5bdfa00c0e8dbb235c60d0ddb15ec97f37a8f"
     },
     {
+      "path": "scripts/migrate_profile.py",
+      "size": 19441,
+      "sha256": "d6ed2162000c770fae5772dba9b193587ebbdec91864af73c73b550074a93a6a"
+    },
+    {
       "path": "scripts/pipeline.py",
-      "size": 13053,
-      "sha256": "cb73f7447c8a3907af627cb8d5c20ce7c9d67414cd39964ffe8285de10c555dc"
+      "size": 14478,
+      "sha256": "9c3832651af9687721e2d3cfad2b8589e6901571b683a386571ff4d810a9dd53"
     },
     {
       "path": "scripts/prepare_translation.py",
@@ -207,18 +217,18 @@
     },
     {
       "path": "scripts/release_check.py",
-      "size": 37038,
-      "sha256": "8218beab771d22b0cc9c96ebf39130e35318f3f73b626f1cb638fcdd353c4a32"
+      "size": 37097,
+      "sha256": "f3e4a9e6be576980991e7730d22f0ba0c75cb29dab26ee522239f0001e1b9b51"
     },
     {
       "path": "scripts/safe_artifacts.py",
-      "size": 46385,
-      "sha256": "2788db7dc45e6a9eaf6f730b7b5cf3eb9ed4076bf726999e5fc00ed9f29a5c50"
+      "size": 49924,
+      "sha256": "c44c9859282904a111586a1cdbd11dd00a4990dd30bed783e1a853044c19b1eb"
     },
     {
       "path": "scripts/self_test.py",
-      "size": 35014,
-      "sha256": "d7dd591095c81c506e1a1ac85c076c47730a5e9e3a8aa22826c3054f1ec91487"
+      "size": 36116,
+      "sha256": "f9540592808fe7337ba3901782e0b8a0497787db5eb295b57357e194152113d5"
     },
     {
       "path": "scripts/semantic_registry.py",

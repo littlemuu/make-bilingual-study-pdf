@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import sys
 import tempfile
@@ -19,6 +20,8 @@ sys.path.insert(0, str(SCRIPTS))
 
 import extract_pdf as extract_module  # noqa: E402
 import profile as profile_module  # noqa: E402
+import migrate_profile as migration_module  # noqa: E402
+import v2_assignment_chain_diff_test as chain  # noqa: E402
 from adapters import mineru as mineru_module  # noqa: E402
 from adapters.base import AdapterError  # noqa: E402
 from safe_artifacts import artifact_paths_same_entry, lexical_paths_overlap  # noqa: E402
@@ -132,6 +135,40 @@ class MacOSPathAliasTests(unittest.TestCase):
             )
             profile_module._validate_work_profile_reference(
                 alias_work, canonical_alias
+            )
+
+    def test_case_alias_rejects_migration_backup_inside_work(self) -> None:
+        with tempfile.TemporaryDirectory(
+            prefix="macos-migration-alias-", dir=REPOSITORY
+        ) as temporary:
+            root = Path(temporary)
+            canonical_root = root / "MigrationSeed"
+            v1_fixture = (
+                REPOSITORY
+                / "tests"
+                / "fixtures"
+                / "profiles"
+                / "assignment-en-zh-v1.json"
+            )
+            v1 = json.loads(v1_fixture.read_text(encoding="utf-8"))
+            work = chain.build_work_dir(canonical_root, v1)
+            before = {
+                name: (work / name).read_bytes()
+                for name in migration_module.UPSTREAM
+            }
+            alias_root = root / "migrationseed"
+            self.assert_same_entry(canonical_root, alias_root)
+            backup = alias_root / "work" / "output" / "migration-backup"
+            self.assertTrue(lexical_paths_overlap(work, backup))
+
+            with self.assertRaisesRegex(
+                ValueError, "outside WORK and the installed Skill root"
+            ):
+                migration_module.migrate_profile(work, backup, dry_run=True)
+
+            self.assertFalse(backup.exists())
+            self.assertEqual(
+                {name: (work / name).read_bytes() for name in before}, before
             )
 
 

@@ -16,8 +16,9 @@ branch/tag rulesets have been migrated: the branch ruleset requires only the `pr
 aggregate and the tag ruleset requires `main-full` + `safety`; the six transitional
 compatibility contexts are no longer required checks. The following invariants remain:
 
-- Profile schema, output bytes, runtime dependencies, VERSION, release metadata, tag and
-  Release state must remain unchanged;
+- Work package B changes only `assignment-en-zh` from the frozen V1 representation to
+  its proven-equivalent V2 representation and adds the explicit one-time migration;
+  runtime dependencies, VERSION, release metadata, tag and Release state remain unchanged;
 - `pr-fast`, `main-full`, and `safety` are strict all-success aggregates: they run under
   `always()` and fail closed for any failed, cancelled, skipped, or missing evidence job;
 - release-candidate evidence is not weakened by tiering: a Draft Release still requires

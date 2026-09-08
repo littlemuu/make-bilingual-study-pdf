@@ -29,6 +29,13 @@ PROBLEM_END = "V2-PROBLEM-CALLOUT-END"
 GENERIC_BEGIN = "V23-CALLOUT-BEGIN"
 GENERIC_END = "V23-CALLOUT-END"
 SEGMENT_MARKER_RE = re.compile(r"<!--\s*bilingual:[^\s]+\s+id=([^\s]+)\s+")
+SOURCE_ONLY_SEGMENT_MARKER_RE = re.compile(
+    r"<!--\s*bilingual:source-only\s+id=[^\s]+\s+"
+)
+SOURCE_PAGE_ANCHOR_RE = re.compile(
+    r'(?:(?:<a\s+id="source-page-\d+"\s*>\s*</a>|'
+    r'<!--\s*source-page:\s*\d+\s*-->)\s*)+'
+)
 
 
 def _bounded_cli_path(boundary: Path, path: Path, *, label: str) -> Path:
@@ -413,7 +420,20 @@ def _split_segments(blocks: list[dict]) -> tuple[list[dict], list[dict]]:
     for block in blocks:
         node_id = _segment_node_id(block)
         if node_id is not None:
-            current = {"node_id": node_id, "marker": copy.deepcopy(block), "blocks": []}
+            marker_content = block.get("c")
+            marker_text = (
+                str(marker_content[1])
+                if isinstance(marker_content, list) and len(marker_content) == 2
+                else ""
+            )
+            current = {
+                "node_id": node_id,
+                "marker": copy.deepcopy(block),
+                "source_only": bool(
+                    SOURCE_ONLY_SEGMENT_MARKER_RE.search(marker_text)
+                ),
+                "blocks": [],
+            }
             segments.append(current)
             continue
         if current is None:
@@ -432,6 +452,41 @@ def _generic_marker(
     }
 
 
+def _is_source_page_anchor(block: dict) -> bool:
+    kind = block.get("t")
+    if kind in {"RawBlock", "RawInline"}:
+        content = block.get("c")
+        return bool(
+            isinstance(content, list)
+            and len(content) == 2
+            and content[0] == "html"
+            and SOURCE_PAGE_ANCHOR_RE.fullmatch(str(content[1]).strip())
+        )
+    if kind not in {"Para", "Plain"}:
+        return False
+    inlines = block.get("c")
+    if not isinstance(inlines, list) or not inlines:
+        return False
+    rendered: list[str] = []
+    for inline in inlines:
+        if not isinstance(inline, dict):
+            return False
+        if inline.get("t") in {"SoftBreak", "LineBreak", "Space"}:
+            rendered.append(" ")
+            continue
+        if inline.get("t") != "RawInline":
+            return False
+        content = inline.get("c")
+        if (
+            not isinstance(content, list)
+            or len(content) != 2
+            or content[0] != "html"
+        ):
+            return False
+        rendered.append(str(content[1]))
+    return bool(SOURCE_PAGE_ANCHOR_RE.fullmatch("".join(rendered).strip()))
+
+
 def _group_structural_segments(
     segments: list[dict], *, role: str, style: str, membership: str, group_id: str
 ) -> dict:
@@ -441,14 +496,20 @@ def _group_structural_segments(
     for segment in segments:
         source_blocks = 0
         target_blocks = 0
+        segment_english: list[dict] = []
         for block in segment["blocks"]:
+            if _is_source_page_anchor(block):
+                continue
             if block.get("t") == "BlockQuote":
                 target_blocks += 1
                 for child in block.get("c", []):
                     chinese.extend(normalize_block(child))
             else:
                 source_blocks += 1
-                english.extend(normalize_block(block))
+                segment_english.extend(normalize_block(block))
+        english.extend(segment_english)
+        if segment.get("source_only") and target_blocks == 0:
+            chinese.extend(copy.deepcopy(segment_english))
         target_blocks_total += target_blocks
         if (source_blocks == 0 and target_blocks != 0) or target_blocks > 1:
             raise ValueError(
