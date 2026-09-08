@@ -141,6 +141,25 @@ class V23IrSourceTests(unittest.TestCase):
             self.assertEqual(blocks[0]["kind"], "visual_content")
             self.assertFalse(blocks[0]["translatable"])
 
+    def test_native_academic_profile_covers_lists_and_visual_content(self) -> None:
+        profile = load_profile(
+            SCRIPTS.parent / "profiles" / "academic-paper-native-en-zh.json"
+        )
+        contract = profile_contract(profile)
+        for kind, role in (("list", "paragraph"), ("visual_content", "figure")):
+            block = make_block(
+                f"p001-{kind}",
+                "fixture",
+                kind=kind,
+                role="",
+                pointer="/0",
+                item_hash=kind,
+            )
+            block.pop("adapter_role", None)
+            matched = _classify_v2_block(block, contract)
+            self.assertIsNotNone(matched)
+            self.assertEqual(matched["role"], role)
+
     def setUp(self) -> None:
         self.profile = load_profile("academic-paper-en-zh")
 

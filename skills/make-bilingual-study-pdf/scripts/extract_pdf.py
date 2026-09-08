@@ -779,6 +779,10 @@ def annotate_native_v2_evidence(
         evidence = block.setdefault("evidence", {})
         evidence.setdefault("adapter", "native-text-pdf")
         evidence.setdefault("source_pointer", block["id"])
+        if block.get("kind") == "artifact" and re.fullmatch(
+            r"\d+", block.get("source", "").strip()
+        ):
+            block["adapter_role"] = "page-number"
         bbox = block.get("bbox", [0, 0, 0, 0])
         width = max(0.0, float(bbox[2]) - float(bbox[0]))
         height = max(0.0, float(bbox[3]) - float(bbox[1]))
